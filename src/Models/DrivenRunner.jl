@@ -65,6 +65,7 @@ aborts the run with a precise error message.
 module DrivenRunner
 
 using Adapt
+using Dates: Date, DateTime
 using Printf: @sprintf, @printf
 using Logging
 using ProgressMeter: Progress, next!, finish!, update!
@@ -91,11 +92,12 @@ using ..MetDrivers: TransportBinaryDriver, CubedSphereTransportDriver,
                      load_transport_window, driver_grid, air_mass_basis,
                      total_windows, window_dt, binary_capabilities,
                      inspect_binary, steps_per_window,
-                     steps_per_window_schedule
+                     steps_per_window_schedule, release_payload!
 using ..InitialConditionIO: build_initial_mixing_ratio,
                              pack_initial_tracer_mass,
                              build_surface_flux_sources
 using ..BinaryPathExpander: expand_binary_paths
+using ..InputStaging: InputStager, staged_path_for!, cleanup_staging!
 using ..Output: SnapshotFrame,
                 AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
                 RuntimeOutputSpec, runtime_output_spec, snapshot_hours,
@@ -509,6 +511,24 @@ function _write_output_frames!(timer::RunProgressTimer,
     return path
 end
 
+# Write accumulated HOST-side snapshot frames to disk. Used by the async
+# daily-flush path (Threads.@spawn): runs off the main loop so the next day's
+# GPU transport overlaps the disk write. Deliberately does NOT touch the run
+# timer (the overlapped write is not charged to wall io_write) and never touches
+# GPU memory (frames are `Array(...)` copies captured at snapshot time).
+function _write_frames_to_disk(spec::RuntimeOutputSpec, path::AbstractString,
+                               frames::Vector{SnapshotFrame}, grid, mass_basis::Symbol)
+    isempty(frames) && return path
+    if spec.format === :binary_mmap
+        write_snapshot_binary(path, frames, grid; mass_basis = mass_basis,
+                              options = spec.options)
+    else
+        write_snapshot_netcdf(path, frames, grid; mass_basis = mass_basis,
+                              options = spec.options, fields = spec.fields)
+    end
+    return path
+end
+
 _flush_daily_output!(::SingleOutputFile, timer, spec, frames, grid;
                      mass_basis, date_label, day_index) = nothing
 
@@ -747,7 +767,16 @@ function run_driven_simulation(cfg::AbstractDict)
     end
     caps = first(binary_caps).caps
     _validate_input_binary_expectations(caps, input_cfg, first(binary_paths))
-    result = _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg)
+    # Rolling NVMe input staging (opt-in via [input.staging]; default off ⇒
+    # `staged_path_for!` returns the NAS path, bit-identical to today). Created
+    # here and torn down in `finally` so staged multi-GB files are always
+    # cleaned up, even if the run throws partway through.
+    stager = InputStager(binary_paths, get(input_cfg, "staging", Dict{String, Any}()))
+    result = try
+        _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg, stager)
+    finally
+        cleanup_staging!(stager)
+    end
     if timers_on
         SectionTimer.disable!()
         SectionTimer.report(stderr)
@@ -764,23 +793,51 @@ function run_driven_simulation(cfg::AbstractDict)
     return result
 end
 
-_run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg) =
-    _run_driven_simulation_structured(binary_paths, cfg)
-_run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg) =
-    _run_driven_simulation_structured(binary_paths, cfg)
-_run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg) =
-    _run_driven_simulation_cs(binary_paths, cfg)
-function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String}, _cfg) where grid_type
+_run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg, stager::InputStager) =
+    _run_driven_simulation_structured(binary_paths, cfg, stager)
+_run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg, stager::InputStager) =
+    _run_driven_simulation_structured(binary_paths, cfg, stager)
+_run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg, stager::InputStager) =
+    _run_driven_simulation_cs(binary_paths, cfg, stager)
+function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String}, _cfg, _stager::InputStager) where grid_type
     throw(ArgumentError("Unsupported transport-binary grid_type=$(grid_type)."))
 end
 
-function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
+# Parse the run start as a `DateTime` (at 00:00) from `[input].start_date`,
+# used as the `reference_time` for time-varying surface fluxes so their slice
+# times align to the simulation clock. Returns `nothing` if no start_date is
+# present (the time-varying loader then assumes the file origin == run start).
+function _run_reference_time(cfg)
+    input_cfg = get(cfg, "input", nothing)
+    input_cfg isa AbstractDict || return nothing
+    haskey(input_cfg, "start_date") || return nothing
+    return DateTime(Date(String(input_cfg["start_date"])))
+end
+
+# Reduce a surface source's per-cell rate to a scalar total for logging,
+# handling both static (`cell_mass_rate`) and time-varying
+# (`cell_mass_rate_series`, summed over the first slice) sources.
+function _surface_source_total_rate(source)
+    if hasproperty(source, :cell_mass_rate)
+        r = source.cell_mass_rate
+        return r isa Tuple ? Float64(sum(sum, r)) : Float64(sum(r))
+    else
+        series = source.cell_mass_rate_series   # NTuple{6} of (Nc,Nc,ntime)
+        return Float64(sum(p -> sum(@view p[:, :, 1]), series))
+    end
+end
+
+function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, stager::InputStager)
     FT = _cfg_float_type(cfg)
     assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
     run_cfg = get(cfg, "run", Dict{String, Any}())
     start_window = Int(get(run_cfg, "start_window", 1))
     stop_window_override = get(run_cfg, "stop_window", nothing)
-    reset_air_mass_each_window = Bool(get(run_cfg, "reset_air_mass_each_window", false))
+    haskey(run_cfg, "reset_air_mass_each_window") &&
+        throw(ArgumentError("run.reset_air_mass_each_window was replaced by " *
+                            "run.air_mass_reset_mode = \"none\", " *
+                            "\"preserve_vmr\", or \"preserve_tracer_mass\""))
+    air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
 
     init_cfg = get(cfg, "init", Dict{String, Any}())
     tracer_specs = something(_parse_tracer_specs(cfg),
@@ -790,8 +847,10 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
 
     _ensure_gpu_runtime!(cfg)
 
+    # `stager` (rolling NVMe input staging) is created + torn down by the caller
+    # `run_driven_simulation`; here we just route driver opens through it.
     # Open first driver, build recipe, validate capability, build model
-    first_driver = TransportBinaryDriver(first(binary_paths);
+    first_driver = TransportBinaryDriver(staged_path_for!(stager, 1);
                                           FT = FT,
                                           arch = CPU())
     output_cfg = get(cfg, "output", Dict{String, Any}())
@@ -815,7 +874,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     _assert_gpu_residency!(model.state, cfg)
 
     grid_of_first = driver_grid(first_driver)
-    surface_sources = build_surface_flux_sources(grid_of_first, tracer_specs, FT)
+    surface_sources = build_surface_flux_sources(grid_of_first, tracer_specs, FT;
+                                                 reference_time = _run_reference_time(cfg))
     m0 = total_air_mass(model.state)
     tracer_masses0 = Dict(name => total_mass(model.state, name)
                           for name in tracer_names(model.state))
@@ -835,7 +895,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     for source in surface_sources
         @info @sprintf("Surface source %s total model-storage rate: %.12e kg_air_equiv/s",
                        String(source.tracer_name),
-                       Float64(sum(source.cell_mass_rate)))
+                       _surface_source_total_rate(source))
     end
 
     snapshots = SnapshotFrame[]
@@ -843,6 +903,9 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     snapshot_count = Ref(0)
     snap_idx = 1
     total_elapsed_hours = 0.0
+    # In-flight async daily write (one at a time); kept off the GPU loop so the
+    # disk write overlaps the next day's transport. `nothing` until first flush.
+    pending_write = nothing
 
     # Estimate total windows for the progress bar. Each daily binary has
     # the same window count for a homogeneous run; multiplying gives a
@@ -872,10 +935,14 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
         snap_idx += 1
     end
 
+    run_time_seconds = 0.0   # accumulated across binaries (sim clock origin)
     for (idx, path) in enumerate(binary_paths)
+        # `path` (NAS) is kept for date labels/logging; the driver opens the
+        # staged local copy when staging is enabled (idx==1 already staged above).
         driver = idx == 1 ? first_driver :
                  timed_io_read!(timer,
-                     () -> TransportBinaryDriver(path; FT = FT, arch = CPU()))
+                     () -> TransportBinaryDriver(staged_path_for!(stager, idx);
+                                                 FT = FT, arch = CPU()))
         validate_runtime_physics_recipe(recipe, driver)
         stop_window = stop_window_override === nothing ?
                       total_windows(driver) : Int(stop_window_override)
@@ -885,9 +952,13 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                                     start_window = start_window,
                                     stop_window = stop_window,
                                     initialize_air_mass = initialize_air_mass,
-                                    reset_air_mass_each_window = reset_air_mass_each_window,
+                                    air_mass_reset_mode = air_mass_reset_mode,
                                     surface_sources = surface_sources,
-                                    chemistry = recipe.chemistry))
+                                    chemistry = recipe.chemistry,
+                                    # seconds since RUN start — see the CS loop
+                                    # note: per-binary clock restarts replay
+                                    # day-1 time-varying fluxes
+                                    start_time = run_time_seconds))
         model = sim.model
         if !initialize_air_mass
             boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) /
@@ -956,25 +1027,40 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
             end
         end
 
+        run_time_seconds += (stop_window - start_window + 1) * Float64(window_dt(driver))
         _synchronize_backend!(cfg)
         set_progress_status!(timer;
                              status = @sprintf("finished %s", basename(path)),
                              detail = @sprintf("file wall %.2fs", time() - t0),
                              redraw = true)
-        if do_snapshots
-            written = _flush_daily_output!(output_spec.partition, timer,
-                                           output_spec, day_snapshots,
-                                           driver_grid(first_driver);
-                                           mass_basis = air_mass_basis(first_driver),
-                                           date_label = _binary_date_label(path),
-                                           day_index = idx)
-            written !== nothing &&
-                set_progress_status!(timer;
-                                     detail = @sprintf("wrote %s", basename(written)),
-                                     redraw = true)
+        if do_snapshots && output_spec.partition isa DailyOutputFiles &&
+           output_enabled(output_spec) && !isempty(day_snapshots)
+            # Async daily flush: hand the host-side frames to a background task
+            # so the next day's GPU transport overlaps the disk write. Bound to
+            # ONE in-flight write (wait the previous before spawning the next),
+            # which caps extra host memory at ~one day of frames. The shallow
+            # `copy` + `empty!` lets `capture_structured!` keep pushing into the
+            # same `day_snapshots` binding (no closure rebox) while the spawned
+            # task owns the previous day's frames.
+            pending_write !== nothing && wait(pending_write)
+            frames_to_write = copy(day_snapshots)
+            empty!(day_snapshots)
+            out_path = _output_path_for_partition(output_spec, output_spec.partition,
+                                                   _binary_date_label(path), idx)
+            grid_ref = driver_grid(first_driver)
+            mb = air_mass_basis(first_driver)
+            pending_write = Threads.@spawn _write_frames_to_disk(output_spec, out_path,
+                                                                 frames_to_write, grid_ref, mb)
+            set_progress_status!(timer;
+                                 detail = @sprintf("async write %s", basename(out_path)),
+                                 redraw = true)
         end
         close(driver)
     end
+
+    # Drain the last in-flight async daily write before the final flush / mass
+    # accounting, so the run never returns with a write still pending.
+    pending_write !== nothing && wait(pending_write)
 
     if do_snapshots
         # `air_mass_basis(driver)` already returns the Symbol and has been
@@ -1018,7 +1104,7 @@ function _cfg_architecture(cfg)
     return CPU()
 end
 
-function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
+function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::InputStager)
     FT   = _cfg_float_type(cfg)
     assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
     arch = _cfg_architecture(cfg)
@@ -1027,7 +1113,11 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     advection = build_cs_advection(cfg)
     Hp = configured_halo_width(cfg, advection)
     stop_window_override = get(run_cfg, "stop_window", nothing)
-    reset_air_mass_each_window = Bool(get(run_cfg, "reset_air_mass_each_window", false))
+    haskey(run_cfg, "reset_air_mass_each_window") &&
+        throw(ArgumentError("run.reset_air_mass_each_window was replaced by " *
+                            "run.air_mass_reset_mode = \"none\", " *
+                            "\"preserve_vmr\", or \"preserve_tracer_mass\""))
+    air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
 
     tracers_cfg = get(cfg, "tracers", Dict{String, Any}())
     isempty(tracers_cfg) && error("[tracers] must define at least one tracer")
@@ -1040,8 +1130,10 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         error("[tracers] section is malformed; expected per-tracer subsections")
     tracer_init = Dict(spec.name => spec.init_cfg for spec in tracer_specs)
 
+    # `stager` (rolling NVMe input staging) is created + torn down by the caller
+    # `run_driven_simulation`; here we just route driver opens through it.
     # First driver + model (reuses air_mass from window 1)
-    driver1 = CubedSphereTransportDriver(first(binary_paths);
+    driver1 = CubedSphereTransportDriver(staged_path_for!(stager, 1);
                                           FT = FT, arch = arch, Hp = Hp)
     output_cfg = get(cfg, "output", Dict{String, Any}())
     output_spec = runtime_output_spec(output_cfg, FT;
@@ -1121,16 +1213,15 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     # mass rates. Matches the LL/RG path; `DrivenSimulation`'s constructor
     # adapts these to the model backend (CPU Array or GPU array) via
     # `_adapt_sources_to_model_backend`, so no manual adapt step here.
-    surface_sources = build_surface_flux_sources(grid, tracer_specs, FT)
+    surface_sources = build_surface_flux_sources(grid, tracer_specs, FT;
+                                                 reference_time = _run_reference_time(cfg))
     source_tracers = Set(source.tracer_name for source in surface_sources)
     for source in surface_sources
-        # `cell_mass_rate` is topology-shaped: 2D Array on LL/RG, 6-tuple of
-        # Matrices on CS. Reduce to a scalar for the log either way.
-        total_rate = source.cell_mass_rate isa Tuple ?
-                     Float64(sum(sum, source.cell_mass_rate)) :
-                     Float64(sum(source.cell_mass_rate))
+        # Reduce the topology-shaped per-cell rate to a scalar for the log;
+        # `_surface_source_total_rate` handles static (2D / 6-tuple) and
+        # time-varying (first-slice) sources alike.
         @info @sprintf("Surface source %s total model-storage rate: %.12e kg_air_equiv/s",
-                       String(source.tracer_name), total_rate)
+                       String(source.tracer_name), _surface_source_total_rate(source))
     end
 
     _log_runtime_summary(topology = :CubedSphere,
@@ -1182,10 +1273,15 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     end
 
     t0 = time()
+    # In-flight async daily write (one at a time); kept off the GPU loop so the
+    # disk write overlaps the next day's transport. `nothing` until first flush.
+    pending_write = nothing
     for (driver_idx, path) in enumerate(binary_paths)
+        # `path` (NAS) kept for labels/logging; driver opens the staged local
+        # copy when staging is enabled (driver_idx==1 already staged above).
         driver = driver_idx == 1 ? driver1 :
                  timed_io_read!(timer,
-                     () -> CubedSphereTransportDriver(expanduser(path);
+                     () -> CubedSphereTransportDriver(staged_path_for!(stager, driver_idx);
                                                        FT = FT, arch = arch, Hp = Hp))
         validate_runtime_physics_recipe(recipe, driver; halo_width = Hp)
         stop_window = stop_window_override === nothing ?
@@ -1216,9 +1312,17 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
             () -> DrivenSimulation(model, driver;
                                     start_window = 1, stop_window = stop_window,
                                     initialize_air_mass = initialize_air_mass,
-                                    reset_air_mass_each_window = reset_air_mass_each_window,
+                                    air_mass_reset_mode = air_mass_reset_mode,
                                     surface_sources = surface_sources,
-                                    chemistry = recipe.chemistry))
+                                    # accumulated run time: time-varying surface
+                                    # sources index emission slices in seconds
+                                    # since RUN start; restarting at 0 per day
+                                    # replays day-1 fluxes (the +1 Pg/month
+                                    # co2_natural surplus). (`callbacks` /
+                                    # reference-cadence is an anomaly-ref feature
+                                    # not on this branch, so omitted here.)
+                                    chemistry = recipe.chemistry,
+                                    start_time = total_hour * 3600.0))
         # `DrivenSimulation` may wrap `model` with a surface-flux operator;
         # keep snapshots and the return value aligned with the stepped model.
         model = sim.model
@@ -1266,19 +1370,38 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                              status = @sprintf("finished %s", basename(path)),
                              detail = @sprintf("file wall %.1fs", time() - day_t0),
                              redraw = true)
-        if do_snapshots
-            written = _flush_daily_output!(output_spec.partition, timer,
-                                           output_spec, day_snapshots, grid;
-                                           mass_basis = BasisT === DryBasis ? :dry : :moist,
-                                           date_label = _binary_date_label(path),
-                                           day_index = driver_idx)
-            written !== nothing &&
-                set_progress_status!(timer;
-                                     detail = @sprintf("wrote %s", basename(written)),
-                                     redraw = true)
+        if do_snapshots && output_spec.partition isa DailyOutputFiles &&
+           output_enabled(output_spec) && !isempty(day_snapshots)
+            # Async daily flush: hand the host-side frames to a background task so
+            # the next day's GPU transport overlaps the disk write. One in-flight
+            # write at a time (wait the previous before spawning the next), which
+            # caps extra host memory at ~one day of frames. The shallow `copy` +
+            # `empty!` lets `capture_structured!` keep pushing into the same
+            # `day_snapshots` binding while the spawned task owns the prior frames.
+            pending_write !== nothing && wait(pending_write)
+            frames_to_write = copy(day_snapshots)
+            empty!(day_snapshots)
+            out_path = _output_path_for_partition(output_spec, output_spec.partition,
+                                                   _binary_date_label(path), driver_idx)
+            grid_ref = grid
+            mb = BasisT === DryBasis ? :dry : :moist
+            pending_write = Threads.@spawn _write_frames_to_disk(output_spec, out_path,
+                                                                 frames_to_write, grid_ref, mb)
+            set_progress_status!(timer;
+                                 detail = @sprintf("async write %s", basename(out_path)),
+                                 redraw = true)
         end
         close(driver)
+        # Drop this day's memory-mapped payload from the page cache now (it is
+        # not read again). Otherwise each day's mmap lingers as cgroup-charged
+        # file cache for the whole run, starving the user's other processes on a
+        # per-user cgroup. madvise(DONTNEED) is safe here (re-faults on access).
+        release_payload!(driver)
     end
+
+    # Drain the last in-flight async daily write before the final mass accounting,
+    # so the run never returns with a write still pending.
+    pending_write !== nothing && wait(pending_write)
 
     @info @sprintf("Done: %.1fs  (%d snapshots, final t=%.1fh)",
                    time() - t0, snapshot_count[], total_hour)

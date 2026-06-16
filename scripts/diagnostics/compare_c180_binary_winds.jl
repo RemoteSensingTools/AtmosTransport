@@ -151,7 +151,12 @@ function load_binary_window(path)
     window = load_transport_window(driver, WINDOW_INDEX)
     mesh = driver_grid(driver).horizontal
     steps = steps_per_window(driver, WINDOW_INDEX)
-    dt_factor = Float64(window_dt(driver)) / (2.0 * Float64(steps))
+    # per-substep storage: flux [kg per palindrome application] over
+    # dt/(2*steps) seconds. full-window storage: flux [kg per window]
+    # over dt seconds — same wind either way.
+    dt_factor = AtmosTransport.MetDrivers.flux_kind(driver) === :full_window_mass_amount ?
+        Float64(window_dt(driver)) :
+        Float64(window_dt(driver)) / (2.0 * Float64(steps))
     basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
     return (; driver, window, mesh, dt_factor, basis,
             dt = Float64(window_dt(driver)), steps = steps,

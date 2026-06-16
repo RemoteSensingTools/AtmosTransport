@@ -24,7 +24,7 @@
 #   Putman & Lin (2007) — FV3 cubed-sphere transport
 # ---------------------------------------------------------------------------
 
-using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
+using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend, CPU as KA_CPU
 
 # Track max (n_x, n_y, n_z) across the run; emit one @info line each time
 # any component grows. Quiet on stable flows, surfaces CFL hotspots early.
@@ -238,7 +238,14 @@ end
         SectionTimer.record_sample!(sync_section, Float64(time_ns() - t1))
     else
         launch!()
-        synchronize(backend)
+        # Intra-stream workspace dependency only: panel p's sweep/copy-back and
+        # panel p+1's sweep share `rm_4d_A`/`m_A`, but they are issued on one
+        # ordered GPU stream, so no host barrier is needed on GPU — the periodic
+        # sync lands at the `fill_panel_halos!` boundary. The per-kernel host
+        # `synchronize` here was the dominant launch-bound bubble (GPU profiling
+        # 2026-06-13: ~3 host barriers per panel per sweep). Keep it on the CPU
+        # backend defensively, mirroring HaloExchange.jl's `KA_CPU` gate.
+        backend isa KA_CPU && synchronize(backend)
     end
     return nothing
 end
@@ -290,6 +297,21 @@ function _sweep_x_panel_mt!(rm_4d, m, am, scheme::AbstractAdvectionScheme,
     _profiled_copy!(:cs_copyback_x_mt) do
         _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
         _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
+    return nothing
+end
+
+function _sweep_x_panel_mt_pingpong!(rm_4d_out, m_out, rm_4d, m, am,
+                                     scheme::AbstractAdvectionScheme,
+                                     Nc, Hp, Nz, Nt;
+                                     flux_scale = one(eltype(m)))
+    _validate_halo_for_scheme(scheme, Hp)
+    FT = eltype(m)
+    backend = get_backend(rm_4d)
+    kernel! = _cs_xsweep_mt_kernel!(backend, 256)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_x_mt, :cs_kernel_sync_x_mt) do
+        kernel!(rm_4d_out, rm_4d, m_out, m, am, scheme, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
     end
     return nothing
 end
@@ -393,6 +415,39 @@ function _sweep_x_panel_mt!(rm_4d, m, am, scheme::UpwindScheme,
     return nothing
 end
 
+function _sweep_x_panel_mt_pingpong!(rm_4d_out, m_out, rm_4d, m, am,
+                                     scheme::UpwindScheme,
+                                     Nc, Hp, Nz, Nt;
+                                     flux_scale = one(eltype(m)))
+    FT = eltype(m)
+    backend = get_backend(rm_4d)
+    kernel! = _cs_xsweep_mt_upwind_kernel!(backend, 256)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_x_mt, :cs_kernel_sync_x_mt) do
+        kernel!(rm_4d_out, rm_4d, m_out, m, am, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    return nothing
+end
+
+function _sweep_x_panels_mt_pingpong!(panels_rm_4d_out::NTuple{6},
+                                      panels_m_out::NTuple{6},
+                                      panels_rm_4d::NTuple{6},
+                                      panels_m::NTuple{6},
+                                      panels_am::NTuple{6},
+                                      mesh::CubedSphereMesh,
+                                      scheme::AbstractAdvectionScheme;
+                                      flux_scale = one(eltype(panels_m[1])))
+    Nc, Hp = mesh.Nc, mesh.Hp
+    Nz = size(panels_m[1], 3)
+    Nt = size(panels_rm_4d[1], 4)
+    for p in 1:6
+        _sweep_x_panel_mt_pingpong!(panels_rm_4d_out[p], panels_m_out[p],
+                                   panels_rm_4d[p], panels_m[p], panels_am[p],
+                                   scheme, Nc, Hp, Nz, Nt; flux_scale)
+    end
+    return panels_rm_4d_out, panels_m_out
+end
+
 """Higher-order Y-sweep via KA kernel dispatching on scheme (Slopes, PPM, etc.)."""
 function _sweep_y_panel!(rm, m, bm, scheme::AbstractAdvectionScheme, rm_A, m_A, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
@@ -425,6 +480,21 @@ function _sweep_y_panel_mt!(rm_4d, m, bm, scheme::AbstractAdvectionScheme,
     _profiled_copy!(:cs_copyback_y_mt) do
         _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
         _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
+    return nothing
+end
+
+function _sweep_y_panel_mt_pingpong!(rm_4d_out, m_out, rm_4d, m, bm,
+                                     scheme::AbstractAdvectionScheme,
+                                     Nc, Hp, Nz, Nt;
+                                     flux_scale = one(eltype(m)))
+    _validate_halo_for_scheme(scheme, Hp)
+    FT = eltype(m)
+    backend = get_backend(rm_4d)
+    kernel! = _cs_ysweep_mt_kernel!(backend, 256)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_y_mt, :cs_kernel_sync_y_mt) do
+        kernel!(rm_4d_out, rm_4d, m_out, m, bm, scheme, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
     end
     return nothing
 end
@@ -520,6 +590,39 @@ function _sweep_y_panel_mt!(rm_4d, m, bm, scheme::UpwindScheme,
     return nothing
 end
 
+function _sweep_y_panel_mt_pingpong!(rm_4d_out, m_out, rm_4d, m, bm,
+                                     scheme::UpwindScheme,
+                                     Nc, Hp, Nz, Nt;
+                                     flux_scale = one(eltype(m)))
+    FT = eltype(m)
+    backend = get_backend(rm_4d)
+    kernel! = _cs_ysweep_mt_upwind_kernel!(backend, 256)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_y_mt, :cs_kernel_sync_y_mt) do
+        kernel!(rm_4d_out, rm_4d, m_out, m, bm, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    return nothing
+end
+
+function _sweep_y_panels_mt_pingpong!(panels_rm_4d_out::NTuple{6},
+                                      panels_m_out::NTuple{6},
+                                      panels_rm_4d::NTuple{6},
+                                      panels_m::NTuple{6},
+                                      panels_bm::NTuple{6},
+                                      mesh::CubedSphereMesh,
+                                      scheme::AbstractAdvectionScheme;
+                                      flux_scale = one(eltype(panels_m[1])))
+    Nc, Hp = mesh.Nc, mesh.Hp
+    Nz = size(panels_m[1], 3)
+    Nt = size(panels_rm_4d[1], 4)
+    for p in 1:6
+        _sweep_y_panel_mt_pingpong!(panels_rm_4d_out[p], panels_m_out[p],
+                                   panels_rm_4d[p], panels_m[p], panels_bm[p],
+                                   scheme, Nc, Hp, Nz, Nt; flux_scale)
+    end
+    return panels_rm_4d_out, panels_m_out
+end
+
 """Higher-order Z-sweep via KA kernel dispatching on scheme (Slopes, PPM, etc.).
 
 Z boundary: `_zface_tracer_flux` handles k=1 (TOA) and k=Nz+1 (surface) boundaries
@@ -555,6 +658,20 @@ function _sweep_z_panel_mt!(rm_4d, m, cm, scheme::AbstractAdvectionScheme,
     _profiled_copy!(:cs_copyback_z_mt) do
         _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
         _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
+    return nothing
+end
+
+function _sweep_z_panel_mt_pingpong!(rm_4d_out, m_out, rm_4d, m, cm,
+                                     scheme::AbstractAdvectionScheme,
+                                     Nc, Hp, Nz, Nt;
+                                     flux_scale = one(eltype(m)))
+    FT = eltype(m)
+    backend = get_backend(rm_4d)
+    kernel! = _cs_zsweep_mt_kernel!(backend, 256)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_z_mt, :cs_kernel_sync_z_mt) do
+        kernel!(rm_4d_out, rm_4d, m_out, m, cm, scheme, Int32(Nz), Int32(Hp), Int32(Nt), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
     end
     return nothing
 end
@@ -669,6 +786,39 @@ function _sweep_z_panel_mt!(rm_4d, m, cm, scheme::UpwindScheme,
     return nothing
 end
 
+function _sweep_z_panel_mt_pingpong!(rm_4d_out, m_out, rm_4d, m, cm,
+                                     scheme::UpwindScheme,
+                                     Nc, Hp, Nz, Nt;
+                                     flux_scale = one(eltype(m)))
+    FT = eltype(m)
+    backend = get_backend(rm_4d)
+    kernel! = _cs_zsweep_mt_upwind_kernel!(backend, 256)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_z_mt, :cs_kernel_sync_z_mt) do
+        kernel!(rm_4d_out, rm_4d, m_out, m, cm, Int32(Nz), Int32(Hp), Int32(Nt), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    return nothing
+end
+
+function _sweep_z_panels_mt_pingpong!(panels_rm_4d_out::NTuple{6},
+                                      panels_m_out::NTuple{6},
+                                      panels_rm_4d::NTuple{6},
+                                      panels_m::NTuple{6},
+                                      panels_cm::NTuple{6},
+                                      mesh::CubedSphereMesh,
+                                      scheme::AbstractAdvectionScheme;
+                                      flux_scale = one(eltype(panels_m[1])))
+    Nc, Hp = mesh.Nc, mesh.Hp
+    Nz = size(panels_m[1], 3)
+    Nt = size(panels_rm_4d[1], 4)
+    for p in 1:6
+        _sweep_z_panel_mt_pingpong!(panels_rm_4d_out[p], panels_m_out[p],
+                                   panels_rm_4d[p], panels_m[p], panels_cm[p],
+                                   scheme, Nc, Hp, Nz, Nt; flux_scale)
+    end
+    return panels_rm_4d_out, panels_m_out
+end
+
 @kernel function _copy_interior_3d_kernel!(dst, @Const(src), Hp)
     ii, jj, kk = @index(Global, NTuple)
     @inbounds begin
@@ -694,17 +844,19 @@ launched GPUArrays.jl's generic `gpu_getindex_kernel` (~50 % of GPU time on a
 C180 full-physics run, vs ~12% for a direct kernel). The custom kernels above
 do one device-local read/write per cell with no intermediate temporary.
 
-Synchronizes after the kernel launch so callers can safely reuse the shared
-`src` workspace buffer (e.g. `rm_A` / `m_A`) for the next panel's sweep.
-Without this barrier, panel p's copy-back can race against panel p+1's sweep
-kernel writing into the same workspace — silent today because CUDA serializes
-the default stream, but the dependency is not contractual across backends.
+The shared `src` workspace buffer (e.g. `rm_A` / `m_A`) is reused for the next
+panel's sweep, so panel p's copy-back must precede panel p+1's sweep. On GPU
+that ordering is guaranteed by the single issue-ordered stream, so no host
+barrier is needed — the periodic GPU sync lands at the `fill_panel_halos!`
+boundary. On the CPU backend we synchronize defensively, mirroring
+HaloExchange.jl's `KA_CPU` gate. The per-panel host `synchronize` previously
+here was the dominant launch-bound bubble (GPU profiling 2026-06-13).
 """
 function _copy_interior!(dst, src, Nc, Hp, Nz)
     backend = get_backend(dst)
     kernel! = _copy_interior_3d_kernel!(backend, 256)
     kernel!(dst, src, Int32(Hp); ndrange = (Nc, Nc, Nz))
-    synchronize(backend)
+    backend isa KA_CPU && synchronize(backend)
     return nothing
 end
 
@@ -713,7 +865,7 @@ function _copy_interior!(dst::AbstractArray{<:Any, 4}, src::AbstractArray{<:Any,
     backend = get_backend(dst)
     kernel! = _copy_interior_4d_kernel!(backend, 256)
     kernel!(dst, src, Int32(Hp); ndrange = (Nc, Nc, Nz, Nt))
-    synchronize(backend)
+    backend isa KA_CPU && synchronize(backend)
     return nothing
 end
 
@@ -722,7 +874,7 @@ end
 # =========================================================================
 
 """
-    CSAdvectionWorkspace{FT, A, S, A4}
+    CSAdvectionWorkspace{FT, A, S, P3, A4, P4}
 
 Pre-allocated cubed-sphere transport workspace.
 
@@ -731,17 +883,23 @@ Pre-allocated cubed-sphere transport workspace.
 - `rm_4d_A` is the packed-tracer panel buffer used by the production
   split-sweep path so CS follows the same packed `tracers_raw` paradigm
   as structured grids.
+- `m_pp_buf`, `rm_4d_pp_buf` are full-panel spare buffers for the packed
+  ping-pong path, avoiding the per-sweep copy-back kernels.
 - `w_scratch`, `dz_scratch` are panel-native column-operator workspaces
   with one structured `(Nc, Nc, Nz)` scratch array per panel.
 """
 struct CSAdvectionWorkspace{FT, A <: AbstractArray{FT, 3},
                             S <: NTuple{6, <:AbstractArray{FT, 3}},
-                            A4 <: AbstractArray{FT, 4}}
+                            P3 <: NTuple{6, <:AbstractArray{FT, 3}},
+                            A4 <: AbstractArray{FT, 4},
+                            P4 <: NTuple{6, <:AbstractArray{FT, 4}}}
     rm_A       :: A
     m_A        :: A
     w_scratch  :: S
     dz_scratch :: S
     rm_4d_A    :: A4
+    m_pp_buf   :: P3
+    rm_4d_pp_buf :: P4
 end
 
 function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
@@ -756,8 +914,14 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
     w_scratch = ntuple(_ -> array_type(zeros(FT, mesh.Nc, mesh.Nc, Nz)), 6)
     dz_scratch = ntuple(_ -> array_type(zeros(FT, mesh.Nc, mesh.Nc, Nz)), 6)
     rm_4d_A = array_type(zeros(FT, N, N, Nz, Nt))
-    return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch), typeof(rm_4d_A)}(
-        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A)
+    m_pp_buf = Nt > 0 ? ntuple(_ -> array_type(zeros(FT, N, N, Nz)), 6) :
+                         ntuple(_ -> m_A, 6)
+    rm_4d_pp_buf = Nt > 0 ? ntuple(_ -> array_type(zeros(FT, N, N, Nz, Nt)), 6) :
+                            ntuple(_ -> rm_4d_A, 6)
+    return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch),
+                                typeof(m_pp_buf), typeof(rm_4d_A),
+                                typeof(rm_4d_pp_buf)}(
+        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A, m_pp_buf, rm_4d_pp_buf)
 end
 
 function CSAdvectionWorkspace(mesh::CubedSphereMesh,
@@ -772,8 +936,14 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh,
     w_scratch = ntuple(_ -> similar(prototype, FT, mesh.Nc, mesh.Nc, Nz), 6)
     dz_scratch = ntuple(_ -> similar(prototype, FT, mesh.Nc, mesh.Nc, Nz), 6)
     rm_4d_A = similar(prototype, FT, N, N, Nz, Nt)
-    return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch), typeof(rm_4d_A)}(
-        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A)
+    m_pp_buf = Nt > 0 ? ntuple(_ -> similar(prototype, FT, N, N, Nz), 6) :
+                         ntuple(_ -> m_A, 6)
+    rm_4d_pp_buf = Nt > 0 ? ntuple(_ -> similar(prototype, FT, N, N, Nz, Nt), 6) :
+                            ntuple(_ -> rm_4d_A, 6)
+    return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch),
+                                typeof(m_pp_buf), typeof(rm_4d_A),
+                                typeof(rm_4d_pp_buf)}(
+        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A, m_pp_buf, rm_4d_pp_buf)
 end
 
 function Adapt.adapt_structure(to, ws::CSAdvectionWorkspace{FT}) where FT
@@ -782,8 +952,12 @@ function Adapt.adapt_structure(to, ws::CSAdvectionWorkspace{FT}) where FT
     w_scratch = Adapt.adapt(to, ws.w_scratch)
     dz_scratch = Adapt.adapt(to, ws.dz_scratch)
     rm_4d_A = Adapt.adapt(to, ws.rm_4d_A)
-    return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch), typeof(rm_4d_A)}(
-        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A)
+    m_pp_buf = Adapt.adapt(to, ws.m_pp_buf)
+    rm_4d_pp_buf = Adapt.adapt(to, ws.rm_4d_pp_buf)
+    return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch),
+                                typeof(m_pp_buf), typeof(rm_4d_A),
+                                typeof(rm_4d_pp_buf)}(
+        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A, m_pp_buf, rm_4d_pp_buf)
 end
 
 # =========================================================================
@@ -1104,6 +1278,13 @@ end
         "CSAdvectionWorkspace was built for $(size(workspace.rm_4d_A, 4)) packed tracers, " *
         "but the state has $Nt. Rebuild the workspace with `n_tracers = ntracers(state)` " *
         "or construct the `TransportModel` without overriding `workspace`."))
+    size(workspace.rm_4d_pp_buf[1], 4) >= Nt || throw(ArgumentError(
+        "CSAdvectionWorkspace ping-pong buffers were built for " *
+        "$(size(workspace.rm_4d_pp_buf[1], 4)) packed tracers, but the state has $Nt. " *
+        "Rebuild the workspace with `n_tracers = ntracers(state)`."))
+    size(workspace.m_pp_buf[1], 3) == size(workspace.m_A, 3) || throw(ArgumentError(
+        "CSAdvectionWorkspace mass ping-pong buffers are not allocated for packed transport. " *
+        "Rebuild the workspace with `n_tracers = ntracers(state)`."))
     return nothing
 end
 
@@ -1116,18 +1297,18 @@ path for `CSSplitSweepStyle` schemes: air mass is advanced once per sweep and
 all tracers in each panel's fourth dimension are updated inside the same panel
 kernel. The sequence and CFL contract match [`strang_split_cs!`](@ref).
 """
-function strang_split_cs_mt!(panels_rm_4d::NTuple{6},
-                             panels_m::NTuple{6},
-                             panels_am::NTuple{6},
-                             panels_bm::NTuple{6},
-                             panels_cm::NTuple{6},
-                             mesh::CubedSphereMesh,
-                             scheme::AbstractAdvectionScheme,
-                             workspace::CSAdvectionWorkspace;
-                             flux_scale = one(eltype(panels_m[1])),
-                             cfl_limit::Real = 0.95,
-                             subcycle_count::Union{Nothing, Integer} = nothing,
-                             midpoint! = nothing)
+function _strang_split_cs_mt_copyback!(panels_rm_4d::NTuple{6},
+                                       panels_m::NTuple{6},
+                                       panels_am::NTuple{6},
+                                       panels_bm::NTuple{6},
+                                       panels_cm::NTuple{6},
+                                       mesh::CubedSphereMesh,
+                                       scheme::AbstractAdvectionScheme,
+                                       workspace::CSAdvectionWorkspace;
+                                       flux_scale = one(eltype(panels_m[1])),
+                                       cfl_limit::Real = 0.95,
+                                       subcycle_count::Union{Nothing, Integer} = nothing,
+                                       midpoint! = nothing)
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(panels_m[1], 3)
     Nt = size(panels_rm_4d[1], 4)
@@ -1226,6 +1407,163 @@ function strang_split_cs_mt!(panels_rm_4d::NTuple{6},
     end
 
     return nothing
+end
+
+function strang_split_cs_mt!(panels_rm_4d::NTuple{6},
+                             panels_m::NTuple{6},
+                             panels_am::NTuple{6},
+                             panels_bm::NTuple{6},
+                             panels_cm::NTuple{6},
+                             mesh::CubedSphereMesh,
+                             scheme::AbstractAdvectionScheme,
+                             workspace::CSAdvectionWorkspace;
+                             flux_scale = one(eltype(panels_m[1])),
+                             cfl_limit::Real = 0.95,
+                             subcycle_count::Union{Nothing, Integer} = nothing,
+                             midpoint! = nothing)
+    strang_split_cs_mt_pingpong!(panels_rm_4d, panels_m,
+                                 workspace.rm_4d_pp_buf, workspace.m_pp_buf,
+                                 panels_am, panels_bm, panels_cm, mesh, scheme,
+                                 workspace; flux_scale, cfl_limit,
+                                 subcycle_count, midpoint!)
+    return nothing
+end
+
+"""
+    strang_split_cs_mt_pingpong!(panels_rm_4d, panels_m, panels_rm_4d_buf, panels_m_buf,
+                                 panels_am, panels_bm, panels_cm, mesh, scheme, workspace; ...)
+
+Packed-tracer CS split-sweep that writes each sweep directly into alternate
+panel buffers and swaps active/inactive tuples between sweeps. This removes the
+per-sweep copy-back kernels while keeping the existing KA sweep kernels. The
+final active `(rm, m)` tuple is returned.
+"""
+function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
+                                      panels_m::NTuple{6},
+                                      panels_rm_4d_buf::NTuple{6},
+                                      panels_m_buf::NTuple{6},
+                                      panels_am::NTuple{6},
+                                      panels_bm::NTuple{6},
+                                      panels_cm::NTuple{6},
+                                      mesh::CubedSphereMesh,
+                                      scheme::AbstractAdvectionScheme,
+                                      workspace::CSAdvectionWorkspace;
+                                      flux_scale = one(eltype(panels_m[1])),
+                                      cfl_limit::Real = 0.95,
+                                      subcycle_count::Union{Nothing, Integer} = nothing,
+                                      midpoint! = nothing)
+    Nc, Hp = mesh.Nc, mesh.Hp
+    Nz = size(panels_m[1], 3)
+    Nt = size(panels_rm_4d[1], 4)
+    _check_cs_packed_workspace(workspace, Nt)
+    FT = eltype(panels_m[1])
+    fs = convert(FT, flux_scale)
+    cfl_ft = convert(FT, cfl_limit)
+
+    n_pal = if subcycle_count === nothing
+        SectionTimer.@section :cs_cfl_x _cs_static_palindrome_subcycle_count(
+            panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
+            flux_scale = fs)
+    else
+        n = Int(subcycle_count)
+        n >= 1 || throw(ArgumentError("strang_split_cs_mt_pingpong!: subcycle_count must be ≥ 1, got $(subcycle_count)"))
+        if get(ENV, "ATMOSTR_ASSERT_CS_BINARY_CFL", "0") == "1"
+            required = SectionTimer.@section :cs_cfl_x _cs_static_palindrome_subcycle_count(
+                panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
+                flux_scale = fs)
+            required <= n || throw(ArgumentError(
+                "strang_split_cs_mt_pingpong!: binary substep contract requested " *
+                "subcycle_count=$n, but runtime CFL assertion requires $required."))
+        end
+        n
+    end
+    n_x = n_pal
+    n_y = n_pal
+    n_z = n_pal
+
+    let (mx, my, mz) = _STRANG_CS_MAX_SUB[]
+        if n_x > mx || n_y > my || n_z > mz
+            _STRANG_CS_MAX_SUB[] = (max(mx, n_x), max(my, n_y), max(mz, n_z))
+            @info "strang_split_cs! subcycle count grew" n_x n_y n_z
+        end
+    end
+
+    fs_x = fs / FT(n_x)
+    fs_y = fs / FT(n_y)
+    fs_z = fs / FT(n_z)
+
+    active_rm = panels_rm_4d
+    active_m = panels_m
+    spare_rm = panels_rm_4d_buf
+    spare_m = panels_m_buf
+
+    SectionTimer.@section :cs_sweep_x for _ in 1:n_x
+        _sweep_x_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
+                                     panels_am, mesh, scheme; flux_scale = fs_x)
+        SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1)
+        SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1)
+        active_rm, spare_rm = spare_rm, active_rm
+        active_m, spare_m = spare_m, active_m
+    end
+
+    SectionTimer.@section :cs_sweep_y for _ in 1:n_y
+        _sweep_y_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
+                                     panels_bm, mesh, scheme; flux_scale = fs_y)
+        SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2)
+        SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2)
+        active_rm, spare_rm = spare_rm, active_rm
+        active_m, spare_m = spare_m, active_m
+    end
+
+    SectionTimer.@section :cs_sweep_z for _ in 1:n_z
+        _sweep_z_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
+                                     panels_cm, mesh, scheme; flux_scale = fs_z)
+        active_rm, spare_rm = spare_rm, active_rm
+        active_m, spare_m = spare_m, active_m
+    end
+
+    # The midpoint operators (diffusion / surface flux) must act on the CURRENT
+    # active ping-pong buffer, not `state.tracers_raw` (which is stale mid-
+    # palindrome). A 0-argument `midpoint!()` would silently mutate the wrong
+    # array, so require the buffer-aware 2-arg form and fail loudly otherwise.
+    if midpoint! !== nothing
+        applicable(midpoint!, active_rm, active_m) || throw(ArgumentError(
+            "strang_split_cs_mt_pingpong! requires a buffer-aware `midpoint!` " *
+            "accepting (active_rm, active_m); a 0-argument midpoint! would mutate " *
+            "the wrong (stale) buffer mid-palindrome."))
+        midpoint!(active_rm, active_m)
+    end
+
+    SectionTimer.@section :cs_sweep_z for _ in 1:n_z
+        _sweep_z_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
+                                     panels_cm, mesh, scheme; flux_scale = fs_z)
+        active_rm, spare_rm = spare_rm, active_rm
+        active_m, spare_m = spare_m, active_m
+    end
+
+    SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(active_rm, mesh; dir = 2)
+    SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(active_m,  mesh; dir = 2)
+    SectionTimer.@section :cs_sweep_y for _ in 1:n_y
+        _sweep_y_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
+                                     panels_bm, mesh, scheme; flux_scale = fs_y)
+        SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2)
+        SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2)
+        active_rm, spare_rm = spare_rm, active_rm
+        active_m, spare_m = spare_m, active_m
+    end
+
+    SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(active_rm, mesh; dir = 1)
+    SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(active_m,  mesh; dir = 1)
+    SectionTimer.@section :cs_sweep_x for _ in 1:n_x
+        _sweep_x_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
+                                     panels_am, mesh, scheme; flux_scale = fs_x)
+        SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1)
+        SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1)
+        active_rm, spare_rm = spare_rm, active_rm
+        active_m, spare_m = spare_m, active_m
+    end
+
+    return active_rm, active_m
 end
 
 """

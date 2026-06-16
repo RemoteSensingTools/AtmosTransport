@@ -24,7 +24,7 @@ end_date     = "2021-12-05"
 file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
 
 [run]
-reset_air_mass_each_window = true
+air_mass_reset_mode = "preserve_tracer_mass"
 
 [advection]
 scheme = "ppm"

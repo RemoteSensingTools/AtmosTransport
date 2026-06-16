@@ -64,6 +64,27 @@ time_interval = 10800.0   # 3-hourly for 3D fields (seconds)
 pattern = "MERRA2_{stream}.{collection_name}.{date}.nc4"
 
 # ---------------------------------------------------------------------------
+# Preprocessing: wind-derived → cubed-sphere transport binary.
+#
+# Reproduces the validated GEOS-Chem CO₂ transport input path — horizontal
+# mass fluxes are derived from MERRA-2 winds (U/V) + a Cameron-Smith column
+# pressure-fix (the Poisson balance), NOT from native cubed-sphere MFXC.
+#
+#   winds_collection = "tavg3"  → 3-hr time-AVERAGED U/V (GEOS-Chem-faithful;
+#                                 the average wind carries mass between the
+#                                 instantaneous inst3 PS/QV endpoints).
+#                     "inst3"   → instantaneous U/V from the inst3 collection.
+#
+# The optional surface/convection/vdiff payloads are not wired on this branch
+# and default off.
+# ---------------------------------------------------------------------------
+[preprocessing]
+winds_collection     = "tavg3"
+include_surface      = false
+include_convection   = false
+include_vdiff_fields = false
+
+# ---------------------------------------------------------------------------
 # Collections
 # ---------------------------------------------------------------------------
 [collections.asm_Nv_inst]

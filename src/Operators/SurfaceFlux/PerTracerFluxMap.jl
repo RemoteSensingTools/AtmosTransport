@@ -45,17 +45,19 @@ flux_for(map, :CH4)         # nothing (not emitting)
 tuples adapt element-wise.
 
 # Fields
-- `sources :: S` — `NTuple{N, SurfaceFluxSource{<:AbstractArray}}` for
-  some `N`. Each entry carries a tracer name and the rate array.
+- `sources :: S` — `NTuple{N, <:AbstractSurfaceFluxSource}` for some
+  `N`. Each entry carries a tracer name and its rate data (a static
+  array for `SurfaceFluxSource`, a time series for
+  `TimeVaryingSurfaceFluxSource`).
 """
 struct PerTracerFluxMap{S <: Tuple}
     sources :: S
 
     function PerTracerFluxMap(sources::S) where {S <: Tuple}
-        # Validate that every entry is a SurfaceFluxSource.
+        # Validate that every entry is an AbstractSurfaceFluxSource.
         for (k, src) in enumerate(sources)
-            src isa SurfaceFluxSource ||
-                throw(ArgumentError("PerTracerFluxMap entry $k is a $(typeof(src)), expected SurfaceFluxSource"))
+            src isa AbstractSurfaceFluxSource ||
+                throw(ArgumentError("PerTracerFluxMap entry $k is a $(typeof(src)), expected AbstractSurfaceFluxSource"))
         end
         # Validate tracer names are unique — duplicate entries would
         # double-apply the emission for the same tracer.
@@ -67,20 +69,20 @@ struct PerTracerFluxMap{S <: Tuple}
 end
 
 """
-    PerTracerFluxMap(sources::SurfaceFluxSource...)
+    PerTracerFluxMap(sources::AbstractSurfaceFluxSource...)
 
 Variadic constructor: `PerTracerFluxMap(src1, src2, src3)` wraps the
 three sources into an NTuple-backed map.
 """
-PerTracerFluxMap(sources::SurfaceFluxSource...) = PerTracerFluxMap(sources)
+PerTracerFluxMap(sources::AbstractSurfaceFluxSource...) = PerTracerFluxMap(sources)
 
 """
-    PerTracerFluxMap(sources::AbstractVector{<:SurfaceFluxSource})
+    PerTracerFluxMap(sources::AbstractVector{<:AbstractSurfaceFluxSource})
     PerTracerFluxMap(sources::Tuple)
 
 Generic collection constructor. The input is frozen into an NTuple.
 """
-PerTracerFluxMap(sources::AbstractVector{<:SurfaceFluxSource}) =
+PerTracerFluxMap(sources::AbstractVector{<:AbstractSurfaceFluxSource}) =
     PerTracerFluxMap(Tuple(sources))
 
 """

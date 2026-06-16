@@ -38,6 +38,9 @@ export FileSurfaceFluxField, build_surface_flux_source, build_surface_flux_sourc
 include("BinaryPathExpander.jl")  # `[input]` folder+date-range
 using .BinaryPathExpander: expand_binary_paths
 export expand_binary_paths
+include("InputStaging.jl")        # rolling NVMe staging of the daily binaries
+using .InputStaging: InputStager, staged_path_for!, cleanup_staging!
+export InputStager, staged_path_for!, cleanup_staging!
 include("Simulation.jl")
 include("DrivenSimulation.jl")
 include("DrivenRunner.jl")        # library-level driven runner

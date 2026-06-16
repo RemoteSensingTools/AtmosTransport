@@ -274,7 +274,8 @@ function main()
                 length(windows), Nz_gen, Nz_geos, speed_threshold)
         if length(unique(h.steps_per_window_by_window[windows])) == 1
             steps = h.steps_per_window_by_window[first(windows)]
-            dt_factor = Float32(h.dt_met_seconds / (2 * steps))
+            dt_factor = Float32(AtmosTransport.MetDrivers.flux_application_seconds(
+                h.dt_met_seconds, steps, AtmosTransport.MetDrivers.flux_kind(reader)))
             geos_flux_scale = Float32(Float64(dt_factor) / geos_mass_flux_dt) / GRAVITY
             @printf("GEOS MFXC/MFYC scale: dt_factor %.1f s / mass_flux_dt %.1f s / g = %.6g\n",
                     Float64(dt_factor), geos_mass_flux_dt, geos_flux_scale)
@@ -284,7 +285,8 @@ function main()
 
         for w in windows
             steps = h.steps_per_window_by_window[w]
-            dt_factor = Float32(h.dt_met_seconds / (2 * steps))
+            dt_factor = Float32(AtmosTransport.MetDrivers.flux_application_seconds(
+                h.dt_met_seconds, steps, AtmosTransport.MetDrivers.flux_kind(reader)))
             geos_flux_scale = Float32(Float64(dt_factor) / geos_mass_flux_dt) / GRAVITY
             win = load_cs_window(reader, w)
             fill_dp_from_mass!(gen_dp, win.m, mesh.cell_areas, GRAVITY)

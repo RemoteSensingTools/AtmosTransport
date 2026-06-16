@@ -1152,29 +1152,29 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
     if cs_advection_style(scheme) isa CSSplitSweepStyle
         fill_panel_halos!(state.tracers_raw, grid.horizontal; dir=1)
         midpoint! = if emissions_op isa NoSurfaceFlux
-            () -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                state.tracers_raw, m, diffusion_op, workspace, dt, meteo;
+            (active_rm, active_m) -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
+                active_rm, active_m, diffusion_op, workspace, dt, meteo;
                 halo_width = state.halo_width)
         elseif uses_diffusive_surface_flux_boundary(diffusion_op)
-            () -> begin
-                apply_surface_flux!(state.tracers_raw, emissions_op, workspace, dt, meteo, grid;
+            (active_rm, active_m) -> begin
+                apply_surface_flux!(active_rm, emissions_op, workspace, dt, meteo, grid;
                                     tracer_names = state.tracer_names,
                                     halo_width = state.halo_width)
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    state.tracers_raw, m, diffusion_op, workspace, dt, meteo;
+                    active_rm, active_m, diffusion_op, workspace, dt, meteo;
                     halo_width = state.halo_width)
             end
         else
             half_dt = dt / 2
-            () -> begin
+            (active_rm, active_m) -> begin
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    state.tracers_raw, m, diffusion_op, workspace, half_dt, meteo;
+                    active_rm, active_m, diffusion_op, workspace, half_dt, meteo;
                     halo_width = state.halo_width)
-                apply_surface_flux!(state.tracers_raw, emissions_op, workspace, dt, meteo, grid;
+                apply_surface_flux!(active_rm, emissions_op, workspace, dt, meteo, grid;
                                     tracer_names = state.tracer_names,
                                     halo_width = state.halo_width)
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    state.tracers_raw, m, diffusion_op, workspace, half_dt, meteo;
+                    active_rm, active_m, diffusion_op, workspace, half_dt, meteo;
                     halo_width = state.halo_width)
             end
         end

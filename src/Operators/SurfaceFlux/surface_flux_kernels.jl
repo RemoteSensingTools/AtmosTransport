@@ -1,84 +1,159 @@
+# All kernels use Kahan compensated addition to prevent F32 rounding loss when
+# a small emission increment is added to a large background tracer field.
+#
+# Kahan update: y = x - c; t = s + y; c = (t - s) - y; s = t
+# where s = current cell value, x = rate*dt increment, c = running compensation.
+# Each kernel takes a `comp` array (same surface shape as `rate`) that persists
+# across substeps, carrying the accumulated rounding debt forward.
+
 """
-    _surface_flux_kernel!(q_raw, rate, dt, tracer_idx, Nz)
+    _surface_flux_kernel!(q_raw, rate, comp, dt, tracer_idx, Nz)
 
 KernelAbstractions kernel that adds a single source's surface flux to
-one tracer slab inside the 4D `tracers_raw` buffer.
+one tracer slab inside the 4D `tracers_raw` buffer using Kahan compensated
+addition.
 
 For structured grids, `q_raw` has shape `(Nx, Ny, Nz, Nt)`. The kernel
 is launched over `(Nx, Ny)` and every thread updates the surface layer
 at `k = Nz` for the tracer at `tracer_idx`:
 
-    q_raw[i, j, Nz, tracer_idx] += rate[i, j] * dt
+    Kahan: y = rate[i,j]*dt - comp[i,j]
+           t = q_raw[i,j,Nz,tracer_idx] + y
+           comp[i,j] = (t - q_raw[i,j,Nz,tracer_idx]) - y
+           q_raw[i,j,Nz,tracer_idx] = t
 
-One kernel launch per emitting source. For typical N ≤ 10 tracers the
-launch overhead is negligible relative to the kernel's O(Nx · Ny) work.
-
-# Unit convention
-
-`rate[i, j]` is a model-storage rate per cell (already
-area-integrated). `dt` is in seconds. Physical kg-species/s file
-sources are converted to this storage basis by the source builder. The
-kernel does NOT multiply by cell area; the caller is expected to have
-pre-integrated the flux into a per-cell rate.
-
-# Surface layer convention
-
-`k = Nz` is the surface. This matches the LatLon
-grid storage convention used everywhere in `src/`. A future
-`AbstractLayerOrdering` abstraction can generalise this.
+`comp` has shape `(Nx, Ny)` and is zero-initialised at source construction;
+it persists across all substeps so the rounding debt accumulates correctly.
 """
-@kernel function _surface_flux_kernel!(q_raw, @Const(rate), dt, tracer_idx, Nz)
+@kernel function _surface_flux_kernel!(q_raw, @Const(rate), comp, dt, tracer_idx, Nz)
     i, j = @index(Global, NTuple)
-    @inbounds q_raw[i, j, Nz, tracer_idx] += rate[i, j] * dt
+    @inbounds begin
+        x = rate[i, j] * dt
+        s = q_raw[i, j, Nz, tracer_idx]
+        c = comp[i, j]
+        y = x - c
+        t = s + y
+        comp[i, j]                   = (t - s) - y
+        q_raw[i, j, Nz, tracer_idx]  = t
+    end
 end
 
 """
-    _surface_flux_face_kernel!(q_raw, rate, dt, tracer_idx, Nz)
+    _surface_flux_face_kernel!(q_raw, rate, comp, dt, tracer_idx, Nz)
 
-Face-indexed packed surface-flux kernel. `q_raw` has shape
-`(ncells, Nz, Nt)` and `rate` has shape `(ncells,)`. The kernel is
-launched over `ncells` and updates the surface layer `k = Nz` for the
-target tracer:
-
-    q_raw[c, Nz, tracer_idx] += rate[c] * dt
+Face-indexed packed surface-flux kernel with Kahan compensation. `q_raw`
+has shape `(ncells, Nz, Nt)` and `rate`/`comp` have shape `(ncells,)`.
 """
-@kernel function _surface_flux_face_kernel!(q_raw, @Const(rate), dt, tracer_idx, Nz)
-    c = @index(Global, Linear)
-    @inbounds q_raw[c, Nz, tracer_idx] += rate[c] * dt
+@kernel function _surface_flux_face_kernel!(q_raw, @Const(rate), comp, dt, tracer_idx, Nz)
+    c_idx = @index(Global, Linear)
+    @inbounds begin
+        x = rate[c_idx] * dt
+        s = q_raw[c_idx, Nz, tracer_idx]
+        c = comp[c_idx]
+        y = x - c
+        t = s + y
+        comp[c_idx]                    = (t - s) - y
+        q_raw[c_idx, Nz, tracer_idx]   = t
+    end
 end
 
 """
-    _surface_flux_face_single_kernel!(q_raw, rate, dt, Nz)
+    _surface_flux_face_single_kernel!(q_raw, rate, comp, dt, Nz)
 
-Face-indexed single-tracer helper for a `(ncells, Nz)` tracer slice.
-Used by the reduced-Gaussian advection palindrome, which still loops
-over tracers one slice at a time.
+Face-indexed single-tracer helper with Kahan compensation for a
+`(ncells, Nz)` tracer slice. Used by the reduced-Gaussian advection
+palindrome.
 """
-@kernel function _surface_flux_face_single_kernel!(q_raw, @Const(rate), dt, Nz)
-    c = @index(Global, Linear)
-    @inbounds q_raw[c, Nz] += rate[c] * dt
+@kernel function _surface_flux_face_single_kernel!(q_raw, @Const(rate), comp, dt, Nz)
+    c_idx = @index(Global, Linear)
+    @inbounds begin
+        x = rate[c_idx] * dt
+        s = q_raw[c_idx, Nz]
+        c = comp[c_idx]
+        y = x - c
+        t = s + y
+        comp[c_idx]   = (t - s) - y
+        q_raw[c_idx, Nz] = t
+    end
 end
 
 """
-    _surface_flux_cs_single_kernel!(q_raw, rate, dt, Nz, Hp)
+    _surface_flux_cs_single_kernel!(q_raw, rate, comp, dt, Nz, Hp)
 
-Cubed-sphere single-tracer surface-flux kernel. `q_raw` is one
-halo-padded tracer panel `(Nc + 2Hp, Nc + 2Hp, Nz)` and `rate` is the
-interior `(Nc, Nc)` panel source.
+Cubed-sphere single-tracer surface-flux kernel with Kahan compensation.
+`q_raw` is one halo-padded tracer panel `(Nc + 2Hp, Nc + 2Hp, Nz)`,
+`rate` and `comp` are the interior `(Nc, Nc)` panel arrays.
 """
-@kernel function _surface_flux_cs_single_kernel!(q_raw, @Const(rate), dt, Nz, Hp)
+@kernel function _surface_flux_cs_single_kernel!(q_raw, @Const(rate), comp, dt, Nz, Hp)
     ii, jj = @index(Global, NTuple)
-    @inbounds q_raw[ii + Hp, jj + Hp, Nz] += rate[ii, jj] * dt
+    @inbounds begin
+        x = rate[ii, jj] * dt
+        s = q_raw[ii + Hp, jj + Hp, Nz]
+        c = comp[ii, jj]
+        y = x - c
+        t = s + y
+        comp[ii, jj]                  = (t - s) - y
+        q_raw[ii + Hp, jj + Hp, Nz]  = t
+    end
 end
 
 """
-    _surface_flux_cs_kernel!(q_raw, rate, dt, tracer_idx, Nz, Hp)
+    _surface_flux_cs_single_interp_kernel!(q_raw, series, comp, w0, w1, i0, i1, dt, Nz, Hp)
 
-Packed cubed-sphere surface-flux kernel. `q_raw` is one halo-padded panel
-`(Nc + 2Hp, Nc + 2Hp, Nz, Nt)` and `rate` is the interior `(Nc, Nc)`
-panel source for `tracer_idx`.
+Cubed-sphere single-tracer time-interpolated surface-flux kernel with
+Kahan compensation. The blended increment `(w0·series[i0] + w1·series[i1])·dt`
+is added via Kahan to `q_raw[ii+Hp, jj+Hp, Nz]`.
 """
-@kernel function _surface_flux_cs_kernel!(q_raw, @Const(rate), dt, tracer_idx, Nz, Hp)
+@kernel function _surface_flux_cs_single_interp_kernel!(q_raw, @Const(series),
+                                                        comp, w0, w1, i0, i1, dt, Nz, Hp)
     ii, jj = @index(Global, NTuple)
-    @inbounds q_raw[ii + Hp, jj + Hp, Nz, tracer_idx] += rate[ii, jj] * dt
+    @inbounds begin
+        x = (w0 * series[ii, jj, i0] + w1 * series[ii, jj, i1]) * dt
+        s = q_raw[ii + Hp, jj + Hp, Nz]
+        c = comp[ii, jj]
+        y = x - c
+        t = s + y
+        comp[ii, jj]                  = (t - s) - y
+        q_raw[ii + Hp, jj + Hp, Nz]  = t
+    end
+end
+
+"""
+    _surface_flux_cs_kernel!(q_raw, rate, comp, dt, tracer_idx, Nz, Hp)
+
+Packed cubed-sphere surface-flux kernel with Kahan compensation. `q_raw`
+is one halo-padded panel `(Nc + 2Hp, Nc + 2Hp, Nz, Nt)` and `rate`/`comp`
+are the interior `(Nc, Nc)` panel arrays.
+"""
+@kernel function _surface_flux_cs_kernel!(q_raw, @Const(rate), comp, dt, tracer_idx, Nz, Hp)
+    ii, jj = @index(Global, NTuple)
+    @inbounds begin
+        x = rate[ii, jj] * dt
+        s = q_raw[ii + Hp, jj + Hp, Nz, tracer_idx]
+        c = comp[ii, jj]
+        y = x - c
+        t = s + y
+        comp[ii, jj]                              = (t - s) - y
+        q_raw[ii + Hp, jj + Hp, Nz, tracer_idx]  = t
+    end
+end
+
+"""
+    _surface_flux_cs_interp_kernel!(q_raw, series, comp, w0, w1, i0, i1, dt, tracer_idx, Nz, Hp)
+
+Packed cubed-sphere time-interpolated surface-flux kernel with Kahan
+compensation. The blended increment is applied to `tracer_idx` via Kahan.
+"""
+@kernel function _surface_flux_cs_interp_kernel!(q_raw, @Const(series),
+                                                  comp, w0, w1, i0, i1, dt, tracer_idx, Nz, Hp)
+    ii, jj = @index(Global, NTuple)
+    @inbounds begin
+        x = (w0 * series[ii, jj, i0] + w1 * series[ii, jj, i1]) * dt
+        s = q_raw[ii + Hp, jj + Hp, Nz, tracer_idx]
+        c = comp[ii, jj]
+        y = x - c
+        t = s + y
+        comp[ii, jj]                              = (t - s) - y
+        q_raw[ii + Hp, jj + Hp, Nz, tracer_idx]  = t
+    end
 end

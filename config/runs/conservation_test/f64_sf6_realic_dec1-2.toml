@@ -1,0 +1,39 @@
+# F64 SF6 with real IC + edgar emission.
+# Tests whether F64 eliminates the ~2.5% emission deficit seen in F32 with a large
+# background (q_raw += rate*dt rounds away emission when background >> rate*dt in F32).
+# Compare Δburden against the F32 IC=0 run (sf6_ic0_splitflux_dec1-2.nc) which gives
+# the "true" emission (1.097e4 kg/2-day). In F64 the addition is exact (eps64=2.2e-16
+# vs delta_q/q ~5e-7 for SF6), so the deficit should collapse to ~F64 floor.
+[architecture]
+use_gpu = true
+backend = "cuda"
+[numerics]
+float_type = "Float64"
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-02"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+[advection]
+scheme = "ppm"
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+  [tracers.sf6.surface_flux]
+  kind = "edgar_sf6"
+  scale = 1.0116635
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = false
+[convection]
+kind = "cmfmc_matrix"
+tile_workspace_gib = 0.25
+use_collab_lu = false   # collab-LU is F32-only; standard LU for F64
+lmax_conv = 0
+[chemistry]
+kind = "none"
+[output]
+snapshot_interval_hours = 1
+snapshot_file = "~/data/AtmosTransport/output/conservation_test/f64_sf6_realic_dec1-2.nc"

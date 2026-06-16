@@ -116,6 +116,7 @@ function binary_capabilities(reader::CubedSphereBinaryReader)
         nlevel           = hdr.nlevel,
         steps_per_window = hdr.steps_per_window,
         variable_step_schedule = _has_variable_step_schedule(hdr.steps_per_window_by_window),
+        flux_kind = flux_kind(reader),
         preprocessor_contract = get(hdr.raw_header, "preprocessor_contract", nothing),
         vertical_Nz_output = get(hdr.raw_header, "vertical_Nz_output", nothing),
         adaptive_substeps = get(hdr.raw_header, "adaptive_substeps", nothing),
@@ -169,6 +170,12 @@ function _validate_replay_consistency_cs(reader::CubedSphereBinaryReader{FT}) wh
     for k in 1:Nt
         cur = load_cs_window(reader, k)
         steps = reader.header.steps_per_window_by_window[k]
+        if flux_kind(reader) === :full_window_mass_amount
+            scale = FT(1) / FT(2 * steps)
+            _scale_cs_replay_panels!(cur.am, scale)
+            _scale_cs_replay_panels!(cur.bm, scale)
+            _scale_cs_replay_panels!(cur.cm, scale)
+        end
         m_target = if k < Nt
             load_cs_window(reader, k + 1).m
         elseif has_flux_delta(reader)
@@ -205,6 +212,13 @@ function _validate_replay_consistency_cs(reader::CubedSphereBinaryReader{FT}) wh
     return (worst_window = worst_win, worst_rel = worst_rel, worst_abs = worst_abs)
 end
 
+@inline function _scale_cs_replay_panels!(panels::NTuple{6}, scale)
+    @inbounds for p in 1:6
+        panels[p] .*= scale
+    end
+    return panels
+end
+
 function CubedSphereTransportDriver(reader::CubedSphereBinaryReader{FT};
                                     arch = CPU(),
                                     Hp::Int = 1) where {FT}
@@ -238,8 +252,42 @@ supports_convection(driver::CubedSphereTransportDriver) =
 supports_diffusion(driver::CubedSphereTransportDriver) = has_surface(driver.reader)
 driver_grid(driver::CubedSphereTransportDriver) = driver.grid
 flux_interpolation_mode(::CubedSphereTransportDriver) = :constant
+flux_kind(driver::CubedSphereTransportDriver) = flux_kind(driver.reader)
 
 Base.close(driver::CubedSphereTransportDriver) = close(driver.reader)
+
+"""
+    release_payload!(driver::CubedSphereTransportDriver)
+
+Hint to the OS that the driver's memory-mapped binary payload is no longer
+needed, so the kernel drops the faulted file-cache pages now instead of holding
+them — charged to the process memory cgroup — until reclaim pressure. The per-day
+CS loop rebuilds a fresh driver each day; without this a long run accumulates
+every day's mmap as cgroup-charged `inactive_file`, leaving no cgroup headroom
+for the user's other processes (on a per-user cgroup the run can starve them).
+`munmap`/`finalize` does NOT achieve this — clean file pages survive the unmap —
+but `madvise(MADV_DONTNEED)` evicts them immediately (measured: ~32 GB → 0.7 GB
+for one ERA5 C180/L137 day).
+
+Safe: the mapping is read-only and file-backed, so any later access simply
+re-faults from disk rather than crashing — `madvise` here is purely an
+optimization. Linux-only; a no-op on other platforms or on `madvise` failure.
+Call once the day's windows have been consumed (the runner calls it right after
+the day's `close(driver)`); the binary writer page-aligns the payload, but the
+start is rounded down to a page boundary defensively.
+"""
+function release_payload!(driver::CubedSphereTransportDriver)
+    Sys.islinux() || return nothing
+    data = driver.reader.data
+    (data isa Array && !isempty(data)) || return nothing
+    MADV_DONTNEED = Cint(4)                      # Linux <sys/mman.h>
+    pg   = ccall(:getpagesize, Cint, ())
+    addr = UInt(pointer(data))
+    base = addr & ~(UInt(pg) - 1)                # round start down to a page boundary
+    len  = Csize_t(sizeof(data) + (addr - base)) # extend length to cover the rounding
+    ccall(:madvise, Cint, (Ptr{Cvoid}, Csize_t, Cint), Ptr{Cvoid}(base), len, MADV_DONTNEED)
+    return nothing
+end
 
 @inline _cs_basis_type(reader::CubedSphereBinaryReader) =
     mass_basis(reader) === :dry ? DryBasis : MoistBasis

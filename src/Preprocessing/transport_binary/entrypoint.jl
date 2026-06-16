@@ -296,6 +296,52 @@ function _process_day_native(cfg::AbstractDict;
     else
         error("[numerics].geos_balance_mode must be \"column\" or \"per_layer\"; got $(repr(balance_mode_raw))")
     end
+    cm_closure_raw = lowercase(String(get(numerics_cfg, "geos_cm_closure", "endpoint_balanced")))
+    cm_closure = if cm_closure_raw in ("endpoint_balanced", "endpoint", "diagnose", "balanced")
+        :endpoint_balanced
+    elseif cm_closure_raw in ("pressure_fixer", "pressurefixer", "fv3", "native")
+        :pressure_fixer
+    elseif cm_closure_raw in ("moisture_filtered", "moisturefiltered", "filtered", "filtered_endpoint")
+        :moisture_filtered
+    elseif cm_closure_raw in ("pfix_corrected", "pfixcorrected", "pfix", "pressure_fixer_corrected")
+        :pfix_corrected
+    elseif cm_closure_raw in ("omega_consistent", "omegaconsistent", "omega", "omega_cm")
+        :omega_consistent
+    else
+        error("[numerics].geos_cm_closure must be \"endpoint_balanced\", \"pressure_fixer\", " *
+              "\"moisture_filtered\", \"pfix_corrected\", or \"omega_consistent\"; got $(repr(cm_closure_raw))")
+    end
+    # cm-closure status (2026-06-03): `:endpoint_balanced` is the ONLY validated
+    # production default. ALL of `:pressure_fixer`, `:moisture_filtered`, and
+    # `:pfix_corrected` are DIAGNOSTIC-ONLY — they explore the SH-UTLS fingering
+    # but each fails at the tracer level (see docs/reference/GEOS_MASS_FLUX_UTLS_FINGERING.md):
+    #   :pressure_fixer    → smooth cm but unbounded ps drift / negative mass.
+    #   :moisture_filtered → VERIFIED NO-OP (balancing re-injects the noise).
+    #   :pfix_corrected    → reduces upper-UTLS noise but makes ~164-280 hPa WORSE
+    #                        (the drift correction emits a spurious surface cm flux),
+    #                        and chain_mass=true accumulates negative UTLS mass.
+    #   :omega_consistent  → anchors cm to the A3dyn OMEGA resolved vertical motion
+    #                        (vdiv=+vdiv_om, smooth); continuity exact by
+    #                        construction. Binary-validated (r_vdiv 0.197 ≈ MERRA-2
+    #                        CLEAN, cor(cm,OMEGA)=+1.00); UNDER tracer validation —
+    #                        keep gated until the adv-only tracer fingering is
+    #                        confirmed ≤ DIRTY (see fingerfix_proto_omega-...jl).
+    # The fingering is the intrinsic MFXC↔DELP residual; the validated cure is
+    # input-side (wind-derived / ERA5). `:omega_consistent` is the native-cube
+    # candidate cure that keeps the GEOS mass fluxes but re-anchors cm to OMEGA.
+    if cm_closure !== :endpoint_balanced
+        @warn "[numerics].geos_cm_closure=$(cm_closure) is DIAGNOSTIC/CANDIDATE, NOT " *
+              "the science-validated production default (see " *
+              "docs/reference/GEOS_MASS_FLUX_UTLS_FINGERING.md). Use " *
+              ":endpoint_balanced for production and the ERA5/wind-derived path " *
+              "for UTLS-sensitive science. :omega_consistent is binary-validated " *
+              "and under tracer validation."
+    end
+    # Spatial low-pass sweeps: the `:moisture_filtered` residual smoother and the
+    # `:pfix_corrected` column-drift smoother (ignored by the other closures).
+    smooth_iters = Int(get(numerics_cfg, "geos_moisture_filter_smooth_iters", 8))
+    smooth_iters >= 0 ||
+        error("[numerics].geos_moisture_filter_smooth_iters must be ≥ 0; got $(smooth_iters)")
     mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
     global_mass_pin = Bool(get(mass_fix_cfg, "enable", false))
     configured_global_mass_target_kg = _native_mass_fix_target_kg(cfg, grid)
@@ -337,6 +383,8 @@ function _process_day_native(cfg::AbstractDict;
             global_mass_pin = global_mass_pin,
             global_mass_target_kg = configured_global_mass_target_kg,
             balance_mode = balance_mode,
+            cm_closure = cm_closure,
+            smooth_iters = smooth_iters,
         )
         return process_day(d, day_grid, settings, vertical; day_kwargs...)
     end
@@ -344,6 +392,11 @@ function _process_day_native(cfg::AbstractDict;
     threaded = Threads.nthreads() > 1 && length(dates) > 1 &&
                supports_day_threading(settings) && !chain_mass &&
                !(global_mass_pin && !isfinite(configured_global_mass_target_kg))
+    # When the day loop itself is threaded, the inner `:omega_consistent`
+    # per-level Poisson loop must run SERIAL so day-workers don't each re-grab
+    # the whole pool (oversubscription). In the single-day-per-process (`--day`)
+    # path the day loop is serial, so the level solve keeps the full pool.
+    _OMEGA_LEVEL_PARALLEL[] = !threaded
     if threaded
         # Cold-cache pre-warm: regridder weight caches + JIT specializations
         # land during day 1 serial, then days 2..N run concurrently. Without
@@ -383,6 +436,8 @@ function _process_day_native(cfg::AbstractDict;
                 global_mass_pin = global_mass_pin,
                 global_mass_target_kg = global_mass_target_kg,
                 balance_mode = balance_mode,
+                cm_closure = cm_closure,
+                smooth_iters = smooth_iters,
             )
             result = process_day(d, day_grid, settings, vertical; day_kwargs...)
             seed_m = get(result, :final_m, nothing)

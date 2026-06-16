@@ -235,6 +235,12 @@ include("sources/geos.jl")
 # wires them all together.
 include("sources/era5.jl")
 
+# Native MERRA-2 reader: MERRA2Settings + day handles + per-window LL field
+# reader (PS/QV from inst3, U/V from tavg3). Drives the wind-derived → CS
+# path that reproduces the GEOS-Chem CO₂ transport input. Included after the
+# ERA5 sources (reader before the preprocessor that uses it).
+include("sources/merra2.jl")
+
 # TOML-driven met-source factory
 include("sources/loader.jl")
 
@@ -253,6 +259,14 @@ include("transport_binary/cubed_sphere_geos.jl")
 # C180 dry-mass re-derivation, wind rotation, face flux reconstruction,
 # Poisson balance, and v4 writer.
 include("transport_binary/era5_n320_regrid.jl")
+
+# MERRA-2 wind-derived → CS transport-binary writer. Near-clone of the ERA5
+# N320 writer: direct MERRA-2 NetCDF read + conservative regrid to C180,
+# wind-derived flux reconstruction + Cameron-Smith column pressure-fix
+# (Poisson balance), 8 windows/day. Reproduces the validated GEOS-Chem CO₂
+# transport input path; purely additive. Included after the ERA5 N320 writer
+# so `_fill_cs_mass_delta_payload!` is in scope.
+include("transport_binary/merra2_latlon_regrid.jl")
 
 # Met source abstraction
 export AbstractMetSettings, RawWindow
@@ -286,6 +300,13 @@ export ERA5N320ConvectionFields, allocate_era5_n320_convection_fields,
 export ERA5N320ToC180Pipeline, allocate_era5_n320_to_c180_pipeline,
        process_era5_n320_window!
 export process_era5_n320_to_cs_day
+
+# Native MERRA-2 reader + wind-derived → CS writer (GEOS-Chem CO₂ path).
+export MERRA2Settings, MERRA2DayHandles
+export open_merra2_day, close_merra2_day!, merra2_path, merra2_stream_code
+export read_merra2_window_fields, read_merra2_next_day_endpoint
+export MERRA2ToC180Pipeline, allocate_merra2_to_c180_pipeline,
+       process_merra2_window!, process_merra2_to_cs_day
 
 # Met-source TOML factory + vertical-coordinate helper used by GEOS CLI
 export load_met_settings, load_hybrid_coefficients

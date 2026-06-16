@@ -255,7 +255,9 @@ export AdvectionWorkspace
 export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
 export NoDiffusion, ImplicitVerticalDiffusion
 export NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource,
-       PerTracerFluxMap, flux_for
+       AbstractSurfaceFluxSource, TimeVaryingSurfaceFluxSource,
+       AbstractFluxTemporalScheme, StepwiseFlux, LinearInterpFlux, ConservativeMeanFlux,
+       flux_temporal_scheme, PerTracerFluxMap, flux_for
 export AbstractConvection, NoConvection, CMFMCConvection, TM5Convection,
        CMFMCMatrixConvection, CMFMCWorkspace
 export ConvectionForcing, apply_convection!, has_convection_forcing

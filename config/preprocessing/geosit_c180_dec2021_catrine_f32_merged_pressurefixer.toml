@@ -1,0 +1,60 @@
+# ===========================================================================
+# EXPERIMENT (2026-06-03): GEOS-IT C180 MERGED (top above 0.25 hPa collapsed) with
+# the FV3 PRESSURE-FIXER cm closure instead of endpoint-DELP diagnose.
+#
+# Apples-to-apples partner of the existing merged endpoint-closure binary
+# (transport_binary_dec2021_catrine_f32/). Same source/physics/merge; only the
+# cm closure differs. Merged vertical avoids the unmerged-mesospheric negative-
+# endpoint / extreme-CFL issues that fail the fullL72 pressure-fixer build.
+#   - geos_cm_closure = "pressure_fixer": native unbalanced fluxes, ΔB FV3 cm,
+#     chained pressure-fixer endpoint mass (commit e648bf3f).
+#   - require_substep_positivity = false: thin upper layers may warn under the
+#     pressure-fixer endpoint; record + keep the binary for the fingering test.
+#
+# Test: regen Dec 1, adv-only, compare SH-UTLS co2_natural fingering vs the
+# merged endpoint-closure binary (Path-A).
+# ===========================================================================
+
+[source]
+toml                 = "config/met_sources/geosit.toml"
+root_dir             = "/home/cfranken/data/AtmosTransport/met/geosit/C180/raw_catrine"
+include_surface      = true
+include_convection   = true
+include_vdiff_fields = true
+
+[output]
+directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_merged_pressurefixer"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+transform    = "merge_above_pressure"
+pressure_hPa = 0.25
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+chain_mass     = false             # re-anchor m to raw DELP each window (positive);
+                                   # chaining pf endpoints runs mass away negative.
+                                   # cm stays the smooth pressure-fixer closure.
+
+positivity_cfl_limit       = 0.95
+require_substep_positivity = false # pressure-fixer thin-layer endpoint may warn
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.95
+min_steps_per_window       = 1
+max_steps_per_window       = 64
+geos_balance_mode          = "column"     # ignored when cm_closure=pressure_fixer
+geos_cm_closure            = "pressure_fixer"
+
+[mass_fix]
+enable = true
+mode = "target_ps_dry"
+target_ps_dry_pa = 98726.0

@@ -129,11 +129,15 @@ Verify the per-substep horizontal+vertical positivity contract that the runtime'
      required because the CS runtime applies the
      direction sequence `X-Y-Z-Z-Y-X` for every met substep.
 
-Returns a NamedTuple `(direction, ratio, location, ok)`:
+Returns a NamedTuple `(direction, ratio, ratio_xy, ratio_z, location, ok)`:
 * `direction :: Union{Symbol, Nothing}` — the dominant contributor among
   `:x`, `:y`, `:z`, or `nothing` when no cell was inspected.
 * `ratio :: Float64` — worst observed palindrome outgoing budget over the
   reference mass, or `Inf` if any inspected cell had invalid mass or flux.
+* `ratio_xy :: Float64` — worst observed horizontal-only palindrome outgoing
+  budget over the reference mass.
+* `ratio_z :: Float64` — worst observed vertical-only palindrome outgoing
+  budget over the reference mass.
 * `location :: NTuple{4, Int}` — `(panel, i, j, k)` of the worst cell.
 * `ok :: Bool` — `true` iff `ratio <= cfl_limit`.
 
@@ -161,6 +165,8 @@ function verify_substep_positivity_cs!(m::NTuple{NP, <:AbstractArray{FT, 3}},
     iH = Hp + Nc
     worst_dir = nothing
     worst_ratio = 0.0
+    worst_ratio_xy = 0.0
+    worst_ratio_z = 0.0
     worst_loc = (0, 0, 0, 0)
     for p in 1:NP
         m_p = m[p]
@@ -190,6 +196,8 @@ function verify_substep_positivity_cs!(m::NTuple{NP, <:AbstractArray{FT, 3}},
                !isfinite(cz_l) || !isfinite(cz_h)
                 if !isinf(worst_ratio)
                     worst_ratio = Inf
+                    worst_ratio_xy = Inf
+                    worst_ratio_z = Inf
                     worst_dir = :x
                     worst_loc = (p, i, j, k)
                 end
@@ -198,8 +206,15 @@ function verify_substep_positivity_cs!(m::NTuple{NP, <:AbstractArray{FT, 3}},
             out_x = max(zero(FT), -ax_l) + max(zero(FT), ax_h)
             out_y = max(zero(FT), -by_l) + max(zero(FT), by_h)
             out_z = max(zero(FT), -cz_l) + max(zero(FT), cz_h)
-            outgoing = FT(2) * (out_x + out_y + out_z)
-            ratio = outgoing / min(mi, mi_next)
+            m_ref = min(mi, mi_next)
+            outgoing_xy = FT(2) * (out_x + out_y)
+            outgoing_z = FT(2) * out_z
+            outgoing = outgoing_xy + outgoing_z
+            ratio_xy = outgoing_xy / m_ref
+            ratio_z = outgoing_z / m_ref
+            ratio = outgoing / m_ref
+            worst_ratio_xy = max(worst_ratio_xy, Float64(ratio_xy))
+            worst_ratio_z = max(worst_ratio_z, Float64(ratio_z))
             if ratio > worst_ratio
                 worst_ratio = ratio
                 worst_dir = out_x >= out_y && out_x >= out_z ? :x :
@@ -209,6 +224,8 @@ function verify_substep_positivity_cs!(m::NTuple{NP, <:AbstractArray{FT, 3}},
         end
     end
     return (direction = worst_dir, ratio = Float64(worst_ratio),
+            ratio_xy = Float64(worst_ratio_xy),
+            ratio_z = Float64(worst_ratio_z),
             location = worst_loc, ok = worst_ratio <= cfl_limit)
 end
 

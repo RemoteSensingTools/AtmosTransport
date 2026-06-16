@@ -196,8 +196,23 @@ output_field_spec() = output_field_spec(Dict{String, Any}())
 tracer_fields(fields::OutputFieldSpec, name::Symbol) =
     get(fields.tracer_overrides, name, fields.default_tracer)
 
-function _output_options(output_cfg::AbstractDict, ::Type{FT}) where FT <: AbstractFloat
-    return SnapshotWriteOptions(float_type = FT,
+function _output_options(output_cfg::AbstractDict, ::Type{FT},
+                         format::Symbol = :netcdf) where FT <: AbstractFloat
+    # On-disk snapshot precision is independent of the model compute type FT.
+    # NetCDF defaults to FT (back-compatible), but the binary/ATMSNAP payload is
+    # Float32-only on disk (`binary_writer.jl`), so for that format the on-disk
+    # dtype is coerced to Float32. Float32 snapshots are ample for
+    # visualization/diagnostics even when the model integrates in Float64; the
+    # Float64 precision benefit lives in the in-run transport accumulation, and
+    # the F64 mass-balance check comes from the runtime budget log, not the
+    # snapshot file.
+    on_disk = FT
+    if format === :binary_mmap && on_disk !== Float32
+        @info "Binary (ATMSNAP) output is Float32-only on disk; storing Float32 \
+               snapshots while the model integrates in $(FT)."
+        on_disk = Float32
+    end
+    return SnapshotWriteOptions(float_type = on_disk,
                                 deflate_level = Int(get(output_cfg, "deflate_level", 0)),
                                 shuffle = Bool(get(output_cfg, "shuffle", true)))
 end
@@ -270,11 +285,11 @@ function runtime_output_spec(output_cfg::AbstractDict, ::Type{FT};
                                 default_cap_hours = default_cap_hours,
                                 fallback_hours = fallback_hours)
     partition = _output_partition(output_cfg)
-    options = _output_options(output_cfg, FT)
+    format = _parse_output_format(get(output_cfg, "format", "netcdf"))
+    options = _output_options(output_cfg, FT, format)
     fields = output_field_spec(get(output_cfg, "fields", Dict{String, Any}()))
     enabled = Bool(get(output_cfg, "enabled", true))
     path = _output_path(output_cfg, default_path)
-    format = _parse_output_format(get(output_cfg, "format", "netcdf"))
     return RuntimeOutputSpec(path, schedule, partition, options, fields, enabled, format)
 end
 

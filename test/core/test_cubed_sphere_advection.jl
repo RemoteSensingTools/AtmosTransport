@@ -9,7 +9,13 @@ using .AtmosTransport.Grids: reciprocal_edge
 using .AtmosTransport.Operators: MonotoneLimiter, required_halo_width
 using .AtmosTransport.Operators.Advection: fill_panel_halos!, strang_split_cs!,
     strang_split_cs_mt!, strang_split!, CSAdvectionWorkspace, VerticalRemapWorkspace,
-    compute_target_pressure_from_mass_direct!, vertical_remap_cs!
+    compute_target_pressure_from_mass_direct!, vertical_remap_cs!,
+    _sweep_x_panel_mt!, _sweep_y_panel_mt!, _sweep_z_panel_mt!,
+    _sweep_x_panels_mt_pingpong!, _sweep_y_panels_mt_pingpong!,
+    _sweep_z_panels_mt_pingpong!, _strang_split_cs_mt_copyback!,
+    strang_split_cs_mt_pingpong!
+using .AtmosTransport.State: CubedSphereFaceFluxState, DryMassFluxBasis,
+    total_air_mass, total_mass
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -64,6 +70,102 @@ function total_cs_surface_rate(rates)
         s += sum(rates[p])
     end
     return s
+end
+
+function make_structured_cs_state(; FT=Float64, Nc=8, Hp=1, Nz=2)
+    mesh = CubedSphereMesh(; FT, Nc, Hp)
+    N = Nc + 2Hp
+    panels_m = ntuple(6) do p
+        m = zeros(FT, N, N, Nz)
+        for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            m[Hp+i, Hp+j, k] = FT(1.0e9) * (1 + FT(0.01) * k + FT(0.002) * p)
+        end
+        m
+    end
+    panels_rm = ntuple(6) do p
+        rm = zeros(FT, N, N, Nz)
+        for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            χ = FT(390e-6) +
+                FT(30e-6) * sin(FT(2π) * FT(i - 1) / FT(Nc)) +
+                FT(20e-6) * cos(FT(2π) * FT(j - 1) / FT(Nc)) +
+                FT(8e-6) * FT(p - 3) +
+                FT(5e-6) * FT(k - 1)
+            rm[Hp+i, Hp+j, k] = panels_m[p][Hp+i, Hp+j, k] * χ
+        end
+        rm
+    end
+    fill_panel_halos!(panels_m, mesh; dir=0)
+    fill_panel_halos!(panels_rm, mesh; dir=0)
+    return mesh, panels_m, panels_rm
+end
+
+function make_mirrored_cs_horizontal_fluxes(mesh::CubedSphereMesh{FT}, Nz::Int) where FT
+    Prep = AtmosTransport.Preprocessing
+    Nc, Hp = mesh.Nc, mesh.Hp
+    N = Nc + 2Hp
+    raw_am = ntuple(6) do p
+        am = zeros(FT, Nc + 1, Nc, Nz)
+        for k in 1:Nz, s in 1:Nc
+            am[1,      s, k] = FT(1.0e6) * sin(FT(0.3p + 0.2s + 0.1k))
+            am[Nc + 1, s, k] = FT(1.0e6) * cos(FT(0.2p - 0.4s + 0.1k))
+        end
+        am
+    end
+    raw_bm = ntuple(6) do p
+        bm = zeros(FT, Nc, Nc + 1, Nz)
+        for k in 1:Nz, s in 1:Nc
+            bm[s, 1,      k] = FT(0.8e6) * cos(FT(0.1p + 0.3s - 0.2k))
+            bm[s, Nc + 1, k] = FT(0.8e6) * sin(FT(0.4p - 0.1s + 0.2k))
+        end
+        bm
+    end
+    Prep.sync_all_cs_boundary_mirrors!(raw_am, raw_bm, mesh.connectivity, Nc, Nz)
+
+    panels_am = ntuple(6) do p
+        am = zeros(FT, N + 1, N, Nz)
+        for k in 1:Nz, j in 1:Nc, i in 1:(Nc + 1)
+            am[Hp + i, Hp + j, k] = raw_am[p][i, j, k]
+        end
+        am
+    end
+    panels_bm = ntuple(6) do p
+        bm = zeros(FT, N, N + 1, Nz)
+        for k in 1:Nz, j in 1:(Nc + 1), i in 1:Nc
+            bm[Hp + i, Hp + j, k] = raw_bm[p][i, j, k]
+        end
+        bm
+    end
+    panels_cm = ntuple(_ -> zeros(FT, N, N, Nz + 1), 6)
+    return panels_am, panels_bm, panels_cm
+end
+
+function run_mirrored_seam_advection_conservation(scheme; FT=Float64, Nc=8, Nz=2, steps=2)
+    Hp = required_halo_width(scheme)
+    mesh, panels_m, panels_rm = make_structured_cs_state(; FT, Nc, Hp, Nz)
+    panels_am, panels_bm, panels_cm = make_mirrored_cs_horizontal_fluxes(mesh, Nz)
+    if scheme isa LinRoodPPMScheme
+        vertical = HybridSigmaPressure(FT[0, 100, 500], FT[0, 0.2, 1])
+        grid = AtmosGrid(mesh, vertical, CPU(); FT)
+        state = CubedSphereState(DryBasis, mesh, panels_m; tracer=panels_rm)
+        fluxes = CubedSphereFaceFluxState{DryMassFluxBasis}(panels_am, panels_bm, panels_cm)
+        ws = AtmosTransport.Operators.CSLinRoodAdvectionWorkspace(mesh, state.air_mass[1])
+        m0 = total_air_mass(state)
+        rm0 = total_mass(state, :tracer)
+        for _ in 1:steps
+            strang_split!(state, fluxes, grid, scheme; workspace=ws)
+        end
+        return (total_air_mass(state) - m0) / m0, (total_mass(state, :tracer) - rm0) / rm0
+    end
+
+    ws = CSAdvectionWorkspace(mesh, Nz)
+    m0 = total_interior(panels_m, Nc, Hp, Nz)
+    rm0 = total_interior(panels_rm, Nc, Hp, Nz)
+    for _ in 1:steps
+        strang_split_cs!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+                         mesh, scheme, ws; subcycle_count=1)
+    end
+    return (total_interior(panels_m, Nc, Hp, Nz) - m0) / m0,
+           (total_interior(panels_rm, Nc, Hp, Nz) - rm0) / rm0
 end
 
 # ---------------------------------------------------------------------------
@@ -266,6 +368,157 @@ end
 
             @test max_interior_absdiff_4d(rm_mt, rm_ref, Nc, Hp, Nz, 2) < 1e-12
             @test max_interior_absdiff(m_mt, m_ref, Nc, Hp, Nz) < 1e-12
+        end
+    end
+
+    @testset "Packed sweep ping-pong prototypes match copy-back path" begin
+        for scheme in (UpwindScheme(), PPMScheme())
+            Hp = required_halo_width(scheme)
+            mesh, panels_m0, panels_rm0 = make_cs_test_state(Nc=8, Hp=Hp, Nz=3, vmr=100.0)
+            Nc, Nz, Nt = mesh.Nc, 3, 2
+            N = Nc + 2Hp
+            panels_rm2 = ntuple(p -> panels_rm0[p] .* 1.7, 6)
+            panels_am = ntuple(6) do p
+                am = zeros(Float64, N + 1, N, Nz)
+                for k in 1:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc+1)
+                    am[i, j, k] = 0.015 * sin(0.2p + 0.7i - 0.4j + 0.3k)
+                end
+                am
+            end
+            panels_bm = ntuple(6) do p
+                bm = zeros(Float64, N, N + 1, Nz)
+                for k in 1:Nz, j in (Hp+1):(Hp+Nc+1), i in (Hp+1):(Hp+Nc)
+                    bm[i, j, k] = 0.012 * cos(0.3p - 0.5i + 0.6j + 0.2k)
+                end
+                bm
+            end
+            panels_cm = ntuple(6) do p
+                cm = zeros(Float64, N, N, Nz + 1)
+                for k in 2:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc)
+                    cm[i, j, k] = 0.01 * sin(0.1p + 0.2i + 0.3j - 0.7k)
+                end
+                cm
+            end
+
+            rm_in = ntuple(p -> cat(panels_rm0[p], panels_rm2[p]; dims = 4), 6)
+            m_in = deepcopy(panels_m0)
+            rm_ref = deepcopy(rm_in)
+            m_ref = deepcopy(m_in)
+            ws_ref = CSAdvectionWorkspace(mesh, Nz; n_tracers = Nt)
+            for p in 1:6
+                _sweep_x_panel_mt!(rm_ref[p], m_ref[p], panels_am[p],
+                                   scheme, ws_ref.rm_4d_A, ws_ref.m_A,
+                                   Nc, Hp, Nz, Nt; flux_scale = 0.75)
+            end
+            fill_panel_halos!(rm_ref, mesh; dir = 1)
+            fill_panel_halos!(m_ref, mesh; dir = 1)
+
+            rm_out = ntuple(p -> similar(rm_in[p]), 6)
+            m_out = ntuple(p -> similar(m_in[p]), 6)
+            _sweep_x_panels_mt_pingpong!(rm_out, m_out, rm_in, m_in, panels_am,
+                                         mesh, scheme; flux_scale = 0.75)
+            fill_panel_halos!(rm_out, mesh; dir = 1)
+            fill_panel_halos!(m_out, mesh; dir = 1)
+
+            @test max_interior_absdiff_4d(rm_out, rm_ref, Nc, Hp, Nz, Nt) < 1e-12
+            @test max_interior_absdiff(m_out, m_ref, Nc, Hp, Nz) < 1e-12
+
+            rm_ref = deepcopy(rm_in)
+            m_ref = deepcopy(m_in)
+            for p in 1:6
+                _sweep_y_panel_mt!(rm_ref[p], m_ref[p], panels_bm[p],
+                                   scheme, ws_ref.rm_4d_A, ws_ref.m_A,
+                                   Nc, Hp, Nz, Nt; flux_scale = 0.75)
+            end
+            fill_panel_halos!(rm_ref, mesh; dir = 2)
+            fill_panel_halos!(m_ref, mesh; dir = 2)
+
+            rm_out = ntuple(p -> similar(rm_in[p]), 6)
+            m_out = ntuple(p -> similar(m_in[p]), 6)
+            _sweep_y_panels_mt_pingpong!(rm_out, m_out, rm_in, m_in, panels_bm,
+                                         mesh, scheme; flux_scale = 0.75)
+            fill_panel_halos!(rm_out, mesh; dir = 2)
+            fill_panel_halos!(m_out, mesh; dir = 2)
+
+            @test max_interior_absdiff_4d(rm_out, rm_ref, Nc, Hp, Nz, Nt) < 1e-12
+            @test max_interior_absdiff(m_out, m_ref, Nc, Hp, Nz) < 1e-12
+
+            rm_ref = deepcopy(rm_in)
+            m_ref = deepcopy(m_in)
+            for p in 1:6
+                _sweep_z_panel_mt!(rm_ref[p], m_ref[p], panels_cm[p],
+                                   scheme, ws_ref.rm_4d_A, ws_ref.m_A,
+                                   Nc, Hp, Nz, Nt; flux_scale = 0.75)
+            end
+
+            rm_out = ntuple(p -> similar(rm_in[p]), 6)
+            m_out = ntuple(p -> similar(m_in[p]), 6)
+            _sweep_z_panels_mt_pingpong!(rm_out, m_out, rm_in, m_in, panels_cm,
+                                         mesh, scheme; flux_scale = 0.75)
+
+            @test max_interior_absdiff_4d(rm_out, rm_ref, Nc, Hp, Nz, Nt) < 1e-12
+            @test max_interior_absdiff(m_out, m_ref, Nc, Hp, Nz) < 1e-12
+        end
+    end
+
+    @testset "Packed Strang ping-pong prototype matches copy-back path" begin
+        for scheme in (UpwindScheme(), PPMScheme())
+            Hp = required_halo_width(scheme)
+            mesh, panels_m0, panels_rm0 = make_cs_test_state(Nc=8, Hp=Hp, Nz=3, vmr=100.0)
+            Nc, Nz, Nt = mesh.Nc, 3, 2
+            N = Nc + 2Hp
+            panels_rm2 = ntuple(p -> panels_rm0[p] .* 1.7, 6)
+            panels_am = ntuple(6) do p
+                am = zeros(Float64, N + 1, N, Nz)
+                for k in 1:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc+1)
+                    am[i, j, k] = 0.015 * sin(0.2p + 0.7i - 0.4j + 0.3k)
+                end
+                am
+            end
+            panels_bm = ntuple(6) do p
+                bm = zeros(Float64, N, N + 1, Nz)
+                for k in 1:Nz, j in (Hp+1):(Hp+Nc+1), i in (Hp+1):(Hp+Nc)
+                    bm[i, j, k] = 0.012 * cos(0.3p - 0.5i + 0.6j + 0.2k)
+                end
+                bm
+            end
+            panels_cm = ntuple(6) do p
+                cm = zeros(Float64, N, N, Nz + 1)
+                for k in 2:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc)
+                    cm[i, j, k] = 0.01 * sin(0.1p + 0.2i + 0.3j - 0.7k)
+                end
+                cm
+            end
+
+            rm_ref = ntuple(p -> cat(panels_rm0[p], panels_rm2[p]; dims = 4), 6)
+            m_ref = deepcopy(panels_m0)
+            ws_ref = CSAdvectionWorkspace(mesh, Nz; n_tracers = Nt)
+            _strang_split_cs_mt_copyback!(rm_ref, m_ref, panels_am, panels_bm, panels_cm,
+                                          mesh, scheme, ws_ref; subcycle_count = 1)
+
+            rm_ping = ntuple(p -> cat(panels_rm0[p], panels_rm2[p]; dims = 4), 6)
+            m_ping = deepcopy(panels_m0)
+            ws_ping = CSAdvectionWorkspace(mesh, Nz; n_tracers = Nt)
+            rm_final, m_final = strang_split_cs_mt_pingpong!(
+                rm_ping, m_ping, ws_ping.rm_4d_pp_buf, ws_ping.m_pp_buf,
+                panels_am, panels_bm, panels_cm,
+                mesh, scheme, ws_ping; subcycle_count = 1)
+
+            @test rm_final === rm_ping
+            @test m_final === m_ping
+            @test max_interior_absdiff_4d(rm_final, rm_ref, Nc, Hp, Nz, Nt) < 1e-12
+            @test max_interior_absdiff(m_final, m_ref, Nc, Hp, Nz) < 1e-12
+
+            # Contract: the ping-pong path needs a buffer-aware (2-arg) midpoint!;
+            # a 0-arg midpoint! would silently mutate the stale buffer, so it must
+            # error loudly instead.
+            rm_bad = ntuple(p -> cat(panels_rm0[p], panels_rm2[p]; dims = 4), 6)
+            m_bad = deepcopy(panels_m0)
+            ws_bad = CSAdvectionWorkspace(mesh, Nz; n_tracers = Nt)
+            @test_throws ArgumentError strang_split_cs_mt_pingpong!(
+                rm_bad, m_bad, ws_bad.rm_4d_pp_buf, ws_bad.m_pp_buf,
+                panels_am, panels_bm, panels_cm,
+                mesh, scheme, ws_bad; subcycle_count = 1, midpoint! = () -> nothing)
         end
     end
 
@@ -530,6 +783,25 @@ end
 
         @test abs(rm1 - rm0) / rm0 < 1e-13
         @test abs(m1 - m0) / m0 < 1e-13
+    end
+end
+
+@testset "CS advection conserves structured tracers across mirrored seams" begin
+    # Mirrors GCHP/FV3's contract: C-grid seam mass fluxes are oriented by the
+    # cubed-sphere contact map, then exchanged into each panel's boundary slots.
+    # A structured tracer background must conserve in F64 under that contract.
+    schemes = (
+        ("upwind", UpwindScheme(), 1e-9),
+        ("ppm", PPMScheme(), 1e-9),
+        ("linrood5", LinRoodPPMScheme(5), 1e-9),
+        ("linrood7", LinRoodPPMScheme(7), 1e-9),
+    )
+    for (label, scheme, tol) in schemes
+        @testset "$label" begin
+            air_rel, tracer_rel = run_mirrored_seam_advection_conservation(scheme)
+            @test abs(air_rel) < 1e-12
+            @test abs(tracer_rel) < tol
+        end
     end
 end
 

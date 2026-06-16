@@ -74,7 +74,9 @@ end
 #     `scripts/diagnostics/per_column_depth_histogram.jl`; e.g. on the ERA5/GEOS-native
 #     C180/L85 binary `lmax_conv = 75` is bit-exact for every observed column.
 #   n_merge            — aggregate n adjacent fine layers per convection super-layer
-#     (LU is O(L_super³): n_merge=3 ≈ 27× cheaper). 1 = no aggregation; 2 is rejected.
+#     (LU is O(L_super³): n_merge=3 ≈ 27× cheaper). 1 = no aggregation. n_merge=2 is
+#     accepted (the historical multi-substep blow-up was a clipping bug, now fixed —
+#     see TM5Convection.jl) and is the most accurate merge.
 struct TM5ConvectionSpec <: AbstractCollabLUConvectionSpec
     tile_workspace_gib :: Float64
     use_collab_lu      :: Bool
@@ -114,8 +116,10 @@ function _collab_lu_knobs(section)
             "remove lmax_conv/n_merge. Got lmax_conv=$(lmax_conv), n_merge=$(n_merge), " *
             "use_collab_lu=false."))
     end
-    n_merge == 2 && throw(ArgumentError(
-        "[convection] n_merge = 2 is rejected; use n_merge ∈ {1, 3, 4, 5}."))
+    # n_merge=2 is no longer rejected (2026-06-13): the multi-substep mass
+    # blow-up was a CLIPPING bug (uncompensated residual updraft flux when
+    # lmax_conv truncates below the cloud top), not n=2-specific — fixed by the
+    # cloud-top closure in the convection kernels. See TM5Convection.jl.
     return (budget, use_collab, lmax_conv, n_merge)
 end
 

@@ -3,7 +3,7 @@
 
 Cubed-sphere layer-centre Kz field whose six panel caches are filled directly
 from a binary `:kz` payload — the eddy diffusivity the preprocessor computed
-once per met window with the TM5 boundary-layer scheme ([`tm5_bldiff`](@ref)).
+once per met window with the TM5 boundary-layer scheme (`tm5_bldiff`).
 
 Unlike [`LocalHoltslagBovilleKzField`], which *derives* Kz at runtime from the
 GEOS VDIFF profiles, this field simply *copies* the precomputed values into its

@@ -219,7 +219,7 @@ end
             open(toml_path, "w") do io
                 println(io, """
                 [source]
-                name = "MERRA-2"
+                name = "NONEXISTENT-MET-SOURCE"
                 """)
             end
             @test_throws "Unsupported met source" load_met_settings(toml_path; root_dir = root)

@@ -78,20 +78,21 @@ const FT = Float32
         @test op_merge.lmax_conv == 75
         @test op_merge.use_collab_lu == true
 
-        # n_merge = 2 is rejected: known multi-substep mass blow-up
-        # on the production C180/L85 binary with surface emissions
-        # (see TM5Convection.jl docstring + agent-loop synthesis memo).
-        @test_throws ArgumentError TM5Convection(n_merge = 2)
-        @test_throws ArgumentError TM5Convection(use_collab_lu = true,
-                                                  lmax_conv = 75, n_merge = 2)
-        # n_merge ≥ 1 enforced.
+        # n_merge = 2 is now ACCEPTED (2026-06-13). The historical
+        # multi-substep mass blow-up was a CLIPPING bug — when `lmax_conv`
+        # truncates the active region below the cloud top, the updraft never
+        # fully detrains and the residual `amu` is uncompensated, which (fed by
+        # emission tracers) blows up over many substeps. It hit ANY n_merge with
+        # a clipping lmax_conv; it only LOOKED n=2-specific because of the L85
+        # cloud-top/lmax alignment. Fixed by the cloud-top closure in the
+        # updraft pass (tm5_kernels.jl + tm5_column_solve.jl).
+        @test TM5Convection(n_merge = 2).n_merge == 2
+        @test TM5Convection(use_collab_lu = true, lmax_conv = 75,
+                            n_merge = 2).n_merge == 2
+        @test TM5Convection{Float64}(1.0, true, 75, 2).n_merge == 2
+        # n_merge ≥ 1 still enforced (all construction paths).
         @test_throws ArgumentError TM5Convection(n_merge = 0)
         @test_throws ArgumentError TM5Convection(n_merge = -1)
-        # Parametric / inner-constructor path must reject too — the
-        # default `struct` would otherwise expose
-        # `TM5Convection{FT}(args...)` as a bypass for the kwarg
-        # guard. Inner constructor closes the hole.
-        @test_throws ArgumentError TM5Convection{Float64}(1.0, true, 75, 2)
         @test_throws ArgumentError TM5Convection{Float64}(1.0, false, 0, 0)
         @test_throws ArgumentError TM5Convection{Float64}(1.0, false, 0, -3)
     end
@@ -675,9 +676,10 @@ end
         forcing = ConvectionForcing(nothing, nothing, (; entu, detu, entd, detd))
         forcing_d = Adapt.adapt(CuArray, forcing)
 
-        # n_merge=2 is HARD-REJECTED by the constructor (see docstring
-        # in TM5Convection.jl); test n=4 and n=8 (largest divisor of 8).
-        for nm in (4, 8)
+        # n_merge=2 is now valid (the clipping blow-up was fixed by the
+        # cloud-top closure); test 2, 4, 8 (divisors of lmax_conv=8) — all
+        # must conserve mass.
+        for nm in (2, 4, 8)
             state = CellState(m; CO2 = copy(tracer1), CH4 = copy(tracer2))
             ws    = TM5Workspace(state.air_mass; cell_metrics = ones(FT, Ny))
             state_d = Adapt.adapt(CuArray, state); ws_d = Adapt.adapt(CuArray, ws)
@@ -713,6 +715,71 @@ end
                                                      tracer2[:, :, 5:Nz];
                                                      dims = 4))
         end
+    end
+end
+
+@testset "cloud-top closure: icltop==1 (clipped cloud) conserves mass over many substeps" begin
+    # Regression for the clipping mass blow-up (historically mislabelled the
+    # "n_merge=2 bug"; it is clipping, not merge). When `lmax_conv` truncates
+    # the active region so the cloud reaches its very top (relative
+    # `icltop == 1`), the pre-fix updraft left an UNCOMPENSATED residual `amu`
+    # at that top (the subsidence pass runs `LMAX_CONV:-1:2`), which blew mass
+    # up over many substeps. The cloud-top closure forces full updraft
+    # detrainment there. Mass must be conserved over many substeps on BOTH the
+    # per-thread (CPU) and collaborative (CUDA) paths.
+    Nx, Ny, Nz, Nt = 4, 3, 12, 1
+    mesh = LatLonMesh(; Nx = Nx, Ny = Ny, FT = FT)
+    A_ifc = collect(FT, range(0, 5f4; length = Nz + 1))
+    B_ifc = collect(FT, range(1, 0;   length = Nz + 1))
+    A_ifc[1] = 0; B_ifc[end] = 0; B_ifc[1] = 0; A_ifc[end] = 0
+    vc   = HybridSigmaPressure(A_ifc, B_ifc)
+    grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT = FT)
+    m = fill(FT(5e3), Nx, Ny, Nz)
+    tracer0 = zeros(FT, Nx, Ny, Nz)
+    for i in 1:Nx, j in 1:Ny, k in 1:Nz
+        tracer0[i, j, k] = FT(1e-4) * (k + i)
+    end
+    # Put the cloud at the model top (layers 1..4) so the cloud top IS the very
+    # top layer ⇒ relative `icltop == 1` for BOTH paths. (Production hits the
+    # same icltop==1 via a clipping `lmax_conv` on the collab path; the
+    # per-thread solver ignores `lmax_conv` and always runs the full column, so
+    # forcing the cloud to the top is the portable way to drive icltop==1 on
+    # both.) This is exactly the branch the aggregation testset (icltop=2) skips.
+    entu = zeros(FT, Nx, Ny, Nz); entu[:, :, 1:4] .= FT(0.03)
+    detu = zeros(FT, Nx, Ny, Nz); detu[:, :, 1:4] .= FT(0.02)
+    entd = zeros(FT, Nx, Ny, Nz); entd[:, :, 2:4] .= FT(0.01)
+    detd = zeros(FT, Nx, Ny, Nz); detd[:, :, 2:4] .= FT(0.005)
+    forcing = ConvectionForcing(nothing, nothing, (; entu, detu, entd, detd))
+    NSUB = 48
+
+    # Per-thread (CPU) path.
+    state_cpu = CellState(m; CO2 = copy(tracer0))
+    ws_cpu = TM5Workspace(state_cpu.air_mass; cell_metrics = ones(FT, Ny))
+    mass0_cpu = sum(state_cpu.tracers_raw)
+    op_cpu = TM5Convection(use_collab_lu = false, lmax_conv = 0, n_merge = 1)
+    for _ in 1:NSUB
+        apply!(state_cpu, forcing, grid, op_cpu, FT(600); workspace = ws_cpu)
+    end
+    @test all(isfinite, state_cpu.tracers_raw)
+    @test isapprox(sum(state_cpu.tracers_raw), mass0_cpu; rtol = 1f-3)
+
+    # Collaborative (CUDA) path: lmax_conv = 0 → full column (L_super = Nz = 12
+    # ≤ 85) so the collab kernel engages; icltop == 1 fires the closure.
+    if _HAS_CUDA
+        state_gpu = CellState(m; CO2 = copy(tracer0))
+        ws_gpu = TM5Workspace(state_gpu.air_mass; cell_metrics = ones(FT, Ny))
+        mass0_gpu = sum(state_gpu.tracers_raw)
+        sd = Adapt.adapt(CuArray, state_gpu)
+        wd = Adapt.adapt(CuArray, ws_gpu)
+        fd = Adapt.adapt(CuArray, forcing)
+        op_gpu = TM5Convection(use_collab_lu = true, lmax_conv = 0, n_merge = 1)
+        for _ in 1:NSUB
+            apply!(sd, fd, grid, op_gpu, FT(600); workspace = wd)
+        end
+        CUDA.synchronize()
+        q = Array(sd.tracers_raw)
+        @test all(isfinite, q)
+        @test isapprox(sum(q), mass0_gpu; rtol = 1f-3)
     end
 end
 

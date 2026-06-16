@@ -1,0 +1,49 @@
+# ===========================================================================
+# GEOS-IT C180 native NetCDF -> v4 CS C45 transport binaries for Dec 2021,
+# FULL native L72 (no top merge).
+#
+# Source data remain native C180 GEOS files; the preprocessing path uses nested
+# block coarsening for this C45 target grid.
+#
+# Output: `~/data/AtmosTransport/met/geosit/C45/transport_binary_dec2021_catrine_f32_fullL72/`
+# ===========================================================================
+
+[source]
+toml                 = "config/met_sources/geosit.toml"
+root_dir             = "/home/cfranken/data/AtmosTransport/met/geosit/C180/raw_catrine"
+include_surface      = true
+include_convection   = true
+include_vdiff_fields = true
+
+[output]
+directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C45/transport_binary_dec2021_catrine_f32_fullL72"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 45
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+transform    = "identity"
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+chain_mass     = false
+
+positivity_cfl_limit       = 0.95
+require_substep_positivity = true
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.95
+min_steps_per_window       = 1
+max_steps_per_window       = 512
+geos_balance_mode          = "column"
+
+[mass_fix]
+enable = true
+mode = "target_ps_dry"
+target_ps_dry_pa = 98726.0

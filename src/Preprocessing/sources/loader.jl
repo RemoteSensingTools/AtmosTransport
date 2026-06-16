@@ -19,10 +19,11 @@ _settings_constructor(name::AbstractString) =
 _settings_constructor(::Val{Symbol("GEOS-IT")})  = GEOSITSettings
 _settings_constructor(::Val{Symbol("GEOS-FP")})  = GEOSFPSettings
 _settings_constructor(::Val{Symbol("ERA5-N320")}) = ERA5N320Settings
+_settings_constructor(::Val{Symbol("MERRA-2")})  = MERRA2Settings
 
 function _settings_constructor(::Val{name}) where name
     error("Unsupported met source `$(String(name))`. " *
-          "Supported: GEOS-IT, GEOS-FP, ERA5-N320.")
+          "Supported: GEOS-IT, GEOS-FP, ERA5-N320, MERRA-2.")
 end
 
 """
@@ -108,4 +109,31 @@ function _build_met_settings(ctor::Type{<:ERA5GRIBSettings}, cfg::AbstractDict,
                   include_surface, include_convection, include_vdiff_fields,
                   include_tm5_diffusion, level_orientation,
                   coefficients_file = coefs, kwargs...)
+end
+
+# ---------------------------------------------------------------------------
+# MERRA-2 native NetCDF — regular 0.5°×0.625° LL archive split by collection
+# (`M2I3NVASM` inst3 PS/QV endpoints, `M2T3NVASM` tavg3 U/V winds). Shares the
+# GEOS-5 L72 hybrid coordinate. The settings carry no horizontal `Nc` (the
+# source is fixed 576×361) and no `mass_flux_dt` (fluxes are derived from
+# winds, not accumulated MFXC).
+# ---------------------------------------------------------------------------
+
+function _build_met_settings(ctor::Type{MERRA2Settings}, cfg::AbstractDict,
+                             root_dir::AbstractString; kwargs...)
+    vertical_cfg = get(cfg, "vertical",      Dict{String,Any}())
+    pre_cfg      = get(cfg, "preprocessing", Dict{String,Any}())
+
+    coefs = String(get(vertical_cfg, "coefficients_file",
+                       "config/geos_L72_coefficients.toml"))
+    winds_collection      = Symbol(get(pre_cfg, "winds_collection", "tavg3"))
+    include_surface       = Bool(get(pre_cfg, "include_surface", false))
+    include_convection    = Bool(get(pre_cfg, "include_convection", false))
+    include_vdiff_fields  = Bool(get(pre_cfg, "include_vdiff_fields", false))
+    include_tm5_diffusion = Bool(get(pre_cfg, "include_tm5_diffusion", false))
+
+    return ctor(; root_dir,
+                  coefficients_file = coefs, winds_collection,
+                  include_surface, include_convection, include_vdiff_fields,
+                  include_tm5_diffusion, kwargs...)
 end

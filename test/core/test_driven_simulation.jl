@@ -98,7 +98,8 @@ end
         model = TransportModel(state, fluxes, grid, UpwindScheme())
         sim = DrivenSimulation(model, driver;
                                start_window=1,
-                               stop_window=2)
+                               stop_window=2,
+                               air_mass_reset_mode=:none)
 
         step!(sim)
         step!(sim)
@@ -107,6 +108,48 @@ end
         @test window_index(sim) == 2
         @test all(isapprox.(sim.model.state.air_mass, 1.0; atol=eps(Float64) * 10))
         @test all(isapprox.(mixing_ratio(sim.model.state, :CO2), 400e-6; atol=eps(Float64) * 10))
+
+        close(driver)
+    end
+end
+
+@testset "DrivenSimulation air-mass reset modes choose VMR or tracer-mass conservation" begin
+    mktemp() do path, io
+        close(io)
+        write_driven_latlon_binary(path; FT=Float64, window_mass_scales=(1, 2))
+
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU())
+        grid = driver_grid(driver)
+        ncell = 4 * 3 * 2
+
+        function build_sim(; kwargs...)
+            state = CellState(MoistBasis, ones(Float64, 4, 3, 2);
+                              CO2 = fill(400e-6, 4, 3, 2))
+            fluxes = allocate_face_fluxes(grid.horizontal, 2; FT=Float64, basis=MoistBasis)
+            model = TransportModel(state, fluxes, grid, UpwindScheme())
+            return DrivenSimulation(model, driver; start_window=1, stop_window=2, kwargs...)
+        end
+
+        sim_vmr = build_sim(air_mass_reset_mode=:preserve_vmr)
+        step!(sim_vmr)
+        step!(sim_vmr)
+        step!(sim_vmr)
+        @test window_index(sim_vmr) == 2
+        @test all(isapprox.(sim_vmr.model.state.air_mass, 2.0; atol=eps(Float64) * 10))
+        @test all(isapprox.(mixing_ratio(sim_vmr.model.state, :CO2), 400e-6;
+                            atol=eps(Float64) * 10))
+        @test total_mass(sim_vmr.model.state, :CO2) ≈ ncell * 2.0 * 400e-6
+
+        sim_mass = build_sim()
+        @test sim_mass.air_mass_reset_mode === :preserve_tracer_mass
+        step!(sim_mass)
+        step!(sim_mass)
+        step!(sim_mass)
+        @test window_index(sim_mass) == 2
+        @test all(isapprox.(sim_mass.model.state.air_mass, 2.0; atol=eps(Float64) * 10))
+        @test total_mass(sim_mass.model.state, :CO2) ≈ ncell * 400e-6
+        @test all(isapprox.(mixing_ratio(sim_mass.model.state, :CO2), 200e-6;
+                            atol=eps(Float64) * 10))
 
         close(driver)
     end
@@ -255,7 +298,8 @@ end
         state = CellState(MoistBasis, ones(Float64, 4, 3, 2); CO2=fill(400e-6, 4, 3, 2))
         fluxes = allocate_face_fluxes(grid.horizontal, 2; FT=Float64, basis=MoistBasis)
         model = @inferred TransportModel(state, fluxes, grid, UpwindScheme())
-        sim = DrivenSimulation(model, driver; start_window=1, stop_window=2)
+        sim = DrivenSimulation(model, driver; start_window=1, stop_window=2,
+                               air_mass_reset_mode=:none)
         @test sim.interpolate_fluxes_within_window == false
 
         @test sim.Δt == 1800.0
@@ -272,7 +316,8 @@ end
         state_window = CellState(MoistBasis, ones(Float64, 4, 3, 2); CO2=fill(400e-6, 4, 3, 2))
         fluxes_window = allocate_face_fluxes(grid.horizontal, 2; FT=Float64, basis=MoistBasis)
         model_window = TransportModel(state_window, fluxes_window, grid, UpwindScheme())
-        sim_window = DrivenSimulation(model_window, driver; start_window=1, stop_window=2)
+        sim_window = DrivenSimulation(model_window, driver; start_window=1, stop_window=2,
+                                      air_mass_reset_mode=:none)
         run_window!(sim_window)
         @test sim_window.iteration == 2
         @test sim_window.time == 3600.0
@@ -322,7 +367,8 @@ end
         state_slopes = CellState(MoistBasis, ones(Float64, 4, 3, 2); CO2=fill(400e-6, 4, 3, 2))
         fluxes_slopes = allocate_face_fluxes(grid.horizontal, 2; FT=Float64, basis=MoistBasis)
         model_slopes = @inferred TransportModel(state_slopes, fluxes_slopes, grid, SlopesScheme())
-        sim_slopes = DrivenSimulation(model_slopes, driver; start_window=1, stop_window=1)
+        sim_slopes = DrivenSimulation(model_slopes, driver; start_window=1, stop_window=1,
+                                      air_mass_reset_mode=:none)
         m0_slopes = total_air_mass(sim_slopes.model.state)
         rm0_slopes = total_mass(sim_slopes.model.state, :CO2)
         run_window!(sim_slopes)
@@ -332,4 +378,29 @@ end
 
         close(driver)
     end
+end
+
+@testset "full-window flux scaling guard (flux_kind contract)" begin
+    # The runtime divides full-window fluxes by 2*steps_per_window before each
+    # substep. Only the CS flux state implements that scaling; every other
+    # flux state must FAIL LOUDLY — a silent no-op would run LL/RG transport
+    # with ~2*steps_per_window-times overstrength winds.
+    Models = AtmosTransport.Models
+    FT = Float64
+    mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT = FT)
+    fluxes_rg = allocate_face_fluxes(mesh, 2; FT = FT, basis = DryBasis)
+    @test_throws ArgumentError Models._scale_runtime_fluxes!(fluxes_rg, FT(0.5))
+
+    # CS flux state: am/bm/cm scale, nothing else does.
+    cs_mesh = CubedSphereMesh(; FT = FT, Nc = 4, Hp = 1)
+    fluxes_cs = allocate_face_fluxes(cs_mesh, 2; FT = FT, basis = DryBasis)
+    for p in 1:6
+        fluxes_cs.am[p] .= 2.0
+        fluxes_cs.bm[p] .= 4.0
+        fluxes_cs.cm[p] .= 8.0
+    end
+    Models._scale_runtime_fluxes!(fluxes_cs, FT(0.5))
+    @test all(all(fluxes_cs.am[p] .== 1.0) for p in 1:6)
+    @test all(all(fluxes_cs.bm[p] .== 2.0) for p in 1:6)
+    @test all(all(fluxes_cs.cm[p] .== 4.0) for p in 1:6)
 end

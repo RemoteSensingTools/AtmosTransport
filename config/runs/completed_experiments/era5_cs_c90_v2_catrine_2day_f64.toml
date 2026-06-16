@@ -21,7 +21,7 @@ float_type = "Float64"
 scheme = "slopes"
 tracer_name = "natural_co2"
 start_window = 1
-reset_air_mass_each_window = false
+air_mass_reset_mode = "none"
 
 [init]
 kind = "catrine_co2"

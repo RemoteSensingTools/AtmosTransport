@@ -175,7 +175,8 @@ them as starting points:
 | A different IC | `[tracers.co2_bl.init]` block. `kind = "uniform"` with `background = 4.0e-4` is the simplest; `kind = "latitude_step"` with `south_value`, `north_value`, `split_lat_deg` works on LL/RG/CS; `kind = "gaussian_blob"` with `background`, `amplitude`, `lon0_deg`, `lat0_deg`, `sigma_lon_deg`, `sigma_lat_deg`; `kind = "bl_enhanced"` (LL only) with `background`, `enhancement`, `n_layers`; `kind = "file"` / `"netcdf"` to load from disk (see `config/runs/catrine_*.toml` for file-init examples). |
 | A second tracer | Add `[tracers.<name>]` and `[tracers.<name>.init]` blocks; the runtime advects all tracers in lockstep. |
 | Different snapshot times | Edit `[output] snapshot_hours = […]`. |
-| F64 instead of F32 | Re-preprocess from raw ERA5 to F64; use `config/preprocessing/era5_ll72x37_advresln_dec2021.toml` (the F64 sibling) as the template. |
+| F64 instead of F32 | Just set `[numerics] float_type = "Float64"` in the run config — the runtime reads the same F32 binary and casts on load (no re-preprocessing). F64 needs an A100-class GPU or the CPU backend. (If you write `[output] format = "binary_mmap"` snapshots, they stay Float32 on disk regardless — the F64 precision is in the transport.) |
+| Time-varying emission | Under `[tracers.<name>.surface_flux]` add `time_varying = true` (+ optional `temporal_scheme = "stepwise"`) for sources with sub-monthly slices (e.g. `lmdz_co2`) — drives the diurnal cycle instead of a monthly mean. |
 | A different advection scheme | `[run] scheme = "ppm"` for Putman-Lin PPM, or `scheme = "linrood"` (CS only) which also accepts `ppm_order = 5` or `7`. The plain `ppm` path has no `order` parameter. |
 | Different grid topology | Pick the matching bundle config; the runtime auto-dispatches on the binary's `grid_type` header. |
 
@@ -194,6 +195,11 @@ them as starting points:
 
 ## What's next
 
+- [TOML schema](@ref) — the full run/preprocessing config reference: every
+  operator `kind` (incl. `cmfmc_matrix`/`tm5` convection with
+  `use_collab_lu`/`n_merge`, and `precomputed_kz` diffusion), time-varying
+  surface flux, `binary_mmap` output, rolling input staging, and the
+  `geos_cm_closure` fingering cure.
 - [Inspecting output](@ref) — deeper coverage of the diagnostic tools.
 - [Concepts](#) — how the model is organized internally (Phase 3).
 - [Tutorials](#) — Literate-driven worked examples per topology

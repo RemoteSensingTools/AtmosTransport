@@ -166,10 +166,18 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
     @inbounds for k_atm in Nz:-1:icltop
         # TM5:  amu(k)   = amu(k-1) + entu(k) - detu(k)
         # Atm:  amu[k_atm] = amu[k_atm+1] + entu[k_atm] - detu[k_atm]
-        amu[k_atm] = amu[k_atm + 1] + entu_col[k_atm] - detu_col[k_atm]
+        # Cloud-top closure (mirrors the collab kernels): at the topmost
+        # active layer force the updraft to fully detrain so no residual
+        # `amu` escapes into the passthrough region above. A clipping
+        # `lmax_conv` (active-region top below the cloud top) otherwise leaves
+        # an uncompensated residual updraft flux → emission-driven mass
+        # blow-up over many substeps. No-op when the updraft already closes
+        # at the cloud top (the native detrainment then equals amu+entu).
+        detu_k = (icltop == 1 && k_atm == icltop) ? (amu[k_atm + 1] + entu_col[k_atm]) : detu_col[k_atm]
+        amu[k_atm] = amu[k_atm + 1] + entu_col[k_atm] - detu_k
         if amu[k_atm] > 0
             denom = amu[k_atm + 1] + entu_col[k_atm]
-            zxi = max(zero(FT), one(FT) - detu_col[k_atm] / denom)
+            zxi = max(zero(FT), one(FT) - detu_k / denom)
         else
             amu[k_atm] = zero(FT)
             zxi = zero(FT)

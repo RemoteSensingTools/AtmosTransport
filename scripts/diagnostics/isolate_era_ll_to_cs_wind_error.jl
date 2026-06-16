@@ -1,4 +1,9 @@
 #!/usr/bin/env julia
+# NOTE(flux_kind): this script reads LL/ERA binaries, which are always
+# flux_kind=substep_mass_amount (full_window_mass_amount is written only
+# by the GEOS-CS preprocessor, and the LL runtime rejects it). The
+# unconditional dt/(2*steps) normalization here is therefore correct.
+
 
 module IsolateERALLToCSWindError
 

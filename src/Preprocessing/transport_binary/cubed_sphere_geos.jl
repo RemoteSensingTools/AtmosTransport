@@ -71,6 +71,510 @@ function _ps_from_air_mass!(ps::AbstractMatrix{FT},
     return ps
 end
 
+"""
+    _evolve_mass_pressure_fixer!(m_next, m_cur, am_v4, bm_v4, ΔB, two_steps, Nc, Nz)
+
+FV3 pressure-fixer mass evolution (restored from commit e648bf3f):
+
+    pit       = Σ_k (am[i,j,k] − am[i+1,j,k] + bm[i,j,k] − bm[i,j+1,k])
+    m_next[k] = m_cur[k] + two_steps · ΔB[k] · pit
+
+This is the endpoint implied by `compute_cs_cm_pressure_fixer!`'s closure
+`cm[k+1]−cm[k] = C_k − ΔB[k]·pit`, so the window replay closes to roundoff.
+The `two_steps` factor cancels the per-window flux scaling (`am ∝ 1/steps`), so
+`m_next` is independent of the chosen substep count. Globally mass-conserving
+(Σ_cells pit = 0 on the closed sphere), so the dry-mass pin is a no-op here.
+"""
+function _evolve_mass_pressure_fixer!(
+        m_next::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        m_cur::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        am_v4::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        bm_v4::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        ΔB::AbstractVector,
+        two_steps::FT, Nc::Int, Nz::Int) where {FT}
+    @inbounds for p in 1:CS_PANEL_COUNT
+        am = am_v4[p]; bm = bm_v4[p]
+        m  = m_cur[p]; mn = m_next[p]
+        for j in 1:Nc, i in 1:Nc
+            pit = zero(FT)
+            for k in 1:Nz
+                pit += (am[i, j, k] - am[i + 1, j, k]) +
+                       (bm[i, j, k] - bm[i, j + 1, k])
+            end
+            for k in 1:Nz
+                mn[i, j, k] = m[i, j, k] + two_steps * FT(ΔB[k]) * pit
+            end
+        end
+    end
+    return nothing
+end
+
+"""
+    _smooth_cs_residual_panels!(field, niter, w, Nc, Nz)
+
+In-place horizontal Jacobi smoothing of the moisture-source residual, applied
+INDEPENDENTLY and IDENTICALLY to each vertical level of every panel. The stencil
+is the 4-neighbour interior average with weight `w`; panel-edge cells average
+only their in-panel neighbours (no cross-panel exchange — the SH-UTLS fingering
+lives in panel interiors, and a missing seam neighbour leaves the gate identity
+untouched). Because the operator is LINEAR and LEVEL-INDEPENDENT,
+`Σ_k smooth(rₖ) = smooth(Σ_k rₖ)`; with a zero column-integral residual this is
+`smooth(0) = 0`, so the column closure (and thus surface pressure) is preserved
+exactly while only the grid-scale per-layer structure is damped.
+"""
+function _smooth_cs_residual_panels!(field::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                     niter::Int, w::FT, Nc::Int, Nz::Int) where FT
+    niter <= 0 && return nothing
+    scratch = Array{FT}(undef, Nc, Nc)
+    @inbounds for p in 1:CS_PANEL_COUNT
+        f = field[p]
+        for k in 1:Nz
+            for _ in 1:niter
+                for j in 1:Nc, i in 1:Nc
+                    scratch[i, j] = f[i, j, k]
+                end
+                for j in 1:Nc, i in 1:Nc
+                    s = zero(FT); n = 0
+                    i > 1  && (s += scratch[i - 1, j]; n += 1)
+                    i < Nc && (s += scratch[i + 1, j]; n += 1)
+                    j > 1  && (s += scratch[i, j - 1]; n += 1)
+                    j < Nc && (s += scratch[i, j + 1]; n += 1)
+                    f[i, j, k] = (one(FT) - w) * scratch[i, j] + w * (s / FT(n))
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+"""
+    _smooth_cs_columns!(field, niter, w, Nc)
+
+In-place horizontal Jacobi low-pass of a per-panel 2D column field (e.g. the
+column dry-mass drift), GLOBAL-SUM-PRESERVING (a uniform offset restores the
+total after smoothing, so a zero-sum input stays zero-sum and the global dry
+mass lands exactly on the analyzed target). Per-panel (no cross-panel exchange);
+keeps the LARGE-SCALE part of the field and damps grid scales.
+"""
+function _smooth_cs_columns!(field::NTuple{CS_PANEL_COUNT, Array{FT, 2}},
+                             niter::Int, w::FT, Nc::Int) where FT
+    niter <= 0 && return nothing
+    total_before = 0.0
+    @inbounds for p in 1:CS_PANEL_COUNT, v in field[p]
+        total_before += Float64(v)
+    end
+    scratch = Array{FT}(undef, Nc, Nc)
+    @inbounds for p in 1:CS_PANEL_COUNT
+        f = field[p]
+        for _ in 1:niter
+            copyto!(scratch, f)
+            for j in 1:Nc, i in 1:Nc
+                s = zero(FT); n = 0
+                i > 1  && (s += scratch[i - 1, j]; n += 1)
+                i < Nc && (s += scratch[i + 1, j]; n += 1)
+                j > 1  && (s += scratch[i, j - 1]; n += 1)
+                j < Nc && (s += scratch[i, j + 1]; n += 1)
+                f[i, j] = (one(FT) - w) * scratch[i, j] + w * (s / FT(n))
+            end
+        end
+    end
+    total_after = 0.0
+    @inbounds for p in 1:CS_PANEL_COUNT, v in field[p]
+        total_after += Float64(v)
+    end
+    offset = FT((total_before - total_after) / (CS_PANEL_COUNT * Nc * Nc))
+    @inbounds for p in 1:CS_PANEL_COUNT, idx in eachindex(field[p])
+        field[p][idx] += offset
+    end
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
+# Env-gated timing/diagnostic accumulator for the `:omega_consistent` prepare
+# (set `ATMOS_OMEGA_TIMING=1`). Counts per-window prepares, omega Poisson solves,
+# and CG iterations so the build-cost diagnosis is measurable without touching
+# the production hot path when the env var is unset.
+const _OMEGA_TIMING = Base.RefValue(false)
+# Per-level Poisson parallelism for the `:omega_consistent` reconstruction.
+# `true` in the single-day-per-process (`--day`) path so the level solve grabs
+# the full thread pool (the validated/production usage, ~5.0× speedup). The
+# multi-day driver sets it `false` BEFORE its `Threads.@threads` day loop so the
+# inner per-level loop runs SERIAL — otherwise each day-worker re-grabs the whole
+# pool (oversubscription / severe multi-day regression). Serial uses
+# `scratches[1]` so it is bit-identical to the parallel path.
+const _OMEGA_LEVEL_PARALLEL = Base.RefValue(true)
+mutable struct _OmegaTimingState
+    prepares::Int          # `_geos_prepare_window_for_steps!` calls (omega path)
+    solves::Int            # per-level Poisson solves issued
+    cg_iters::Int          # total CG iterations across all solves
+    recon_time::Float64    # wall seconds inside `_reconstruct_omega_consistent!`
+end
+const _OMEGA_TIMING_STATE = _OmegaTimingState(0, 0, 0, 0.0)
+function _reset_omega_timing!()
+    s = _OMEGA_TIMING_STATE
+    s.prepares = 0; s.solves = 0; s.cg_iters = 0; s.recon_time = 0.0
+    return s
+end
+
+# ---------------------------------------------------------------------------
+# OMEGA-consistent cm closure (geos_cm_closure="omega_consistent").
+#
+# The diagnosed cm[k+1]=cm[k]+div_h[k]-dm[k] forces the grid-noisy MFXC↔DELP
+# residual M into cm, so the per-layer vertical convergence vdiv=cm[k]-cm[k+1]
+# (==div_h) is grid-rough at the SH-UTLS → "fingering". GEOS A3dyn archives
+# OMEGA, the model's RESOLVED vertical pressure velocity, ~2x smoother than
+# div_h(MFXC). We build a SMOOTH physical vertical-convergence target vdiv_om
+# from OMEGA (DOWNWARD-positive, same sign as cm; dry-corrected by I3 QV), then
+# per level solve for a least-norm horizontal flux POTENTIAL λ so the NEW
+# horizontal convergence is div_h_new[k] = dm[k] − vdiv_om[k]; the telescoped cm
+# then gives EXACTLY vdiv[k] = dm[k]−div_h_new[k] = +vdiv_om[k] (smooth, cm
+# TRACKS OMEGA), while continuity holds BY CONSTRUCTION (the correction lives in
+# continuity's null space → the replay gate passes, and Σ_k vdiv_om = 0 ⇒
+# cm[Nz+1]=0).  alpha=1 (pure OMEGA) only; the hyperdiffusive-fallback blend in
+# the prototype is not productionized.
+#
+# Validated at the binary level (r_vdiv 0.197 ≈ MERRA-2 CLEAN 0.227, continuity
+# 4e-10, cor(cm,OMEGA)=+1.00). See
+# scripts/diagnostics/fingerfix_proto_omega-consistent-flux-reconstruction.jl.
+# ---------------------------------------------------------------------------
+
+# --- Monotone-cubic (PCHIP / Fritsch-Carlson) 3-hourly→hourly time interp -----
+# Uniform 3-hourly node spacing ⇒ the interior PCHIP slope is the harmonic-mean
+# limited secant; C1 curve, no kink across a bracket boundary, monotone (no
+# over/undershoot). At a node it returns that node exactly. Same scheme as the
+# validated prototype.
+@inline function _pchip_slope(dm1::Float64, d0::Float64)
+    (dm1 == 0.0 || d0 == 0.0 || sign(dm1) != sign(d0)) && return 0.0
+    return 2.0 / (1.0 / dm1 + 1.0 / d0)
+end
+@inline function _pchip_eval(y1::Float64, y2::Float64, y3::Float64, y4::Float64,
+                             f::Float64)
+    d12 = y2 - y1; d23 = y3 - y2; d34 = y4 - y3
+    m2 = _pchip_slope(d12, d23)
+    m3 = _pchip_slope(d23, d34)
+    h00 = (1 + 2f) * (1 - f)^2
+    h10 = f * (1 - f)^2
+    h01 = f^2 * (3 - 2f)
+    h11 = f^2 * (f - 1)
+    return h00 * y2 + h10 * m2 + h01 * y3 + h11 * m3
+end
+
+# CTM_A1 window w (1..24) valid minute; A3dyn / I3 3-hourly node valid minutes.
+# The A3dyn / I3 node valid-minute formulas are GLOBAL: they extend to node
+# indices ≤ 0 (previous UTC day) and > n3 (next UTC day) at the same uniform
+# 180-min spacing, so `_a3_valid_min(0)` = −90 (prev-day 22:30) and
+# `_a3_valid_min(n3+1)` = next-day 01:30. This lets the day-edge PCHIP brackets
+# span midnight when the adjacent-day handles are open.
+@inline _ctm_valid_min(w::Int) = (w - 1) * 60 + 30
+@inline _a3_valid_min(a::Int) = (a - 1) * 180 + 90
+@inline _i3_valid_min(a::Int) = (a - 1) * 180
+
+# Map a GLOBAL node index `g` (may be ≤0 = prev day, or >n3 = next day) to the
+# dataset + 1-based local index that holds it. Returns `nothing` when the
+# required adjacent-day dataset is absent (archive edge) so the caller can clamp
+# back into today's range (the legacy constant-extrapolation fallback).
+@inline function _resolve_global_node(g::Int, n3::Int, today, prev, next)
+    if 1 <= g <= n3
+        return (today, g)
+    elseif g <= 0
+        prev === nothing && return nothing
+        n_prev = prev.dim["time"]
+        loc = g + n_prev
+        return loc >= 1 ? (prev, loc) : nothing
+    else # g > n3
+        next === nothing && return nothing
+        n_next = next.dim["time"]
+        loc = g - n3
+        return loc <= n_next ? (next, loc) : nothing
+    end
+end
+
+# 4-node PCHIP stencil over the GLOBAL node axis for target minute `t`, clamping
+# each stencil index to the range of nodes actually available (today plus any
+# present adjacent days). Returns global stencil `(gm1, g0, g1, gp2)`, the local
+# fraction `f` between `g0` and `g1`, and `atnode` (g0 == g1, exact hit).
+function _pchip_bracket_global(valid_min::Function, n3::Int, t::Float64,
+                               gmin::Int, gmax::Int)
+    # Largest global node index with valid_min ≤ t, searched over [gmin, gmax].
+    a = gmin
+    for g in gmin:gmax
+        valid_min(g) <= t && (a = g)
+    end
+    g0 = clamp(a, gmin, gmax); g1 = clamp(a + 1, gmin, gmax)
+    t0 = Float64(valid_min(g0)); t1 = Float64(valid_min(g1))
+    f = (t1 == t0) ? 0.0 : clamp((t - t0) / (t1 - t0), 0.0, 1.0)
+    gm1 = clamp(g0 - 1, gmin, gmax); gp2 = clamp(g1 + 1, gmin, gmax)
+    return (gm1, g0, g1, gp2), f, (g0 == g1)
+end
+
+"""
+    _read_geos_omega_qv_pchip!(omega, qv, handles, win, Nc, Nz, FT)
+
+Read A3dyn OMEGA and I3 QV at the CTM window `win`'s valid time via monotone
+cubic (PCHIP) interpolation of the 3-hourly nodes, level-flipped to TOA-first.
+Day-edge windows whose valid time lies outside the same-day node span (win 1 is
+BEFORE the first A3dyn node 01:30; win 23/24 are PAST the last A3dyn node 22:30 /
+last I3 node 21:00) bracket ACROSS midnight into the previous/next day's nodes
+when `handles.prev_a3dyn`/`next_a3dyn`/`prev_i3`/`next_i3` are open — removing the
+former constant-extrapolation discontinuity at the day boundary. When an adjacent
+handle is absent (first/last day of the archive) that edge clamps to the nearest
+same-day node (the legacy bounded constant-extrapolation). Fills `omega`/`qv`
+(NTuple{6,Array{FT,3}}).
+"""
+function _read_geos_omega_qv_pchip!(omega::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                    qv::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                    handles::GEOSDayHandles, win::Int,
+                                    Nc::Int, Nz::Int) where FT
+    handles.a3dyn === nothing &&
+        error("geos_cm_closure=:omega_consistent needs A3dyn OMEGA; set include_vdiff_fields=true")
+    handles.i3 === nothing &&
+        error("geos_cm_closure=:omega_consistent needs I3 QV; set include_vdiff_fields=true")
+    or = handles.orientation
+    n3_a3 = handles.a3dyn.dim["time"]
+    n3_i3 = handles.i3.dim["time"]
+    t = Float64(_ctm_valid_min(win))
+    _read_pchip_field_xday!(omega, "OMEGA", _a3_valid_min, n3_a3, t, or, FT,
+                            handles.a3dyn, handles.prev_a3dyn, handles.next_a3dyn)
+    _read_pchip_field_xday!(qv, "QV", _i3_valid_min, n3_i3, t, or, FT,
+                            handles.i3, handles.prev_i3, handles.next_i3)
+    return nothing
+end
+
+# Read one PCHIP-interpolated field, with the 4-node stencil resolved across the
+# previous/today/next-day datasets. `gmin`/`gmax` bound the global stencil to the
+# nodes that are actually on disk: today (1..n3) is always present, prev extends
+# down to `1 - n_prev` when `prev` is open, next up to `n3 + n_next` when `next`
+# is open.
+function _read_pchip_field_xday!(out::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                 var::AbstractString, valid_min::Function,
+                                 n3::Int, t::Float64, or::Symbol, ::Type{FT},
+                                 today, prev, next) where FT
+    gmin = prev === nothing ? 1 : 1 - prev.dim["time"]
+    gmax = next === nothing ? n3 : n3 + next.dim["time"]
+    (nodes, f, atnode) = _pchip_bracket_global(valid_min, n3, t, gmin, gmax)
+    if atnode && f == 0.0
+        (ds, loc) = _resolve_global_node(nodes[2], n3, today, prev, next)
+        y = _read_panels_3d(ds[var], loc, or; FT = FT)
+        for p in 1:CS_PANEL_COUNT; copyto!(out[p], y[p]); end
+        return out
+    end
+    ys = ntuple(4) do s
+        (ds, loc) = _resolve_global_node(nodes[s], n3, today, prev, next)
+        _read_panels_3d(ds[var], loc, or; FT = FT)
+    end
+    y1, y2, y3, y4 = ys
+    @inbounds for p in 1:CS_PANEL_COUNT
+        o = out[p]; a = y1[p]; b = y2[p]; c = y3[p]; d = y4[p]
+        for idx in eachindex(o)
+            o[idx] = FT(_pchip_eval(Float64(a[idx]), Float64(b[idx]),
+                                    Float64(c[idx]), Float64(d[idx]), f))
+        end
+    end
+    return out
+end
+
+"""
+    _omega_vdiv_target!(vdiv_om, omega, qv, cell_areas, g, tau, Nc, Nz)
+
+Build the OMEGA-derived smooth per-layer vertical mass-convergence target
+(downward-positive, same sign as cm), INTERFACE-consistent dry conversion:
+qv_ifc[k]=0.5(qv[k-1]+qv[k]); the dry interface pressure velocity is
+omega_ifc·(1−qv_ifc); the per-layer convergence is the telescoped interface
+difference ·area/g·tau. Because omega_dry_ifc[1]=omega_dry_ifc[Nz+1]=0,
+Σ_k vdiv_om = 0 exactly (matches cm[1]=cm[Nz+1]=0). `tau = MFDT/2`.
+"""
+function _omega_vdiv_target!(vdiv_om::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                             omega::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                             qv::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                             cell_areas::AbstractMatrix,
+                             g::FT, tau::FT, Nc::Int, Nz::Int) where FT
+    @inbounds for p in 1:CS_PANEL_COUNT
+        om = omega[p]; q = qv[p]; vo = vdiv_om[p]
+        for j in 1:Nc, i in 1:Nc
+            a = FT(cell_areas[i, j])
+            for k in 1:Nz
+                om_top = (k == 1)  ? zero(FT) : FT(0.5) * (om[i, j, k - 1] + om[i, j, k])
+                om_bot = (k == Nz) ? zero(FT) : FT(0.5) * (om[i, j, k] + om[i, j, k + 1])
+                qv_top = (k == 1)  ? zero(FT) : FT(0.5) * (q[i, j, k - 1] + q[i, j, k])
+                qv_bot = (k == Nz) ? zero(FT) : FT(0.5) * (q[i, j, k] + q[i, j, k + 1])
+                od_top = om_top * (one(FT) - qv_top)
+                od_bot = om_bot * (one(FT) - qv_bot)
+                vo[i, j, k] = (a / g) * (od_top - od_bot) * tau
+            end
+        end
+    end
+    return vdiv_om
+end
+
+"""
+    _reconstruct_omega_consistent!(am, bm, dm, vdiv_om, grid, vdiv_scale; tol, max_iter)
+
+After the column balance (so div_h closes the column: Σ_k div_h = Σ_k dm), apply
+a per-level Poisson flux-potential correction so the NEW horizontal convergence
+is div_h_new[k] = dm[k] − vdiv_scale·vdiv_om[k]. Structurally identical to
+`_balance_cs_level!`: drive the graph divergence (= −div_h) toward
+−(dm − vdiv) by solving L·ψ = (div_current − desired) and applying the flux
+correction. `vdiv_scale = source_steps_per_met/steps` matches the per-substep
+flux scaling without mutating the stored base-scaled `vdiv_om` (so the adaptive
+loop can re-prepare at a different `steps` without F32 drift). The realized
+telescoped cm then has vdiv[k] = dm[k] − div_h_new[k] = +vdiv_scale·vdiv_om[k]
+UP TO a per-level global constant (the unrealizable mean removed before the
+solve; zero grid-scale signature so r_vdiv is unchanged, global-mean part
+reconciled by the dry-mass pin). Continuity holds per column to roundoff. Returns
+(max_increment, max_post_residual) over interior cells for the gate log.
+"""
+# Single-level OMEGA-consistent flux-potential correction. Independent per level
+# (touches only `am[:,:,k]`/`bm[:,:,k]` and the supplied per-thread `scratch`),
+# so the Nz levels can be solved concurrently. Returns the per-level correction
+# magnitude, post-residual, and CG iteration count for the gate/timing reduction.
+@inline function _reconstruct_omega_level!(k::Int,
+                                           am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                           bm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                           dm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                           vdiv_om::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                           ft::CSGlobalFaceTable,
+                                           degree::Vector{Int},
+                                           scratch::CSPoissonScratch,
+                                           vdiv_scale::Float64,
+                                           Nc::Int, nc::Int;
+                                           tol::Float64, max_iter::Int) where FT
+    div = scratch.div
+    rhs = scratch.rhs
+    psi = scratch.psi
+    cg_scratch = (r = scratch.r, p = scratch.p, Ap = scratch.Ap, z = scratch.z)
+    @inbounds begin
+        # Current graph divergence at level k (= −div_h).
+        fill!(div, 0.0)
+        for f in 1:ft.nf
+            panel = Int(ft.face_panel[f]); dir = Int(ft.face_dir[f])
+            i = Int(ft.face_idx_i[f]); j = Int(ft.face_idx_j[f])
+            flux = dir == 1 ? Float64(am[panel][i, j, k]) : Float64(bm[panel][i, j, k])
+            div[Int(ft.face_left[f])]  += flux
+            div[Int(ft.face_right[f])] -= flux
+        end
+        # Desired graph divergence: −div_h_new = −(dm − vdiv_om).
+        # rhs[c] = div_current[c] − desired_graph_div[c] = div[c] + dh_new[c].
+        # A horizontal flux divergence is globally mean-zero per level, so ONLY
+        # the null-space (mean-zero) part of dh_new is realizable as a flux
+        # correction. Subtract its per-level global mean EXPLICITLY (rather than
+        # leaning on the solver's internal mean-zero projection): the realized
+        # vdiv = vdiv_scale·vdiv_om + (a per-level global CONSTANT). That constant
+        # has zero grid-scale Laplacian, so the r_vdiv fingering metric is
+        # UNCHANGED; the dropped global-mean part is the net per-level mass
+        # tendency that cm carries, reconciled to ~0 by the dry-mass pin (so the
+        # column bottom residual handed to diagnose_cs_cm! is the global-mean
+        # drift only, not a per-column leak). [Codex P1: make this intentional.]
+        dh_sum = 0.0
+        for c in 1:nc
+            p_idx = (c - 1) ÷ (Nc * Nc) + 1
+            li = (c - 1) % (Nc * Nc); jl = li ÷ Nc + 1; il = li % Nc + 1
+            dh_new = Float64(dm[p_idx][il, jl, k]) -
+                     vdiv_scale * Float64(vdiv_om[p_idx][il, jl, k])
+            rhs[c] = div[c] + dh_new
+            dh_sum += dh_new
+        end
+        dh_mean = dh_sum / nc
+        @simd for c in 1:nc
+            rhs[c] -= dh_mean
+        end
+        _, cg_iter = solve_cs_poisson_pcg!(psi, rhs, ft, degree, cg_scratch;
+                              tol = tol, max_iter = max_iter, project_every = 50)
+        apply_cs_flux_correction!(am, bm, psi, ft, k)
+        # Track the correction magnitude + post residual for the gate log.
+        max_inc = 0.0
+        for f in 1:ft.nf
+            d = abs(psi[Int(ft.face_right[f])] - psi[Int(ft.face_left[f])])
+            d > max_inc && (max_inc = d)
+        end
+        fill!(div, 0.0)
+        for f in 1:ft.nf
+            panel = Int(ft.face_panel[f]); dir = Int(ft.face_dir[f])
+            i = Int(ft.face_idx_i[f]); j = Int(ft.face_idx_j[f])
+            flux = dir == 1 ? Float64(am[panel][i, j, k]) : Float64(bm[panel][i, j, k])
+            div[Int(ft.face_left[f])]  += flux
+            div[Int(ft.face_right[f])] -= flux
+        end
+        max_post = 0.0
+        for c in 1:nc
+            p_idx = (c - 1) ÷ (Nc * Nc) + 1
+            li = (c - 1) % (Nc * Nc); jl = li ÷ Nc + 1; il = li % Nc + 1
+            dh_new = Float64(dm[p_idx][il, jl, k]) -
+                     vdiv_scale * Float64(vdiv_om[p_idx][il, jl, k])
+            r = abs(div[c] - (-dh_new))
+            r > max_post && (max_post = r)
+        end
+    end
+    return (max_inc, max_post, cg_iter)
+end
+
+function _reconstruct_omega_consistent!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                        bm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                        dm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                        vdiv_om::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                        grid::CubedSphereTargetGeometry,
+                                        vdiv_scale::Float64;
+                                        tol::Float64 = 1e-11,
+                                        max_iter::Int = 8000) where FT
+    ft = grid.face_table
+    degree = grid.cell_degree
+    Nc = ft.Nc
+    nc = ft.nc
+    Nz = size(dm[1], 3)
+
+    # Each level is an independent Poisson solve; give every thread its own
+    # CSPoissonScratch so the per-level div/rhs/psi/CG buffers never alias.
+    # `apply_cs_flux_correction!` writes only level k (incl. its mirror entries),
+    # so the cross-panel mirror sync is deferred to a single pass at the end.
+    # The CG is a deterministic sequential solve on a per-level RHS, so the
+    # written am/bm/cm are BIT-IDENTICAL to the serial loop regardless of the
+    # thread schedule.
+    nthread = Threads.maxthreadid()
+    scratches = Vector{CSPoissonScratch}(undef, nthread)
+    scratches[1] = grid.poisson_scratch
+    for t in 2:nthread
+        scratches[t] = CSPoissonScratch(nc)
+    end
+
+    inc_by_level = zeros(Float64, Nz)
+    post_by_level = zeros(Float64, Nz)
+    iter_by_level = zeros(Int, Nz)
+    # Per-level parallelism only when the level solve owns the pool. The
+    # multi-day driver clears `_OMEGA_LEVEL_PARALLEL` before its day `@threads`
+    # so this runs SERIAL (no oversubscription); single-day `--day` runs keep
+    # it set and use the full pool. Serial uses `scratches[1]`, so the written
+    # am/bm/cm are bit-identical regardless of path.
+    use_threads = _OMEGA_LEVEL_PARALLEL[] && Threads.maxthreadid() > 1
+    if use_threads
+        Threads.@threads :static for k in 1:Nz
+            mi, mp, ci = _reconstruct_omega_level!(
+                k, am, bm, dm, vdiv_om, ft, degree,
+                scratches[Threads.threadid()], vdiv_scale, Nc, nc;
+                tol = tol, max_iter = max_iter)
+            inc_by_level[k] = mi
+            post_by_level[k] = mp
+            iter_by_level[k] = ci
+        end
+    else
+        for k in 1:Nz
+            mi, mp, ci = _reconstruct_omega_level!(
+                k, am, bm, dm, vdiv_om, ft, degree,
+                scratches[1], vdiv_scale, Nc, nc;
+                tol = tol, max_iter = max_iter)
+            inc_by_level[k] = mi
+            post_by_level[k] = mp
+            iter_by_level[k] = ci
+        end
+    end
+    max_inc = maximum(inc_by_level)
+    max_post = maximum(post_by_level)
+    if _OMEGA_TIMING[]
+        _OMEGA_TIMING_STATE.solves += Nz
+        _OMEGA_TIMING_STATE.cg_iters += sum(iter_by_level)
+    end
+    _sync_cs_mirrors!(am, bm, ft, Nz)
+    return (max_increment = max_inc, max_post_residual = max_post)
+end
+
 function _cs_total_air_mass(panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArray})
     total = 0.0
     for p in 1:CS_PANEL_COUNT
@@ -456,7 +960,7 @@ function _geos_vdiff_payload!(workspace)
     return workspace.vdiff_v4
 end
 
-mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, VD} <:
+mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, VD, VO} <:
                AbstractWindowWorkspace{CubedSphereTargetGeometry, FT}
     strategy    :: ST
     strategy_ws :: SW
@@ -491,6 +995,31 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     global_mass_pin_enabled :: Bool
     global_mass_target_kg :: Float64
     balance_mode :: Symbol
+    # Vertical-flux (cm) closure: `:endpoint_balanced` (default) closes cm from
+    # the column-balanced horizontal fluxes against the raw GEOS DELP_dry
+    # endpoint tendency (`diagnose_cs_cm!`); `:pressure_fixer` keeps the native
+    # horizontal fluxes UNBALANCED and closes cm by construction via the FV3
+    # ΔB-distributed rule (`compute_cs_cm_pressure_fixer!`), chaining the mass
+    # `m_next = m_cur + 2·steps·ΔB·pit` (avoids dumping the column moisture-source
+    # term into cm — the SH-UTLS "fingering"). See module header + commit e648bf3f.
+    cm_closure :: Symbol
+    ΔB :: Vector{FT}          # B[k+1]-B[k], TOA-first, length Nz, Σ ΔB = 1
+    # Raw (pinned) GEOS DELP_dry endpoint, preserved across the adaptive
+    # refinement loop. `:moisture_filtered` balances + diagnoses against THIS
+    # (the faithful analyzed endpoint) while `m_next_target` holds the filtered
+    # endpoint the replay gate checks. For `:endpoint_balanced`/`:pressure_fixer`
+    # it is unused (they read `m_next_target` directly).
+    m_next_delp :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
+    # Horizontal Jacobi sweeps applied to the moisture-source residual in the
+    # `:moisture_filtered` closure (0 ⇒ equivalent to `:endpoint_balanced`, up to
+    # the dm = (m_next−m_cur)/(2·steps) round-trip in F32).
+    smooth_iters :: Int
+    # `:omega_consistent` closure scratch (else `nothing`): OMEGA/QV PCHIP read
+    # buffers + the smooth OMEGA-derived per-layer vertical-convergence target
+    # vdiv_om (downward-positive, Σ_k=0). Populated per window in `ingest_window!`.
+    omega_buf :: VO
+    qv_buf    :: VO
+    vdiv_om   :: VO
 end
 
 const _GEOS_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
@@ -509,7 +1038,9 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                    windows_per_day::Integer = 0,
                                    global_mass_pin::Bool = false,
                                    global_mass_target_kg::Real = NaN,
-                                   balance_mode::Symbol = :column) where FT
+                                   balance_mode::Symbol = :column,
+                                   cm_closure::Symbol = :endpoint_balanced,
+                                   smooth_iters::Integer = 8) where FT
     Nc = grid.Nc
     Nz = vertical.Nz
     Nz_native = vertical.Nz_native
@@ -545,6 +1076,31 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
         error("windows_per_day must be non-negative, got $(windows_per_day)")
     balance_mode in (:column, :per_layer) ||
         error("GEOS-CS balance_mode must be :column or :per_layer; got $(balance_mode)")
+    cm_closure in (:endpoint_balanced, :pressure_fixer, :moisture_filtered,
+                   :pfix_corrected, :omega_consistent) ||
+        error("GEOS-CS cm_closure must be :endpoint_balanced, :pressure_fixer, " *
+              ":moisture_filtered, :pfix_corrected, or :omega_consistent; got $(cm_closure)")
+    if cm_closure === :omega_consistent
+        settings.include_vdiff_fields ||
+            error("GEOS-CS cm_closure=:omega_consistent needs A3dyn OMEGA + I3 QV; " *
+                  "set [source].include_vdiff_fields=true")
+        grid.Nc == settings.Nc ||
+            error("GEOS-CS cm_closure=:omega_consistent is wired for the native " *
+                  "passthrough (target Nc == source Nc) only; got target Nc=$(grid.Nc), " *
+                  "source Nc=$(settings.Nc).")
+        Nz == Nz_native ||
+            error("GEOS-CS cm_closure=:omega_consistent is wired for the identity " *
+                  "vertical transform (Nz == Nz_native) only; got Nz=$(Nz), " *
+                  "Nz_native=$(Nz_native). Use [vertical].transform=\"identity\" " *
+                  "(the validated full-L72 build).")
+    end
+    # ΔB[k] = B_interface[k+1] − B_interface[k] (TOA-first; Σ ΔB = 1 by hybrid
+    # sigma-pressure construction). The merged_vc is the target coordinate (same
+    # source the identity plan above is built from). Used by :pressure_fixer cm.
+    Bifc = vertical.merged_vc.B
+    length(Bifc) == Nz + 1 ||
+        error("GEOS-CS ΔB needs $(Nz+1) interface B coefficients, got $(length(Bifc))")
+    ΔB = FT[FT(Bifc[k + 1] - Bifc[k]) for k in 1:Nz]
 
     am_native_v4 = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz_native), npanel)
     bm_native_v4 = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz_native), npanel)
@@ -555,6 +1111,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     dm_v4 = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
     m_cur = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
     m_next_target = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
+    m_next_delp = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
     ps_cur = ntuple(_ -> zeros(FT, Nc, Nc), npanel)
     cmfmc_v4 = settings.include_convection ?
         ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), npanel) : nothing
@@ -566,11 +1123,21 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
         t  = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel),
         qv = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel),
     ) : nothing
+    # OMEGA-consistent closure scratch: OMEGA/QV read buffers + the smooth
+    # vertical-convergence target. Identity passthrough (Nc==settings.Nc,
+    # Nz==Nz_native) is enforced above, so all three are target-shaped.
+    omega_buf = cm_closure === :omega_consistent ?
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
+    qv_buf = cm_closure === :omega_consistent ?
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
+    vdiv_om = cm_closure === :omega_consistent ?
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
     raw = allocate_raw_window(settings; FT = FT, Nz = Nz_native)
 
     return GEOSCubedSphereWindowWorkspace{
         FT, typeof(strategy), typeof(strategy_ws), typeof(raw), typeof(cell_areas),
-        typeof(plan), typeof(cmfmc_v4), typeof(dtrain_v4), typeof(vdiff_v4)}(
+        typeof(plan), typeof(cmfmc_v4), typeof(dtrain_v4), typeof(vdiff_v4),
+        typeof(vdiv_om)}(
             strategy, strategy_ws, raw, plan,
             am_native_v4, bm_native_v4, m_native_kg,
             am_v4, bm_v4, cm_v4, dm_v4,
@@ -580,7 +1147,8 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             fill(steps_per_met, schedule_len), Bool(adaptive_substeps),
             target, min_steps, max_steps, chain_mass,
             Bool(global_mass_pin), Float64(global_mass_target_kg),
-            balance_mode)
+            balance_mode, cm_closure, ΔB, m_next_delp, Int(smooth_iters),
+            omega_buf, qv_buf, vdiv_om)
 end
 
 function _geos_pin_global_mass_if_needed!(workspace::GEOSCubedSphereWindowWorkspace{FT},
@@ -631,6 +1199,181 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
     workspace.flux_scale = workspace.base_flux_scale *
                            (workspace.source_steps_per_met / steps)
 
+    for p in 1:CS_PANEL_COUNT
+        fill!(workspace.cm_v4[p], zero(FT))
+    end
+
+    if workspace.cm_closure === :pressure_fixer
+        # Keep native horizontal fluxes UNBALANCED; close cm by construction via
+        # the FV3 ΔB-distributed rule, and chain the implied endpoint mass
+        # `m_next = m_cur + 2·steps·ΔB·pit` (replay closes to roundoff). This
+        # avoids dumping the column moisture-source term into cm. The raw-DELP
+        # `m_next_target` set during ingest is replaced here by the pressure-
+        # fixer endpoint so the chained mass / dm / ps stay self-consistent.
+        compute_cs_cm_pressure_fixer!(workspace.cm_v4, workspace.am_v4,
+                                      workspace.bm_v4, workspace.ΔB, Nc, Nz)
+        _evolve_mass_pressure_fixer!(workspace.m_next_target, workspace.m_cur,
+                                     workspace.am_v4, workspace.bm_v4,
+                                     workspace.ΔB, FT(2 * steps), Nc, Nz)
+        fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
+                                      workspace.m_next_target, steps)
+        return (max_pre_residual = 0.0, max_post_residual = 0.0,
+                max_cg_iter = 0, mode = :pressure_fixer)
+    end
+
+    if workspace.cm_closure === :pfix_corrected
+        # "Spatially-resolved dry-mass correction" (generalizes the scalar global
+        # mass pin). Native fluxes (smooth pit) → pressure-fixer cm; correct the
+        # column drift toward the analyzed dry-PS with a ZERO-SUM SPATIAL LOW-PASS
+        # — only the LARGE-SCALE drift (which prevents the pressure-fixer blow-up
+        # and carries the global-mass target), leaving the grid-scale residual as
+        # a small bounded mass perturbation NOT advected into cm. cm stays at the
+        # smooth pressure-fixer floor.  `pit_eff = pit_native + δ_smooth/(2·steps)`;
+        # `cm[k+1]=cm[k]+conv−ΔB·pit_eff` and `m_next=m_cur+2·steps·ΔB·pit_eff` ⇒
+        # the replay gate closes by construction; global Σ(ΔB·δ_smooth)=Σδ lands
+        # the global dry mass on the analyzed (pinned) target.
+        # DIAGNOSTIC-ONLY LIMITATION: when δ_smooth ≠ 0 this leaves a nonzero
+        # SURFACE flux cm[Nz+1] = −δ_smooth/(2·steps) (the closed-bottom boundary
+        # is violated), and chain_mass=true accumulates negative UTLS mass. The
+        # tracer test (docs/reference/GEOS_MASS_FLUX_UTLS_FINGERING.md) showed it
+        # makes ~164–280 hPa WORSE. NOT a production closure.
+        two_steps = FT(2 * steps)
+        pit = ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT)
+        δ   = ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT)
+        @inbounds for p in 1:CS_PANEL_COUNT
+            am = workspace.am_v4[p]; bm = workspace.bm_v4[p]
+            mc = workspace.m_cur[p]; md = workspace.m_next_delp[p]
+            for j in 1:Nc, i in 1:Nc
+                pp = zero(FT); cur = zero(FT); ana = zero(FT)
+                for k in 1:Nz
+                    pp  += (am[i, j, k] - am[i + 1, j, k]) +
+                           (bm[i, j, k] - bm[i, j + 1, k])
+                    cur += mc[i, j, k]; ana += md[i, j, k]
+                end
+                pit[p][i, j] = pp
+                δ[p][i, j]   = ana - (cur + two_steps * pp)   # column drift to analyzed
+            end
+        end
+        _smooth_cs_columns!(δ, workspace.smooth_iters, FT(0.5), Nc)   # large-scale, Σ-preserving
+        @inbounds for p in 1:CS_PANEL_COUNT
+            am = workspace.am_v4[p]; bm = workspace.bm_v4[p]; cm = workspace.cm_v4[p]
+            mc = workspace.m_cur[p]; mt = workspace.m_next_target[p]
+            for j in 1:Nc, i in 1:Nc
+                pe = pit[p][i, j] + δ[p][i, j] / two_steps
+                cm[i, j, 1] = zero(FT); acc = zero(FT)
+                for k in 1:Nz
+                    conv = (am[i, j, k] - am[i + 1, j, k]) +
+                           (bm[i, j, k] - bm[i, j + 1, k])
+                    acc += conv - FT(workspace.ΔB[k]) * pe
+                    cm[i, j, k + 1] = acc
+                    mt[i, j, k] = mc[i, j, k] + two_steps * FT(workspace.ΔB[k]) * pe
+                end
+            end
+        end
+        fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
+                                      workspace.m_next_target, steps)
+        return (max_pre_residual = 0.0, max_post_residual = 0.0,
+                max_cg_iter = 0, mode = :pfix_corrected)
+    end
+
+    if workspace.cm_closure === :moisture_filtered
+        # Balance native fluxes to the raw GEOS DELP_dry endpoint (faithful winds;
+        # column closes so per-column `pit = Σ_k dm_dry`). Then split the endpoint
+        # tendency dm_dry = ΔB·pit (smooth, ps-driven hybrid expansion) + residual
+        # (the column moisture-source term that carries the SH-UTLS grid noise),
+        # smooth ONLY the residual horizontally, and recombine. The residual has
+        # zero column integral, and the per-level-identical linear smoother
+        # preserves that ⇒ surface pressure is conserved per column EXACTLY; only
+        # the grid-scale per-layer mass redistribution (the fingering) is damped.
+        # `m_next_target` is set to the filtered endpoint so the replay gate
+        # (m_evolved = m_cur − 2·steps·(div_h + Δcm)) closes by construction.
+        #
+        # The zero-column-integral property REQUIRES the column balance: it pins
+        # `Σ_k div_h == Σ_k dm_dry` per column, so the residual `dm_dry − ΔB·pit`
+        # integrates to exactly zero and the per-level smoother conserves PS per
+        # column. The per-layer balance only closes the column up to a global
+        # constant, which would let the smoother shift column dry mass — so this
+        # closure forces the column balance regardless of `balance_mode`.
+        bal_diag = balance_cs_column_mass_fluxes!(
+            workspace.am_v4, workspace.bm_v4, workspace.m_cur,
+            workspace.m_next_delp, grid.face_table, grid.cell_degree, steps,
+            grid.poisson_scratch)
+        # dm_dry = (m_next_delp − m_cur) / (2·steps)
+        fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
+                                      workspace.m_next_delp, steps)
+        # residual ← dm_dry − ΔB·pit (per-half-step convergence pit from balanced
+        # fluxes; identical convention to `_evolve_mass_pressure_fixer!`).
+        @inbounds for p in 1:CS_PANEL_COUNT
+            am = workspace.am_v4[p]; bm = workspace.bm_v4[p]; dm = workspace.dm_v4[p]
+            for j in 1:Nc, i in 1:Nc
+                pit = zero(FT)
+                for k in 1:Nz
+                    pit += (am[i, j, k] - am[i + 1, j, k]) +
+                           (bm[i, j, k] - bm[i, j + 1, k])
+                end
+                for k in 1:Nz
+                    dm[i, j, k] -= FT(workspace.ΔB[k]) * pit
+                end
+            end
+        end
+        _smooth_cs_residual_panels!(workspace.dm_v4, workspace.smooth_iters,
+                                    FT(0.5), Nc, Nz)
+        # dmc ← ΔB·pit + smooth(residual); filtered endpoint m_next_target.
+        two_steps = FT(2 * steps)
+        @inbounds for p in 1:CS_PANEL_COUNT
+            am = workspace.am_v4[p]; bm = workspace.bm_v4[p]
+            dm = workspace.dm_v4[p]; mc = workspace.m_cur[p]
+            mt = workspace.m_next_target[p]
+            for j in 1:Nc, i in 1:Nc
+                pit = zero(FT)
+                for k in 1:Nz
+                    pit += (am[i, j, k] - am[i + 1, j, k]) +
+                           (bm[i, j, k] - bm[i, j + 1, k])
+                end
+                for k in 1:Nz
+                    dm[i, j, k] += FT(workspace.ΔB[k]) * pit
+                    mt[i, j, k] = mc[i, j, k] + two_steps * dm[i, j, k]
+                end
+            end
+        end
+        diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
+                        workspace.dm_v4, workspace.m_cur, Nc, Nz)
+        return bal_diag
+    end
+
+    if workspace.cm_closure === :omega_consistent
+        # OMEGA-consistent cm closure (alpha=1, pure OMEGA). (1) Column-balance the
+        # native horizontal fluxes to the raw GEOS DELP_dry endpoint so the column
+        # closes (Σ_k div_h = Σ_k dm_dry). (2) Apply a per-level flux-potential
+        # correction so div_h_new[k] = dm[k] − vdiv_om[k] (vdiv_om from A3dyn OMEGA,
+        # built at base flux scaling in ingest, rescaled here to the chosen steps).
+        # (3) Diagnose cm: the telescoped cm then has vdiv[k]=cm[k]−cm[k+1]=+vdiv_om
+        # (smooth, anti-fingering); continuity is exact by construction (the
+        # correction lives in continuity's null space and Σ_k vdiv_om=0 ⇒ cm[Nz+1]=0).
+        bal_diag = balance_cs_column_mass_fluxes!(
+            workspace.am_v4, workspace.bm_v4, workspace.m_cur,
+            workspace.m_next_target, grid.face_table, grid.cell_degree, steps,
+            grid.poisson_scratch)
+        fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
+                                      workspace.m_next_target, steps)
+        # vdiv_om was built at base tau=mass_flux_dt/2 (i.e. steps=source_steps_per_met).
+        # Pass the per-substep scale (= source_steps_per_met/steps, same as the flux
+        # rescale) so dm and vdiv share units, WITHOUT mutating the stored array
+        # (the adaptive loop may re-prepare at another `steps`).
+        vdiv_scale = workspace.source_steps_per_met / steps
+        _OMEGA_TIMING[] && (_OMEGA_TIMING_STATE.prepares += 1)
+        _t_recon = _OMEGA_TIMING[] ? time() : 0.0
+        recon = _reconstruct_omega_consistent!(workspace.am_v4, workspace.bm_v4,
+                                               workspace.dm_v4, workspace.vdiv_om,
+                                               grid, Float64(vdiv_scale))
+        _OMEGA_TIMING[] && (_OMEGA_TIMING_STATE.recon_time += time() - _t_recon)
+        diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
+                        workspace.dm_v4, workspace.m_cur, Nc, Nz)
+        return (bal_diag..., omega_max_increment = recon.max_increment,
+                omega_max_post_residual = recon.max_post_residual,
+                mode = :omega_consistent)
+    end
+
     bal_diag = if workspace.balance_mode === :per_layer
         balance_cs_global_mass_fluxes!(
             workspace.am_v4, workspace.bm_v4, workspace.m_cur,
@@ -644,9 +1387,6 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
     end
     fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
                                   workspace.m_next_target, steps)
-    for p in 1:CS_PANEL_COUNT
-        fill!(workspace.cm_v4[p], zero(FT))
-    end
     diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
                     workspace.dm_v4, workspace.m_cur, Nc, Nz)
     return bal_diag
@@ -687,6 +1427,12 @@ function _geos_select_steps_for_window!(workspace::GEOSCubedSphereWindowWorkspac
         throw(ArgumentError("GEOS steps_schedule length $(length(workspace.steps_schedule)) " *
                             "cannot record window $(win)."))
     workspace.steps_schedule[win] = steps
+    if _OMEGA_TIMING[] && workspace.cm_closure === :omega_consistent
+        s = _OMEGA_TIMING_STATE
+        @info @sprintf("  [OMEGA_TIMING] win %2d steps=%-4d prepares=%d solves=%d cg_iters=%d recon=%.3fs (%.4fs/window)",
+                       win, steps, s.prepares, s.solves, s.cg_iters, s.recon_time, s.recon_time)
+        _reset_omega_timing!()
+    end
     return (steps = steps, balance = bal_diag, positivity = positivity)
 end
 
@@ -747,6 +1493,23 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     end
     _geos_pin_global_mass_if_needed!(workspace, workspace.m_next_target,
                                      "window $(win) endpoint")
+    # Preserve the pinned raw GEOS DELP_dry endpoint; `:moisture_filtered`
+    # balances + diagnoses against it while overwriting `m_next_target` with the
+    # filtered endpoint inside the adaptive loop.
+    for p in 1:CS_PANEL_COUNT
+        copyto!(workspace.m_next_delp[p], workspace.m_next_target[p])
+    end
+    # `:omega_consistent`: read A3dyn OMEGA + I3 QV (PCHIP time-interp to this
+    # window's valid time) and build the smooth vdiv_om target at the BASE flux
+    # scaling (tau = mass_flux_dt/2). `_geos_prepare_window_for_steps!` rescales
+    # it by source_steps_per_met/steps to match the per-substep flux scaling.
+    if workspace.cm_closure === :omega_consistent
+        _read_geos_omega_qv_pchip!(workspace.omega_buf, workspace.qv_buf,
+                                   reader.handles, win, Nc, Nz)
+        tau_base = FT(settings.mass_flux_dt / 2)
+        _omega_vdiv_target!(workspace.vdiv_om, workspace.omega_buf, workspace.qv_buf,
+                            workspace.cell_areas, workspace.g, tau_base, Nc, Nz)
+    end
     _geos_select_steps_for_window!(workspace, grid, win)
     return nothing
 end
@@ -770,6 +1533,11 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
         copyto!(workspace.dm_v4[p], workspace.m_next_target[p])
     end
     convert_cs_mass_target_to_delta!(workspace.dm_v4, workspace.m_cur)
+
+    full_window_scale = FT(2 * steps)
+    _scale_cs_flux_panels!(workspace.am_v4, full_window_scale)
+    _scale_cs_flux_panels!(workspace.bm_v4, full_window_scale)
+    _scale_cs_flux_panels!(workspace.cm_v4, full_window_scale)
 
     surface_payload = (settings.include_surface || settings.include_vdiff_fields) ?
         _geos_surface_payload!(workspace.strategy, workspace.strategy_ws,
@@ -809,17 +1577,45 @@ end
 
 GEOSReplayStats() = GEOSReplayStats(0.0, 0.0, 0)
 
+struct GEOSSplitSubstepStats
+    max_steps_xy :: Int
+    max_steps_z  :: Int
+    win_xy       :: Int
+    win_z        :: Int
+    ratio_xy     :: Float64
+    ratio_z      :: Float64
+end
+
+GEOSSplitSubstepStats() = GEOSSplitSubstepStats(0, 0, 0, 0, 0.0, 0.0)
+
 struct GEOSCSUnifiedDriverContext{G, S, V}
     grid             :: G
     settings         :: S
     vertical         :: V
     steps_per_met    :: Int
     replay_stats     :: Base.RefValue{GEOSReplayStats}
+    split_stats      :: Base.RefValue{GEOSSplitSubstepStats}
 end
 
 GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met::Integer) =
     GEOSCSUnifiedDriverContext{typeof(grid), typeof(settings), typeof(vertical)}(
-        grid, settings, vertical, Int(steps_per_met), Ref(GEOSReplayStats()))
+        grid, settings, vertical, Int(steps_per_met), Ref(GEOSReplayStats()),
+        Ref(GEOSSplitSubstepStats()))
+
+function _geos_required_split_steps(workspace::GEOSCubedSphereWindowWorkspace,
+                                    current_steps::Integer,
+                                    ratio::Real)
+    r = Float64(ratio)
+    if isfinite(r)
+        scaled = Float64(current_steps) * r / workspace.substep_cfl_target
+        raw = scaled <= typemax(Int) ? ceil(Int, scaled) :
+              workspace.max_steps_per_window
+    else
+        raw = workspace.max_steps_per_window
+    end
+    return min(max(raw, workspace.min_steps_per_window),
+               workspace.max_steps_per_window)
+end
 
 function driver_ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                                reader::GEOSNativeReader{FT},
@@ -841,6 +1637,20 @@ function driver_drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{F
                                              replay.max_abs_err,
                                              win)
     end
+    positivity = ready_diag.contract.positivity
+    xy_steps = _geos_required_split_steps(workspace, workspace.steps_current,
+                                          positivity.ratio_xy)
+    z_steps = _geos_required_split_steps(workspace, workspace.steps_current,
+                                         positivity.ratio_z)
+    split = ctx.split_stats[]
+    ctx.split_stats[] = GEOSSplitSubstepStats(
+        max(split.max_steps_xy, xy_steps),
+        max(split.max_steps_z, z_steps),
+        xy_steps > split.max_steps_xy ? win : split.win_xy,
+        z_steps > split.max_steps_z ? win : split.win_z,
+        xy_steps > split.max_steps_xy ? Float64(positivity.ratio_xy) : split.ratio_xy,
+        z_steps > split.max_steps_z ? Float64(positivity.ratio_z) : split.ratio_z,
+    )
     return ready_diag
 end
 
@@ -886,7 +1696,10 @@ function _process_day_geos_cs_unified(date::Date,
                                       seed_m::Union{Nothing, NTuple{6, <:AbstractArray}},
                                       global_mass_pin::Bool,
                                       global_mass_target_kg::Real,
-                                      balance_mode::Symbol)
+                                      balance_mode::Symbol,
+                                      cm_closure::Symbol = :endpoint_balanced,
+                                      smooth_iters::Integer = 8)
+    _OMEGA_TIMING[] = get(ENV, "ATMOS_OMEGA_TIMING", "0") in ("1", "true", "yes")
     Nc     = grid.Nc
     npanel = CS_PANEL_COUNT
     Nz     = vertical.Nz
@@ -899,7 +1712,11 @@ function _process_day_geos_cs_unified(date::Date,
     reader = open_reader(settings, date, FT;
                          seed = reader_seed,
                          chain_mass = chain_mass,
-                         next_day_handle = true)
+                         next_day_handle = true,
+                         # Only the OMEGA-consistent closure reads the prev/next-day
+                         # A3dyn+I3 handles (cross-midnight PCHIP); every other
+                         # closure leaves them `nothing` (no extra opens).
+                         adjacent_omega = cm_closure === :omega_consistent)
     driver_started = false
     inner_writer = nothing
     tmp_path = out_path * ".tmp"
@@ -916,12 +1733,14 @@ function _process_day_geos_cs_unified(date::Date,
                                                windows_per_day = nw,
                                                global_mass_pin = global_mass_pin,
                                                global_mass_target_kg = global_mass_target_kg,
-                                               balance_mode = balance_mode)
+                                               balance_mode = balance_mode,
+                                               cm_closure = cm_closure,
+                                               smooth_iters = smooth_iters)
 
         @info "GEOS → CS: $(date), source=$(settings) → $(out_path) [unified]"
         @info "  source_C=$(settings.Nc) target_C=$Nc  strategy=$(_geos_cs_strategy_name(workspace.strategy))"
         @info "  Nz=$Nz  windows=$nw  steps_per_met=$steps_per_met  flux_scale=$(workspace.flux_scale)"
-        @info "  GEOS horizontal balance: $(workspace.balance_mode)"
+        @info "  GEOS horizontal balance: $(workspace.balance_mode)   cm closure: $(workspace.cm_closure)"
         global_mass_pin &&
             @info @sprintf("  GEOS global dry-mass pin ENABLED: target=%s",
                            isfinite(Float64(global_mass_target_kg)) ?
@@ -939,6 +1758,7 @@ function _process_day_geos_cs_unified(date::Date,
             FT = FT,
             dt_met_seconds = dt_met_seconds,
             steps_per_window = steps_per_met,
+            flux_kind = :full_window_mass_amount,
             mass_basis = mass_basis,
             include_flux_delta = true,
             include_surface    = settings.include_surface || settings.include_vdiff_fields,
@@ -954,12 +1774,25 @@ function _process_day_geos_cs_unified(date::Date,
                 "preprocessor" => "geos_native_to_cs",
                 "preprocessor_contract" => "plan41_variable_substeps",
                 "runtime_substep_contract" => "binary_schedule",
+                "runtime_flux_scaling" => "full_window_flux_divided_by_2x_steps_per_window",
+                "cfl_definition" => "palindrome_outgoing_sum_over_min_endpoint_mass",
                 "geos_mass_endpoint" => global_mass_pin ?
                     "dry_endpoint_global_mean_pinned" : "raw_dry_endpoint",
-                "geos_horizontal_balance" => workspace.balance_mode === :per_layer ?
-                    "per_layer_poisson_to_endpoint" : "column_poisson_to_endpoint",
-                "geos_horizontal_balance_mode" => String(workspace.balance_mode),
-                "geos_vertical_flux" => "diagnosed_from_balanced_horizontal_and_endpoint",
+                "geos_horizontal_balance" => workspace.cm_closure === :pressure_fixer ?
+                    "none_native_unbalanced" :
+                    (workspace.balance_mode === :per_layer ?
+                        "per_layer_poisson_to_endpoint" : "column_poisson_to_endpoint"),
+                "geos_horizontal_balance_mode" => workspace.cm_closure === :pressure_fixer ?
+                    "none" : String(workspace.balance_mode),
+                "geos_cm_closure" => String(workspace.cm_closure),
+                "geos_vertical_flux" =>
+                    workspace.cm_closure === :pressure_fixer ?
+                        "fv3_pressure_fixer_native_horizontal_chained_mass" :
+                    workspace.cm_closure === :pfix_corrected ?
+                        "fv3_pressure_fixer_native_horizontal_plus_zerosum_spatial_lowpass_drift_correction" :
+                    workspace.cm_closure === :moisture_filtered ?
+                        "diagnosed_from_balanced_horizontal_and_filtered_endpoint_moisture_residual_smoothed" :
+                        "diagnosed_from_balanced_horizontal_and_endpoint",
                 "geos_global_mass_pin_enabled" => global_mass_pin,
                 "geos_global_mass_pin_target_kg" => isfinite(workspace.global_mass_target_kg) ?
                     workspace.global_mass_target_kg : "first_window_start",
@@ -969,6 +1802,7 @@ function _process_day_geos_cs_unified(date::Date,
                 "adaptive_substeps" => adaptive_substeps,
                 "substep_cfl_target" => Float64(substep_cfl_target),
                 "positivity_cfl_limit" => Float64(positivity_cfl_limit),
+                "recommended_substeps_are_minimum" => true,
                 "require_substep_positivity" => require_substep_positivity,
                 "include_gchp_vdiff" => settings.include_vdiff_fields,
                 "gchp_vdiff_source_fields" => settings.include_vdiff_fields ?
@@ -978,6 +1812,11 @@ function _process_day_geos_cs_unified(date::Date,
                 "vertical_transform" => String(Symbol(get(vertical, :vertical_mapping_method, :identity))),
                 "vertical_Nz_native" => vertical.Nz_native,
                 "vertical_Nz_output" => vertical.Nz,
+                # Diagnostic-only key: emitted ONLY for the smoothing closures so
+                # production `:endpoint_balanced` headers stay byte-for-byte identical.
+                (workspace.cm_closure in (:moisture_filtered, :pfix_corrected) ?
+                    ("geos_moisture_filter_smooth_iters" => workspace.smooth_iters,) :
+                    ())...,
             ),
         )
         writer = CubedSphereBinaryWriter(inner_writer, DryBasis();
@@ -1001,6 +1840,14 @@ function _process_day_geos_cs_unified(date::Date,
         @info @sprintf("  Done in %.1fs (%.2fs/window). Worst replay: rel=%.2e abs=%.2e at win=%d",
                        elapsed, elapsed / nw, stats.worst_replay_rel,
                        stats.worst_replay_abs, stats.worst_replay_win)
+        split_stats = ctx.split_stats[]
+        @info @sprintf("  Substep diagnostic: stored=%d..%d; hypothetical split max xy=%d at win=%d (ratio=%.3f), z=%d at win=%d (ratio=%.3f)",
+                       minimum(workspace.steps_schedule),
+                       maximum(workspace.steps_schedule),
+                       split_stats.max_steps_xy, split_stats.win_xy,
+                       split_stats.ratio_xy,
+                       split_stats.max_steps_z, split_stats.win_z,
+                       split_stats.ratio_z)
 
         final_m = chain_mass ? ntuple(p -> copy(workspace.m_cur[p]), npanel) : nothing
         set_end_of_day_seed!(reader, final_m)
@@ -1086,6 +1933,8 @@ function process_day(date::Date,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
                      balance_mode::Symbol = :column,
+                     cm_closure::Symbol = :endpoint_balanced,
+                     smooth_iters::Integer = 8,
                      next_day_hour0 = nothing)
     # Reject configurations the path cannot honor:
     mass_basis === :dry ||
@@ -1110,5 +1959,7 @@ function process_day(date::Date,
         global_mass_pin = global_mass_pin,
         global_mass_target_kg = global_mass_target_kg,
         balance_mode = balance_mode,
+        cm_closure = cm_closure,
+        smooth_iters = smooth_iters,
     )
 end

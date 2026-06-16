@@ -829,6 +829,18 @@ function _validate_replay_safe_boundaries!(reader, start_window::Int,
         cur = load_cs_window(reader, win)
         nxt = load_cs_window(reader, win + 1)
         steps = reader.header.steps_per_window_by_window[win]
+        # the verifier expects per-substep amounts (it multiplies the
+        # divergence by 2*steps); full-window storage must be scaled first.
+        # load_cs_window returns fresh arrays, so in-place is safe.
+        fscale = AtmosTransport.MetDrivers.flux_storage_substep_scale(
+            FT, steps, AtmosTransport.MetDrivers.flux_kind(reader))
+        if fscale != one(FT)
+            for pn in 1:6
+                cur.am[pn] .*= fscale
+                cur.bm[pn] .*= fscale
+                cur.cm[pn] .*= fscale
+            end
+        end
         diag = AtmosTransport.MetDrivers.verify_window_continuity_cs(
             cur.m, cur.am, cur.bm, cur.cm, nxt.m, steps)
         if diag.max_rel_err > worst.rel
@@ -921,6 +933,18 @@ function _real_binary_problem(path::AbstractString; start_window::Int,
                 win_window.air_mass, mesh,
                 "window $win of $(basename(bin_path))")
             steps_this = Int(step_schedule[win])
+            # full-window binaries store unscaled met-window amounts; the
+            # substep slots below alias these panel arrays, so scale ONCE
+            # per loaded window (mirrors DrivenSimulation's refresh scale).
+            fscale_win = AtmosTransport.MetDrivers.flux_storage_substep_scale(
+                FT, steps_this, AtmosTransport.MetDrivers.flux_kind(driver))
+            if fscale_win != one(FT)
+                for pn in 1:6
+                    win_window.fluxes.am[pn] .*= fscale_win
+                    win_window.fluxes.bm[pn] .*= fscale_win
+                    win_window.fluxes.cm[pn] .*= fscale_win
+                end
+            end
             n_this = min(steps_this, requested_steps - step_idx)
             dt_this = Float64(window_dt(driver)) / steps_this
             chunk_m0 = _copy_haloed_air_mass(win_window, mesh)

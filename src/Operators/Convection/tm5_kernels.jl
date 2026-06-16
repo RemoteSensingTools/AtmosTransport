@@ -364,6 +364,19 @@ binary's deepest observed convection fits inside `[Nz - lmax_conv +
             @inbounds for k in LMAX_CONV:-1:icltop
                 e = _tm5_read_forcing(entu, i, j, Hp, k_shift + k, Val(:ll))
                 d = _tm5_read_forcing(detu, i, j, Hp, k_shift + k, Val(:ll))
+                # Cloud-top closure (clipping guard). ONLY when the cloud
+                # reaches the very top of the active region (`icltop == 1`,
+                # i.e. `lmax_conv` clips the cloud top) force the updraft to
+                # fully detrain so no residual `amu` escapes into the
+                # passthrough region above. The subsidence pass runs
+                # `LMAX_CONV:-1:2`, so a layer-1 residual is the ONLY
+                # uncompensated one; fed by emission tracers it drives a
+                # multi-substep mass blow-up. For non-clipping columns
+                # (`icltop >= 2`) the subsidence already compensates, so this
+                # is an exact no-op there — validated lmax_conv=0 runs unchanged.
+                if icltop == 1 && k == icltop
+                    d = amu_loc[k + 1] + e
+                end
                 amu_loc[k] = amu_loc[k + 1] + e - d
                 zxi = 0f0
                 if amu_loc[k] > 0f0
@@ -599,6 +612,19 @@ end
             @inbounds for k in LMAX_CONV:-1:icltop
                 e = _tm5_read_forcing(entu, c, b, Hp, k_shift + k, Val(:rg))
                 d = _tm5_read_forcing(detu, c, b, Hp, k_shift + k, Val(:rg))
+                # Cloud-top closure (clipping guard). ONLY when the cloud
+                # reaches the very top of the active region (`icltop == 1`,
+                # i.e. `lmax_conv` clips the cloud top) force the updraft to
+                # fully detrain so no residual `amu` escapes into the
+                # passthrough region above. The subsidence pass runs
+                # `LMAX_CONV:-1:2`, so a layer-1 residual is the ONLY
+                # uncompensated one; fed by emission tracers it drives a
+                # multi-substep mass blow-up. For non-clipping columns
+                # (`icltop >= 2`) the subsidence already compensates, so this
+                # is an exact no-op there — validated lmax_conv=0 runs unchanged.
+                if icltop == 1 && k == icltop
+                    d = amu_loc[k + 1] + e
+                end
                 amu_loc[k] = amu_loc[k + 1] + e - d
                 zxi = 0f0
                 if amu_loc[k] > 0f0
@@ -830,6 +856,19 @@ end
             @inbounds for k in LMAX_CONV:-1:icltop
                 e = _tm5_read_forcing(entu, c1, c2, Hp, k_shift + k, Val(:cs))
                 d = _tm5_read_forcing(detu, c1, c2, Hp, k_shift + k, Val(:cs))
+                # Cloud-top closure (clipping guard). ONLY when the cloud
+                # reaches the very top of the active region (`icltop == 1`,
+                # i.e. `lmax_conv` clips the cloud top) force the updraft to
+                # fully detrain so no residual `amu` escapes into the
+                # passthrough region above. The subsidence pass runs
+                # `LMAX_CONV:-1:2`, so a layer-1 residual is the ONLY
+                # uncompensated one; fed by emission tracers it drives a
+                # multi-substep mass blow-up. For non-clipping columns
+                # (`icltop >= 2`) the subsidence already compensates, so this
+                # is an exact no-op there — validated lmax_conv=0 runs unchanged.
+                if icltop == 1 && k == icltop
+                    d = amu_loc[k + 1] + e
+                end
                 amu_loc[k] = amu_loc[k + 1] + e - d
                 zxi = 0f0
                 if amu_loc[k] > 0f0

@@ -61,6 +61,10 @@ scheme = "ppm"
   variable = "SF6"
   [tracers.sf6.surface_flux]
   kind = "edgar_sf6"
+  # EDGAR-v8 (2022) gives 9.99 kt/yr; GC applied 10.10 kt/yr (same spatial
+  # pattern). Scale our global total to match GC exactly (Catrine protocol
+  # pins SF6 scaling). Factor = 10.1042 / 9.9877 = 1.0116635.
+  scale = 1.0116635
 
 [tracers.rn222]
   [tracers.rn222.init]

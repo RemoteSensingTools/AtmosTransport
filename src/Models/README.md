@@ -73,6 +73,11 @@ read.
   `pack_initial_tracer_mass`, surface-source wiring, GPU-residency
   assertion (`feedback_verify_gpu_runs_on_gpu`), per-window loop,
   and snapshot NetCDF output
+- [`InputStaging.jl`](InputStaging.jl) — opt-in rolling NVMe input staging
+  (`InputStager`, `staged_path_for!`, `cleanup_staging!`) for the per-day
+  binary loop: copies upcoming days NAS→local NVMe ahead of the GPU loop and
+  evicts processed days, bounding local-disk use for multi-month/year runs.
+  Default off ⇒ bit-identical to a non-staged run
 
 ## Common Tasks
 

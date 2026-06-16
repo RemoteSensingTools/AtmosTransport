@@ -41,6 +41,7 @@ via `AtmosTransport.Models.InitialConditionIO.<name>` if needed.
 module InitialConditionIO
 
 using NCDatasets
+using Dates
 
 import ...expand_data_path
 using ..State: AbstractMassBasis, DryBasis, MoistBasis
@@ -53,7 +54,8 @@ using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
 using ..Regridding: build_regridder, apply_regridder!
 using ..Preprocessing: unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!,
                        CS_PANEL_COUNT
-using ..Operators.SurfaceFlux: SurfaceFluxSource
+using ..Operators.SurfaceFlux: SurfaceFluxSource, TimeVaryingSurfaceFluxSource,
+                               flux_temporal_scheme
 # Grid accessors used by both LL/RG and CS surface-flux builders
 using ..Grids: AbstractHorizontalMesh, nx, ny, ncells
 
@@ -812,6 +814,8 @@ function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
             "(NTuple{6, Matrix}) so the target layer can be selected by " *
             "per-column ps. Pass `window.surface_pressure` from the binary."))
         return _build_cs_pressure_layer_ic(air_mass, grid, cfg, FT, surface_pressure)
+    elseif kind === :cs_native
+        return _build_cs_native_ic(grid, air_mass, cfg, FT)
     elseif _is_file_init_kind(kind)
         surface_pressure === nothing && throw(ArgumentError(
             "build_initial_mixing_ratio(::AtmosGrid{<:CubedSphereMesh}, ...) " *
@@ -830,7 +834,7 @@ function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
     else
         throw(ArgumentError(
             "unsupported init.kind=$(kind) for CubedSphereMesh; " *
-            "supported: uniform | latitude_step | gaussian_blob | file | netcdf | file_field | catrine_co2 | pressure_layer"))
+            "supported: uniform | latitude_step | gaussian_blob | file | netcdf | file_field | catrine_co2 | pressure_layer | cs_native"))
     end
 end
 
@@ -896,6 +900,91 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
         end
     end
 
+    return vmr
+end
+
+# ---------------------------------------------------------------------------
+# CS NATIVE IC — read a native cubed-sphere field cell-for-cell (no
+# horizontal regrid, no vertical interpolation) and state-align to the
+# binary's own topology. Used to seed tracers from a GEOS-Chem 3D field
+# stored on the SAME C180 cube the binary uses (e.g. CATRINE FossilCO2 /
+# Rn222), so only transport + emission diverge from GC afterwards.
+#
+# The source NetCDF carries `<variable>(time, lev, nf, Ydim, Xdim)` in CF
+# (surface-first lev, like GEOS-Chem SpeciesConcVV_*). NCDatasets reads it
+# in reversed (Julia column-major) order as `(Xdim, Ydim, nf, lev[, time])`,
+# so panel axis-1 == Xdim and axis-2 == Ydim — IDENTICAL to the model's own
+# CS writer (`_cs_stack3`: `out[:, :, p, :] = panels[p]`). We therefore map
+# `src[i, j, p, k_src]` directly onto interior panel `p` cell `(i, j)`, and
+# flip the vertical (source SURFACE-first → model TOA-first) via
+# `k = Nz - k_src + 1`. Requires `size(lev) == Nz` (same vertical grid).
+# ---------------------------------------------------------------------------
+
+function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
+                             air_mass::NTuple{6, <:AbstractArray{FT, 3}},
+                             cfg, ::Type{FT}) where FT
+    mesh = grid.horizontal
+    Nc   = mesh.Nc
+    Nz   = size(air_mass[1], 3)
+
+    file = expand_data_path(String(get(cfg, "file", "")))
+    variable = String(get(cfg, "variable", ""))
+    isempty(file) && throw(ArgumentError("init.kind=cs_native requires init.file"))
+    isempty(variable) && throw(ArgumentError("init.kind=cs_native requires init.variable"))
+    isfile(file) || throw(ArgumentError("cs_native initial-condition file not found: $file"))
+    time_index = Int(get(cfg, "time_index", 1))
+    # Source vertical convention: "surface_first" (GEOS-Chem default) flips to
+    # the model's TOA-first ordering; "toa_first" copies straight through.
+    vertical_order = Symbol(lowercase(String(get(cfg, "vertical_order", "surface_first"))))
+    vertical_order in (:surface_first, :toa_first) || throw(ArgumentError(
+        "init.kind=cs_native: vertical_order=$(vertical_order) must be " *
+        "\"surface_first\" (GEOS-Chem, flips to TOA-first) or \"toa_first\""))
+    flip_vertical = vertical_order === :surface_first
+
+    ds = NCDataset(file)
+    raw = try
+        haskey(ds, variable) || throw(ArgumentError("variable '$variable' not found in $file"))
+        rv = ds[variable]
+        nd = ndims(rv)
+        # NCDatasets reverses CF dim order: (Xdim, Ydim, nf, lev[, time]).
+        if nd == 5
+            FT.(nomissing(rv[:, :, :, :, time_index], zero(FT)))
+        elseif nd == 4
+            FT.(nomissing(rv[:, :, :, :], zero(FT)))
+        else
+            throw(ArgumentError("init.kind=cs_native: variable '$variable' must be " *
+                                "4D (Xdim,Ydim,nf,lev) or 5D (…,time), got ndims=$nd"))
+        end
+    finally
+        close(ds)
+    end
+
+    size(raw, 1) == Nc || throw(DimensionMismatch(
+        "cs_native: source Xdim=$(size(raw, 1)) != binary Nc=$Nc (no horizontal " *
+        "regrid is performed; the source must be on the SAME cube as the binary)"))
+    size(raw, 2) == Nc || throw(DimensionMismatch(
+        "cs_native: source Ydim=$(size(raw, 2)) != binary Nc=$Nc"))
+    size(raw, 3) == CS_PANEL_COUNT || throw(DimensionMismatch(
+        "cs_native: source nf=$(size(raw, 3)) != $CS_PANEL_COUNT panels"))
+    size(raw, 4) == Nz || throw(DimensionMismatch(
+        "cs_native: source lev=$(size(raw, 4)) != binary Nz=$Nz (no vertical " *
+        "interpolation is performed; the source must share the vertical grid)"))
+
+    # Clamp tiny negative VMRs (GEOS-Chem advection can emit ~-1e-6 cells)
+    # to zero so the dry-VMR state and downstream mass packing stay physical.
+    clamp_negative = Bool(get(cfg, "clamp_negative", true))
+
+    vmr = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), CS_PANEL_COUNT)
+    for p in 1:CS_PANEL_COUNT
+        dst = vmr[p]
+        @inbounds for k in 1:Nz
+            k_src = flip_vertical ? (Nz - k + 1) : k
+            for j in 1:Nc, i in 1:Nc
+                v = raw[i, j, p, k_src]
+                dst[i, j, k] = (clamp_negative && v < zero(FT)) ? zero(FT) : v
+            end
+        end
+    end
     return vmr
 end
 
@@ -1145,6 +1234,22 @@ struct FileSurfaceFluxField{FT}
     native_total_mass_rate :: Float64
 end
 
+"""
+    TimeVaryingFileSurfaceFluxField{FT}
+
+A stack of 2-D flux-density slices `(Nx_src, Ny_src, ntime)` loaded from
+a NetCDF emission file, keeping every time slice (no monthly averaging).
+Units are kg/m²/s after `_load_timevarying_surface_flux_field` has
+normalised the native units, identically per slice. `times_sec` holds
+the slice times in seconds since the run `reference_time`, ascending.
+"""
+struct TimeVaryingFileSurfaceFluxField{FT}
+    raw_series :: Array{FT, 3}
+    lon        :: Vector{Float64}
+    lat        :: Vector{Float64}
+    times_sec  :: Vector{Float64}
+end
+
 @inline _surface_flux_kind(cfg) = Symbol(lowercase(String(get(cfg, "kind", "none"))))
 
 function _tracer_molar_mass_kg_mol(tracer_name::Symbol, cfg)
@@ -1332,6 +1437,162 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
     end
 end
 
+# Parse the slice times of a surface-flux file into seconds since
+# `reference_time`. NCDatasets usually decodes CF time to DateTime/CFTime;
+# we handle both the decoded (date-like) and raw-numeric ("hours since …")
+# cases. Returns a `Vector{Float64}` (ascending after the caller sorts).
+function _surface_flux_times_seconds(time_vals, units::AbstractString,
+                                     reference_time::Union{DateTime, Nothing})
+    n = length(time_vals)
+    times_sec = Vector{Float64}(undef, n)
+
+    sample = first(time_vals)
+    # CFTime values from NCDatasets are <: Dates.TimeType in practice; the
+    # `DateTime(x)` constructor accepts them. Numeric (Real) values mean the
+    # variable was NOT CF-decoded, so we parse the `units` origin ourselves.
+    if sample isa Real
+        # units like "hours since 2021-12-01 00:00:00"
+        m = match(r"(\w+)\s+since\s+(.+)", strip(String(units)))
+        m === nothing && throw(ArgumentError(
+            "time-varying surface flux: cannot parse numeric time units '$(units)'"))
+        unit_word = lowercase(m.captures[1])
+        per_unit_sec = unit_word in ("second", "seconds", "sec", "s") ? 1.0 :
+                       unit_word in ("minute", "minutes", "min")       ? 60.0 :
+                       unit_word in ("hour", "hours", "hr", "h")        ? 3600.0 :
+                       unit_word in ("day", "days", "d")                ? 86400.0 :
+                       throw(ArgumentError("time-varying surface flux: unsupported time unit '$(unit_word)'"))
+        origin = _parse_cf_time_origin(strip(m.captures[2]))
+        ref = reference_time === nothing ? origin : reference_time
+        ref_offset_sec = Dates.value(origin - ref) / 1000.0   # ms → s
+        for k in 1:n
+            times_sec[k] = ref_offset_sec + Float64(time_vals[k]) * per_unit_sec
+        end
+    else
+        # Date-like (DateTime / CFTime). Convert each to a DateTime and diff.
+        if reference_time === nothing
+            ref = DateTime(sample)   # assume file origin == run start (first slice)
+        else
+            ref = reference_time
+        end
+        for k in 1:n
+            times_sec[k] = Dates.value(DateTime(time_vals[k]) - ref) / 1000.0
+        end
+    end
+    return times_sec
+end
+
+# Parse a CF time-origin string ("2021-12-01 00:00:00" / "2021-12-01T00:00:00"
+# / "2021-12-01") into a DateTime.
+function _parse_cf_time_origin(s::AbstractString)
+    ss = replace(strip(String(s)), "T" => " ")
+    for fmt in (dateformat"y-m-d H:M:S", dateformat"y-m-d H:M", dateformat"y-m-d")
+        try
+            return DateTime(ss, fmt)
+        catch
+        end
+    end
+    throw(ArgumentError("time-varying surface flux: cannot parse time origin '$(s)'"))
+end
+
+"""
+    _load_timevarying_surface_flux_field(cfg, FT, reference_time)
+        -> TimeVaryingFileSurfaceFluxField{FT}
+
+Like `_load_file_surface_flux_field` but keeps ALL time slices (no
+monthly averaging). Applies the same lat-flip / lon-roll reorientation
+and per-slice unit conversion as the static loader, and reads the time
+coordinate into `times_sec` (seconds since `reference_time`). When
+`reference_time === nothing`, the file's own time origin (first slice)
+is assumed equal to the run start and a warning is emitted.
+"""
+function _load_timevarying_surface_flux_field(cfg, ::Type{FT},
+                                              reference_time::Union{DateTime, Nothing}) where FT
+    kind = _surface_flux_kind(cfg)
+    kind === :none && return nothing
+    file, variable, _time_index = _resolve_surface_flux_file(cfg, kind)
+    isfile(file) || throw(ArgumentError("surface-flux file not found: $file"))
+
+    ds = NCDataset(file)
+    try
+        lon_var = _ic_find_coord(ds, ["lon", "longitude", "x"])
+        lat_var = _ic_find_coord(ds, ["lat", "latitude", "y"])
+        time_var = _ic_find_coord(ds, ["time", "t"])
+        isnothing(lon_var) && throw(ArgumentError("could not find longitude coordinate in $file"))
+        isnothing(lat_var) && throw(ArgumentError("could not find latitude coordinate in $file"))
+        isnothing(time_var) && throw(ArgumentError("could not find time coordinate in $file"))
+        haskey(ds, variable) || throw(ArgumentError("variable '$variable' not found in $file"))
+
+        lon_src = Float64.(ds[lon_var][:])
+        lat_src = Float64.(ds[lat_var][:])
+
+        raw_var = ds[variable]
+        ndims(raw_var) == 3 || throw(ArgumentError(
+            "time-varying surface-flux variable '$variable' must be 3D (lon,lat,time), got ndims=$(ndims(raw_var))"))
+        Nx, Ny, ntime = size(raw_var)
+        raw = Array{FT, 3}(undef, Nx, Ny, ntime)
+        @inbounds for t in 1:ntime
+            raw[:, :, t] .= FT.(nomissing(raw_var[:, :, t], zero(FT)))
+        end
+
+        # --- reorientation (identical to the static loader, per slice) ---
+        if length(lat_src) > 1 && lat_src[1] > lat_src[end]
+            raw = raw[:, end:-1:1, :]
+            lat_src = reverse(lat_src)
+        end
+        if minimum(lon_src) < 0
+            split = findfirst(>=(0), lon_src)
+            if split !== nothing
+                idx = vcat(split:length(lon_src), 1:split-1)
+                lon_src = mod.(lon_src[idx], 360.0)
+                raw = raw[idx, :, :]
+            end
+        end
+
+        # --- per-slice unit conversion (mirrors the static loader) ---
+        units_norm = _normalize_units_string(get(raw_var.attrib, "units", ""))
+        if kind === :lmdz_co2 || units_norm in ("kgcm-2s-1", "kgc/m2/s", "kgcm2s-1")
+            raw .*= FT(44.0 / 12.0)   # kgC → kgCO2
+        elseif !(isempty(units_norm) || occursin("/s", units_norm) || occursin("s-1", units_norm))
+            throw(ArgumentError(
+                "time-varying surface flux: unsupported units '$units_norm' in $file; " *
+                "expected kgC/m2/s or per-second flux units"))
+        end
+        raw .*= FT(get(cfg, "scale", 1.0))
+
+        # --- time coordinate ---
+        reference_time === nothing && @warn(
+            "time-varying surface flux: no reference_time supplied; assuming the file's " *
+            "time origin equals the run start (first slice → t=0).")
+        time_units = String(get(ds[time_var].attrib, "units", ""))
+        times_sec = _surface_flux_times_seconds(ds[time_var][:], time_units, reference_time)
+
+        # --- emission temporal-stamp convention (CAMS / LMDZ natural CO2) ---
+        # The CAMS file (`flux_apos`, 3-hourly, "hours since 2021-12-01") uses
+        # INTERVAL-START stamps: HEMCO/GEOS-Chem holds slice k (stamp k·Δ)
+        # PIECEWISE-CONSTANT over [k·Δ, (k+1)·Δ) — verified against GC's
+        # EmisCO2_Total, which at output stamp T equals the CAMS slice at T−Δ
+        # (e.g. GC's 03:00z emission = the 00:00 CAMS slice). The faithful
+        # match is therefore `temporal_scheme = "stepwise"` (StepwiseFlux holds
+        # the largest knot ≤ t, i.e. v_k over [k·Δ, (k+1)·Δ)), with the knots
+        # left UNSHIFTED. Do NOT add a +Δ time shift here: a shift only realigns
+        # the point values at the knots, while the integrated/transported
+        # emission still depends on the scheme (a "conservative" linear-blend
+        # scheme would average adjacent slices regardless of any shift). Keeping
+        # the raw stamps + StepwiseFlux reproduces GC's step exactly.
+
+        # Require ascending; sort consistently if needed.
+        if !issorted(times_sec)
+            perm = sortperm(times_sec)
+            times_sec = times_sec[perm]
+            raw = raw[:, :, perm]
+        end
+
+        return TimeVaryingFileSurfaceFluxField{FT}(raw, lon_src, lat_src, times_sec)
+    finally
+        close(ds)
+    end
+end
+
 function _renormalize_surface_flux_rate!(rate::AbstractArray{FT}, source::FileSurfaceFluxField) where FT
     isfinite(source.native_total_mass_rate) || return rate
     sampled_total = Float64(sum(rate))
@@ -1346,20 +1607,29 @@ _regridding_method(cfg, default::AbstractString = "bilinear") =
     Symbol(lowercase(String(get(cfg, "regridding", default))))
 
 """
-    _conservative_surface_flux_rate(source, dst_mesh, FT) -> Vector{FT}
+    _build_surface_flux_regridder(lon, lat, dst_mesh, FT) -> regridder
 
-Conservatively regrid flux density [kg/m²/s] onto `dst_mesh`; return a
-flat vector of per-cell mass rates [kg/s] (already area-integrated).
-Callers reshape/wrap per topology.
+Build the conservative LL→`dst_mesh` regridder for a source flux grid
+defined by `lon`/`lat`. Factored out so the time-varying path can build
+the regridder once and reuse it across every time slice instead of
+rebuilding it per slice.
 """
-function _conservative_surface_flux_rate(source::FileSurfaceFluxField,
-                                         dst_mesh::AbstractHorizontalMesh,
-                                         ::Type{FT}) where FT
-    src_mesh = _build_source_latlon_mesh(source.lon, source.lat, FT)
-    regridder = build_regridder(src_mesh, dst_mesh; cache_dir = _REGRID_CACHE_DIR)
+function _build_surface_flux_regridder(lon::Vector{Float64}, lat::Vector{Float64},
+                                       dst_mesh::AbstractHorizontalMesh, ::Type{FT}) where FT
+    src_mesh = _build_source_latlon_mesh(lon, lat, FT)
+    return build_regridder(src_mesh, dst_mesh; cache_dir = _REGRID_CACHE_DIR)
+end
 
-    # Flatten source flux density to 1D (column-major: i + (j-1)*Nx)
-    src_flat = vec(Float64.(source.raw))
+"""
+    _apply_surface_flux_regridder(regridder, raw2d, FT; report=true) -> Vector{FT}
+
+Conservatively regrid one 2-D flux-density slice `raw2d` [kg/m²/s] using a
+pre-built `regridder`, returning a flat per-cell mass rate [kg/s]
+(area-integrated by the regridder's `dst_areas`).
+"""
+function _apply_surface_flux_regridder(regridder, raw2d::AbstractMatrix, ::Type{FT};
+                                       report::Bool = true) where FT
+    src_flat = vec(Float64.(raw2d))
     n_dst = length(regridder.dst_areas)
     dst_flat = zeros(Float64, n_dst)
     apply_regridder!(dst_flat, regridder, src_flat)
@@ -1370,25 +1640,51 @@ function _conservative_surface_flux_rate(source::FileSurfaceFluxField,
         rate[c] = FT(dst_flat[c] * regridder.dst_areas[c])
     end
 
-    # Report global mass conservation (warn only; conservative regrid is exact to ~FP ulps)
-    src_total = sum(src_flat .* regridder.src_areas)
-    dst_total = sum(Float64.(rate))
-    rel_err = abs(dst_total - src_total) / max(abs(src_total), 1e-30)
-    @info @sprintf("  Conservative regrid: src_total=%.6e  dst_total=%.6e  rel_err=%.2e kg/s",
-                   src_total, dst_total, rel_err)
-    rel_err > 1e-6 && @warn @sprintf("  Conservative regrid mass conservation warning: rel_err=%.2e", rel_err)
+    if report
+        # Report global mass conservation (warn only; conservative regrid is exact to ~FP ulps)
+        src_total = sum(src_flat .* regridder.src_areas)
+        dst_total = sum(Float64.(rate))
+        rel_err = abs(dst_total - src_total) / max(abs(src_total), 1e-30)
+        @info @sprintf("  Conservative regrid: src_total=%.6e  dst_total=%.6e  rel_err=%.2e kg/s",
+                       src_total, dst_total, rel_err)
+        rel_err > 1e-6 && @warn @sprintf("  Conservative regrid mass conservation warning: rel_err=%.2e", rel_err)
+    end
 
     return rate
+end
+
+"""
+    _conservative_surface_flux_rate(source, dst_mesh, FT) -> Vector{FT}
+
+Conservatively regrid flux density [kg/m²/s] onto `dst_mesh`; return a
+flat vector of per-cell mass rates [kg/s] (already area-integrated).
+Callers reshape/wrap per topology.
+"""
+function _conservative_surface_flux_rate(source::FileSurfaceFluxField,
+                                         dst_mesh::AbstractHorizontalMesh,
+                                         ::Type{FT}) where FT
+    regridder = _build_surface_flux_regridder(source.lon, source.lat, dst_mesh, FT)
+    return _apply_surface_flux_regridder(regridder, source.raw, FT)
 end
 
 # ---------------------------------------------------------------------------
 # build_surface_flux_source — LL / RG / CS
 # ---------------------------------------------------------------------------
 
+# Opt-in flag for the time-varying surface-flux path (default false →
+# byte-identical static monthly-mean behavior).
+@inline _surface_flux_time_varying(cfg) = Bool(get(cfg, "time_varying", false))
+
+# Kinds for which a 3D (lon,lat,time) time-varying series is supported.
+@inline _surface_flux_supports_time_varying(kind::Symbol) = kind === :lmdz_co2
+
 function build_surface_flux_source(grid::AtmosGrid{<:LatLonMesh},
-                                   tracer_name::Symbol, cfg, ::Type{FT}) where FT
+                                   tracer_name::Symbol, cfg, ::Type{FT};
+                                   reference_time::Union{DateTime, Nothing} = nothing) where FT
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
+    _surface_flux_time_varying(cfg) && throw(ArgumentError(
+        "time-varying surface flux is CS-only (LatLon support is a follow-up)"))
 
     source = _load_file_surface_flux_field(cfg, FT)
     method = _regridding_method(cfg)
@@ -1418,9 +1714,12 @@ function build_surface_flux_source(grid::AtmosGrid{<:LatLonMesh},
 end
 
 function build_surface_flux_source(grid::AtmosGrid{<:ReducedGaussianMesh},
-                                   tracer_name::Symbol, cfg, ::Type{FT}) where FT
+                                   tracer_name::Symbol, cfg, ::Type{FT};
+                                   reference_time::Union{DateTime, Nothing} = nothing) where FT
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
+    _surface_flux_time_varying(cfg) && throw(ArgumentError(
+        "time-varying surface flux is CS-only (ReducedGaussian support is a follow-up)"))
 
     source = _load_file_surface_flux_field(cfg, FT)
     method = _regridding_method(cfg)
@@ -1464,9 +1763,18 @@ of interior-only `(Nc, Nc)` panels.
 kinds `_load_file_surface_flux_field` understands work
 (`gridfed_fossil_co2` or user-supplied `file` + `variable`).
 Conservative regridding is enforced — CS bilinear is not supported.
+
+If `cfg["time_varying"] = true` and the kind supports a 3-D
+(lon,lat,time) series (currently `:lmdz_co2`), the builder keeps every
+time slice, builds the LL→CS regridder ONCE, applies it per slice, and
+returns a [`TimeVaryingSurfaceFluxSource`](@ref) whose
+`cell_mass_rate_series` is an `NTuple{6}` of `(Nc, Nc, ntime)` panels
+plus a `times` vector (seconds since `reference_time`). The default
+(`time_varying` absent/false) path is byte-identical to before.
 """
 function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
-                                   tracer_name::Symbol, cfg, ::Type{FT}) where FT
+                                   tracer_name::Symbol, cfg, ::Type{FT};
+                                   reference_time::Union{DateTime, Nothing} = nothing) where FT
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
 
@@ -1474,9 +1782,16 @@ function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
     haskey(cfg, "regridding") && method !== :conservative &&
         @warn "CS surface-flux: `regridding = \"$(method)\"` requested; CS supports conservative only — forcing conservative."
 
-    source = _load_file_surface_flux_field(cfg, FT)
     mesh = grid.horizontal
     Nc = mesh.Nc
+
+    if _surface_flux_time_varying(cfg)
+        _surface_flux_supports_time_varying(kind) || throw(ArgumentError(
+            "time-varying surface flux not supported for kind=$(kind); supported: :lmdz_co2"))
+        return _build_timevarying_cs_surface_flux_source(mesh, tracer_name, cfg, FT, reference_time)
+    end
+
+    source = _load_file_surface_flux_field(cfg, FT)
 
     # _conservative_surface_flux_rate already returns kg/s per cell
     # (regridder.dst_areas × regridded flux density), so the panel unpack
@@ -1492,17 +1807,60 @@ function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
     return SurfaceFluxSource(tracer_name, panels)
 end
 
-"""
-    build_surface_flux_sources(grid, tracer_specs, ::Type{FT})
+# Build the time-varying CS source: one regridder, applied per slice into
+# stacked `(Nc, Nc, ntime)` panel series.
+function _build_timevarying_cs_surface_flux_source(mesh, tracer_name::Symbol, cfg,
+                                                   ::Type{FT},
+                                                   reference_time::Union{DateTime, Nothing}) where FT
+    Nc = mesh.Nc
+    field = _load_timevarying_surface_flux_field(cfg, FT, reference_time)
+    ntime = length(field.times_sec)
+    storage_scale = FT(_surface_flux_storage_scale(tracer_name, cfg))
 
-Build `SurfaceFluxSource` instances for every tracer spec that requests
+    regridder = _build_surface_flux_regridder(field.lon, field.lat, mesh, FT)
+    panels_series = ntuple(_ -> Array{FT, 3}(undef, Nc, Nc, ntime), CS_PANEL_COUNT)
+
+    slice_panels = ntuple(_ -> Matrix{FT}(undef, Nc, Nc), CS_PANEL_COUNT)
+    @inbounds for t in 1:ntime
+        # Only report mass conservation on the first slice to avoid log spam.
+        rate_flat = _apply_surface_flux_regridder(regridder, @view(field.raw_series[:, :, t]),
+                                                  FT; report = (t == 1))
+        rate_flat .*= storage_scale
+        length(rate_flat) == CS_PANEL_COUNT * Nc * Nc || throw(DimensionMismatch(
+            "CS time-varying surface-flux regrid returned $(length(rate_flat)) cells; expected $(CS_PANEL_COUNT * Nc * Nc)"))
+        unpack_flat_to_panels_2d!(slice_panels, rate_flat, Nc)
+        for p in 1:CS_PANEL_COUNT
+            panels_series[p][:, :, t] .= slice_panels[p]
+        end
+    end
+
+    # Kind-aware default: lmdz_co2 (CAMS) is held PIECEWISE-CONSTANT in 3-hourly
+    # blocks by HEMCO/GEOS-Chem (verified: GC's EmisCO2_Total at stamp T equals
+    # the CAMS slice at T−Δ), so it MUST default to "stepwise" for GC parity — a
+    # linear/interp default smears the diurnal cycle (anomaly corr 0.91 vs 0.998).
+    # Other kinds keep the generic "linear" default.
+    default_scheme = _surface_flux_kind(cfg) === :lmdz_co2 ? "stepwise" : "linear"
+    scheme = flux_temporal_scheme(String(get(cfg, "temporal_scheme", default_scheme)))
+    return TimeVaryingSurfaceFluxSource(tracer_name, panels_series, field.times_sec, scheme)
+end
+
+"""
+    build_surface_flux_sources(grid, tracer_specs, ::Type{FT}; reference_time=nothing)
+
+Build surface-flux source instances for every tracer spec that requests
 one. Returns a tuple (possibly empty) suitable for the
 `surface_sources = (…,)` kwarg on `DrivenSimulation`.
+
+`reference_time` (the run start `DateTime`) is threaded to each
+per-tracer builder so the time-varying CS path can align its slice times
+to the simulation clock. It is ignored by static sources.
 """
-function build_surface_flux_sources(grid, tracer_specs, ::Type{FT}) where FT
+function build_surface_flux_sources(grid, tracer_specs, ::Type{FT};
+                                    reference_time::Union{DateTime, Nothing} = nothing) where FT
     sources = Any[]
     for spec in tracer_specs
-        source = build_surface_flux_source(grid, spec.name, spec.surface_flux_cfg, FT)
+        source = build_surface_flux_source(grid, spec.name, spec.surface_flux_cfg, FT;
+                                           reference_time = reference_time)
         source === nothing || push!(sources, source)
     end
     return Tuple(sources)
@@ -1515,7 +1873,7 @@ end
 export FileInitialConditionSource
 export build_initial_mixing_ratio
 export pack_initial_tracer_mass
-export FileSurfaceFluxField
+export FileSurfaceFluxField, TimeVaryingFileSurfaceFluxField
 export build_surface_flux_source, build_surface_flux_sources
 
 end # module InitialConditionIO

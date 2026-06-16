@@ -68,7 +68,7 @@ export open_streaming_transport_binary, write_streaming_window!,
 export TransportBinaryDriver, AbstractTransportWindow
 export StructuredFluxDeltas, FaceIndexedFluxDeltas, CubedSphereFluxDeltas
 export StructuredTransportWindow, FaceIndexedTransportWindow
-export CubedSphereTransportWindow, CubedSphereTransportDriver, release_payload!
+export CubedSphereTransportWindow, CubedSphereTransportDriver
 export load_window!, load_qv_window!, load_flux_delta_window!
 export load_tm5_convection_window!, has_tm5_convection
 export load_qv_pair_window!, load_grid, load_transport_window

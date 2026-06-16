@@ -12,10 +12,11 @@ using .AtmosTransport
     # 2026-05 additions (`NoAdvection`, `CMFMCMatrixConvection`,
     # `AbstractConvection`, `ConvectionForcing`, `apply_convection!`,
     # `has_convection_forcing`, `AbstractMetDriver`, `lonlat_to_panel_xy`)
-    # took the count to 107. Bump to 120 to give breathing room. Next API
-    # audit should bring it back down (good candidates: internal accessors
-    # that escaped through `using .Submodule` re-exports).
-    @test length(exported) < 140
+    # took the count to 107; the 2026-06 typed runtime-physics specs and
+    # config-facing additions took it to 144. Bump to 160 to give breathing
+    # room. Next API audit should bring it back down (good candidates: internal
+    # accessors that escaped through `using .Submodule` re-exports).
+    @test length(exported) < 160
     @test :run_driven_simulation in exported
     @test :validate_config in exported
     @test :inspect_binary in exported

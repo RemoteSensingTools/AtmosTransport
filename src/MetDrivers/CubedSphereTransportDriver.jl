@@ -363,4 +363,4 @@ function load_transport_window(driver::CubedSphereTransportDriver, win::Int)
                                       kz = raw.kz)
 end
 
-export CubedSphereTransportWindow, CubedSphereTransportDriver, release_payload!
+export CubedSphereTransportWindow, CubedSphereTransportDriver

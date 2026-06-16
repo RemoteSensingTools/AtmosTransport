@@ -256,6 +256,39 @@ flux_kind(driver::CubedSphereTransportDriver) = flux_kind(driver.reader)
 
 Base.close(driver::CubedSphereTransportDriver) = close(driver.reader)
 
+"""
+    release_payload!(driver::CubedSphereTransportDriver)
+
+Hint to the OS that the driver's memory-mapped binary payload is no longer
+needed, so the kernel drops the faulted file-cache pages now instead of holding
+them — charged to the process memory cgroup — until reclaim pressure. The per-day
+CS loop rebuilds a fresh driver each day; without this a long run accumulates
+every day's mmap as cgroup-charged `inactive_file`, leaving no cgroup headroom
+for the user's other processes (on a per-user cgroup the run can starve them).
+`munmap`/`finalize` does NOT achieve this — clean file pages survive the unmap —
+but `madvise(MADV_DONTNEED)` evicts them immediately (measured: ~32 GB → 0.7 GB
+for one ERA5 C180/L137 day).
+
+Safe: the mapping is read-only and file-backed, so any later access simply
+re-faults from disk rather than crashing — `madvise` here is purely an
+optimization. Linux-only; a no-op on other platforms or on `madvise` failure.
+Call once the day's windows have been consumed (the runner calls it right after
+the day's `close(driver)`); the binary writer page-aligns the payload, but the
+start is rounded down to a page boundary defensively.
+"""
+function release_payload!(driver::CubedSphereTransportDriver)
+    Sys.islinux() || return nothing
+    data = driver.reader.data
+    (data isa Array && !isempty(data)) || return nothing
+    MADV_DONTNEED = Cint(4)                      # Linux <sys/mman.h>
+    pg   = ccall(:getpagesize, Cint, ())
+    addr = UInt(pointer(data))
+    base = addr & ~(UInt(pg) - 1)                # round start down to a page boundary
+    len  = Csize_t(sizeof(data) + (addr - base)) # extend length to cover the rounding
+    ccall(:madvise, Cint, (Ptr{Cvoid}, Csize_t, Cint), Ptr{Cvoid}(base), len, MADV_DONTNEED)
+    return nothing
+end
+
 @inline _cs_basis_type(reader::CubedSphereBinaryReader) =
     mass_basis(reader) === :dry ? DryBasis : MoistBasis
 
@@ -330,4 +363,4 @@ function load_transport_window(driver::CubedSphereTransportDriver, win::Int)
                                       kz = raw.kz)
 end
 
-export CubedSphereTransportWindow, CubedSphereTransportDriver
+export CubedSphereTransportWindow, CubedSphereTransportDriver, release_payload!

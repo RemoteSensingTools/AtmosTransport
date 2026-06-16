@@ -92,7 +92,7 @@ using ..MetDrivers: TransportBinaryDriver, CubedSphereTransportDriver,
                      load_transport_window, driver_grid, air_mass_basis,
                      total_windows, window_dt, binary_capabilities,
                      inspect_binary, steps_per_window,
-                     steps_per_window_schedule
+                     steps_per_window_schedule, release_payload!
 using ..InitialConditionIO: build_initial_mixing_ratio,
                              pack_initial_tracer_mass,
                              build_surface_flux_sources
@@ -1392,6 +1392,11 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
                                  redraw = true)
         end
         close(driver)
+        # Drop this day's memory-mapped payload from the page cache now (it is
+        # not read again). Otherwise each day's mmap lingers as cgroup-charged
+        # file cache for the whole run, starving the user's other processes on a
+        # per-user cgroup. madvise(DONTNEED) is safe here (re-faults on access).
+        release_payload!(driver)
     end
 
     # Drain the last in-flight async daily write before the final mass accounting,

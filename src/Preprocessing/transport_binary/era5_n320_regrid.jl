@@ -766,7 +766,7 @@ end
                 kwargs...)
 
 Adapter that the unified preprocessor CLI calls into. Forwards to
-[`process_era5_n320_to_cs_day`](@ref) with the kwargs the underlying
+`process_era5_n320_to_cs_day` with the kwargs the underlying
 function actually accepts; the rest of the unified-CLI day-kwargs (e.g.
 `chain_mass`, `adaptive_substeps`, `min_steps_per_window`, `seed_m`) are
 absorbed by the trailing `kwargs...` and silently ignored — ERA5 N320 has

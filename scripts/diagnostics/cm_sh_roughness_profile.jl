@@ -16,7 +16,10 @@ function rough_sh(f_panels, mask, Nc)
         f = f_panels[p]; m = mask[p]
         for j in 2:Nc-1, i in 2:Nc-1
             m[i,j] || continue
+            nb = f[i+1,j]+f[i-1,j]+f[i,j+1]+f[i,j-1]
+            (isnan(f[i,j])||isnan(nb)) && continue
             push!(laps, Float64(f[i,j]) - 0.25 * Float64(nb))
+        end
         for j in 1:Nc, i in 1:Nc; m[i,j] && !isnan(f[i,j]) && push!(vals, Float64(f[i,j])); end
     end
     isempty(laps) && return NaN

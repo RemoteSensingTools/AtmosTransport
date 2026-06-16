@@ -36,6 +36,16 @@ function _write_synthetic(path; header_bytes::Int, hdr::AbstractDict,
     return path
 end
 
+"""A minimal header the patch tool's `_validate_patch_target` accepts: a
+cubed-sphere binary with a positive-integer per-window schedule whose length is
+`nwin`, whose maximum equals `steps_per_window`, and a matching `nwindow`. Merge
+per-test extras on top."""
+cs_hdr(extra::AbstractDict = Dict{String,Any}(); spw::Int = 18, nwin::Int = 2) =
+    merge(Dict{String,Any}("grid_type" => "cubed_sphere",
+                           "steps_per_window" => spw,
+                           "steps_per_window_by_window" => fill(spw, nwin),
+                           "nwindow" => nwin), extra)
+
 @testset "CS writer-contract guard" begin
     @testset "validate_cs_writer_contract! accepts a complete header" begin
         h = Dict{String,Any}("runtime_substep_contract" => "binary_schedule",
@@ -66,8 +76,8 @@ end
         @testset "adds the flag, preserves header_bytes + payload + terminator" begin
             p = joinpath(dir, "a.bin")
             _write_synthetic(p; header_bytes = HB,
-                             hdr = Dict("steps_per_window" => 35,
-                                        "global_mass_pin_target_kg" => nothing),
+                             hdr = cs_hdr(Dict("global_mass_pin_target_kg" => nothing);
+                                          spw = 35),
                              payload = SENTINEL)
             @test patch!(p; apply = true) === :patched
             dict, hb = _read_header(p)
@@ -85,7 +95,7 @@ end
         @testset "idempotent: a patched binary is skipped" begin
             p = joinpath(dir, "b.bin")
             _write_synthetic(p; header_bytes = HB,
-                             hdr = Dict("runtime_substep_contract" => "binary_schedule"),
+                             hdr = cs_hdr(Dict("runtime_substep_contract" => "binary_schedule")),
                              payload = SENTINEL)
             before = read(p)
             @test patch!(p; apply = true) === :skip
@@ -95,19 +105,23 @@ end
         @testset "conflict: unexpected existing value is not overwritten" begin
             p = joinpath(dir, "c.bin")
             _write_synthetic(p; header_bytes = HB,
-                             hdr = Dict("runtime_substep_contract" => "something_else"))
+                             hdr = cs_hdr(Dict("runtime_substep_contract" => "something_else")))
             before = read(p)
             @test patch!(p; apply = true) === :conflict
             @test read(p) == before
         end
 
         @testset "overflow guard: rejects when the key would not fit" begin
-            # Pack the base JSON to within ~30 bytes of header_bytes so the base
-            # fits but the added ~45-byte contract key overflows.
+            # A contract-valid CS header padded to within ~8 bytes of
+            # header_bytes: the base fits, but the added ~45-byte contract key
+            # overflows. Size the filler from the actual base JSON length.
             small = 256
-            filler = "x"^(small - 60)
+            probe = JSON3.write(merge(Dict{String,Any}("header_bytes" => small),
+                                      cs_hdr(; spw = 1, nwin = 1)))
+            filler = "x"^max(small - ncodeunits(probe) - 17, 0)  # -9 pad wrapper, -8 free
             p = joinpath(dir, "d.bin")
-            _write_synthetic(p; header_bytes = small, hdr = Dict("pad" => filler))
+            _write_synthetic(p; header_bytes = small,
+                             hdr = cs_hdr(Dict("pad" => filler); spw = 1, nwin = 1))
             before = read(p)
             @test patch!(p; apply = true) === :overflow
             @test read(p) == before                          # untouched on overflow
@@ -115,7 +129,7 @@ end
 
         @testset "dry run never writes" begin
             p = joinpath(dir, "e.bin")
-            _write_synthetic(p; header_bytes = HB, hdr = Dict("steps_per_window" => 18),
+            _write_synthetic(p; header_bytes = HB, hdr = cs_hdr(; spw = 18),
                              payload = SENTINEL)
             before = read(p)
             @test patch!(p; apply = false) === :would

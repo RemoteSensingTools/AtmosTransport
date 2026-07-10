@@ -174,12 +174,14 @@ end
         A = Float64[1000.0 * (Nz_native + 1 - k) for k in 1:(Nz_native + 1)]
         B = Float64[(k - 1) / Nz_native for k in 1:(Nz_native + 1)]
         vc = (A = A, B = B)
+        merge_map = [1, 1, 2, 2, 3, 3]
+        merged_vc = (A = A[[1, 3, 5, 7]], B = B[[1, 3, 5, 7]])
         vertical = (
             ab = (a_ifc = A, b_ifc = B),
             level_range = 1:Nz_native,
             vc_native = vc,
-            merged_vc = vc,
-            merge_map = collect(1:Nz_native),
+            merged_vc = merged_vc,
+            merge_map = merge_map,
             Nz_native = Nz_native,
             Nz = Nz,
         )

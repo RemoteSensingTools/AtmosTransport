@@ -1,7 +1,8 @@
 # Test layout
 
 Tests are organized by tier. The orchestrator is [`runtests.jl`](runtests.jl);
-it runs `core/` by default and accepts opt-in flags to include other tiers.
+it runs `core/` and `regridding/` by default and accepts opt-in flags to
+include other tiers.
 
 | Tier | Folder | When it runs | What's here |
 |---|---|---|---|
@@ -10,17 +11,18 @@ it runs `core/` by default and accepts opt-in flags to include other tiers.
 | **Diagnostic** | [`diagnostic/`](diagnostic/) | `--all` or `--diagnostic` | Large numerical sweeps useful for adjoint / inversion debugging (Taylor-sweep, integration footprints). Run occasionally, not every PR. |
 | **Orphan** | [`orphan/`](orphan/) | `--orphan` only | Promotion candidates — tests that exist but were not in the CI roster as of 2026-05-29. Each should be reviewed and either promoted to `core/` (with a short note here) or moved to `archived/`. |
 | **Archived** | [`archived/`](archived/) | Never (kept for reference) | Tests against deleted preprocessing wrappers and one-off plan-decision "studies". See [`archived/legacy_README.md`](archived/legacy_README.md). |
-| **Regridding** | [`regridding/`](regridding/) | Selectively from `core/` | Regridding subsuite. The folder has its own optional `runtests.jl` that is **not** wired into the top-level orchestrator (kept for developer convenience). |
+| **Regridding** | [`regridding/`](regridding/) | Default (CI green-bar) | Conservative-remapping geometry, conservation, direction, and persistence checks. Its `runtests.jl` is included as one isolated suite by the top-level orchestrator. |
 
 ## Usage
 
 ```bash
-julia --project=. test/runtests.jl                  # core only (CI default)
-julia --project=. test/runtests.jl --all            # core + real_data + diagnostic
-julia --project=. test/runtests.jl --diagnostic     # core + diagnostic
-julia --project=. test/runtests.jl --real-data      # core + real_data
-julia --project=. test/runtests.jl --orphan         # core + orphan watchlist
-julia --project=. test/runtests.jl --tiers=core,orphan   # explicit list
+julia --project=. -e 'using Pkg; Pkg.test()'         # CI-equivalent default
+julia --project=test test/runtests.jl                # core + regridding
+julia --project=test test/runtests.jl --all          # default + real data + diagnostic
+julia --project=test test/runtests.jl --diagnostic   # default + diagnostic
+julia --project=test test/runtests.jl --real-data    # default + real data
+julia --project=test test/runtests.jl --orphan       # default + orphan watchlist
+julia --project=test test/runtests.jl --tiers=core,orphan # only listed tiers
 ```
 
 ## Adding a new test

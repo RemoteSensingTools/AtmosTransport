@@ -34,6 +34,8 @@ using NCDatasets
 
     @testset "build_regridder cache_dir hit" begin
         mktempdir() do tmp
+            @test_throws ArgumentError build_regridder(
+                src, dst; cache_dir = tmp, intersection_operator = :custom)
             # First call builds
             r1 = build_regridder(src, dst; normalize = false, cache_dir = tmp)
             # Second call should return an equivalent regridder from cache

@@ -343,20 +343,19 @@ Trees.treeify(mesh::CubedSphereMesh) = Trees.treeify(GOCore.best_manifold(mesh),
 """
     Trees.treeify(::Spherical, mesh::ReducedGaussianMesh) -> KnownFullSphereExtentWrapper{MultiTreeWrapper}
 
-Build a spatial tree for a `ReducedGaussianMesh` by treating each latitude
-ring as an independent `CellBasedGrid{Spherical}` and combining all rings
-into a `MultiTreeWrapper`.
+Build a spatial tree for a `ReducedGaussianMesh` by dividing each latitude
+ring into longitude sectors and combining the sector trees in a
+`MultiTreeWrapper`.
 
-Each ring `j` (south to north) becomes a `(nlon+1, 2)` corner-point grid
-wrapped in an `IndexOffsetQuadtreeCursor` with offset `ring_offsets[j] - 1`,
-so that the cursor's global cell indices match the mesh's flat cell indexing:
+Each sector becomes a corner-point grid wrapped in an
+`IndexOffsetQuadtreeCursor`, so its global cell indices match the mesh's flat
+cell indexing:
 
     global_cell_index = ring_offsets[j] + in_ring_index - 1
 
-The resulting tree correctly produces `SphericalCap` extents at every level
-(via `CellBasedGrid{Spherical}`'s specialized `cell_range_extent`) and
-provides O(log nlon) pruning within each ring via the cursor's recursive
-subdivision.
+No sector spans a hemisphere. This is important because a full 360-degree
+equatorial ring has a degenerate root `SphericalCap`, which can incorrectly
+prune every cell in the ring during a dual-tree intersection search.
 
 ## Longitude convention
 
@@ -373,12 +372,25 @@ Ring boundaries come from `mesh.lat_faces` (south to north, with
 function Trees.treeify(manifold::GOCore.Spherical, mesh::ReducedGaussianMesh)
     to_sphere = GO.UnitSphereFromGeographic()
     nr = nrings(mesh)
+    minimum(mesh.nlon_per_ring) >= 3 ||
+        throw(ArgumentError("regridding requires at least three cells per reduced-Gaussian ring"))
 
-    ring_trees = map(1:nr) do j
+    sector_specs = Tuple{Int, Int, Int}[]
+    for j in 1:nr
+        nlon = mesh.nlon_per_ring[j]
+        nsectors = min(4, nlon)
+        sector_edges = [fld(k * nlon, nsectors) for k in 0:nsectors]
+        for sector in 1:nsectors
+            push!(sector_specs,
+                  (j, sector_edges[sector] + 1, sector_edges[sector + 1]))
+        end
+    end
+
+    sector_trees = map(sector_specs) do (j, first_cell, last_cell)
         nlon = mesh.nlon_per_ring[j]
         dlon = 360.0 / nlon
-        φ_s  = Float64(mesh.lat_faces[j])
-        φ_n  = Float64(mesh.lat_faces[j + 1])
+        φ_s = Float64(mesh.lat_faces[j])
+        φ_n = Float64(mesh.lat_faces[j + 1])
 
         # Epsilon-clamp polar latitudes to avoid degenerate polygons.
         #
@@ -394,27 +406,22 @@ function Trees.treeify(manifold::GOCore.Spherical, mesh::ReducedGaussianMesh)
         φ_s = max(φ_s, -90.0 + 0.001)
         φ_n = min(φ_n,  90.0 - 0.001)
 
-        # Build (nlon+1) × 2 corner-point matrix.
-        # Dimension 1: longitude face edges (0° to 360° inclusive).
-        # Dimension 2: latitude face edges (south=1, north=2).
-        pts = Matrix{UnitSphericalPoint{Float64}}(undef, nlon + 1, 2)
-        @inbounds for k in 1:(nlon + 1)
-            lon = (k - 1) * dlon
-            pts[k, 1] = to_sphere((lon, φ_s))
-            pts[k, 2] = to_sphere((lon, φ_n))
+        nsector = last_cell - first_cell + 1
+        points = Matrix{UnitSphericalPoint{Float64}}(undef, nsector + 1, 2)
+        @inbounds for local_face in 1:(nsector + 1)
+            lon = (first_cell + local_face - 2) * dlon
+            points[local_face, 1] = to_sphere((lon, φ_s))
+            points[local_face, 2] = to_sphere((lon, φ_n))
         end
 
-        ring_grid = Trees.CellBasedGrid(manifold, pts)
-        # IndexOffsetQuadtreeCursor maps local index → global:
-        #   global = local + offset, where offset = ring_offsets[j] - 1
-        Trees.IndexOffsetQuadtreeCursor(ring_grid, mesh.ring_offsets[j] - 1)
+        grid = Trees.CellBasedGrid(manifold, points)
+        index_offset = mesh.ring_offsets[j] + first_cell - 2
+        Trees.IndexOffsetQuadtreeCursor(grid, index_offset)
     end
+    offsets = [mesh.ring_offsets[j] + last_cell - 1
+               for (j, _, last_cell) in sector_specs]
 
-    # Cumulative cell counts for MultiTreeWrapper's searchsortedfirst.
-    # offsets[j] = total cells in rings 1:j = ring_offsets[j+1] - 1.
-    offsets = [mesh.ring_offsets[j + 1] - 1 for j in 1:nr]
-
-    tree = Trees.MultiTreeWrapper(ring_trees, offsets)
+    tree = Trees.MultiTreeWrapper(sector_trees, offsets)
     return Trees.KnownFullSphereExtentWrapper(tree)
 end
 

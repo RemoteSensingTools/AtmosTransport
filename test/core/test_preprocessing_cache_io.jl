@@ -63,15 +63,19 @@ end
 
 @testset "spectral coefficient cache round trip" begin
     mktempdir() do dir
+        hours = collect(0:23)
+        lnsp = ComplexF64[1 0; 2 3]
+        vo = zeros(ComplexF64, 2, 2, 137)
+        d = zeros(ComplexF64, 2, 2, 137)
+        vo[:, :, 1] .= ComplexF64[1 3; 2 4]
+        d[:, :, 1] .= ComplexF64[9 11; 10 12]
         spec = (
-            hours = [0, 1],
-            lnsp_all = Dict(0 => ComplexF64[1 0; 2 3], 1 => ComplexF64[4 0; 5 6]),
-            vo_by_hour = Dict(0 => reshape(ComplexF64[1, 2, 3, 4], 2, 2, 1),
-                              1 => reshape(ComplexF64[5, 6, 7, 8], 2, 2, 1)),
-            d_by_hour = Dict(0 => reshape(ComplexF64[9, 10, 11, 12], 2, 2, 1),
-                             1 => reshape(ComplexF64[13, 14, 15, 16], 2, 2, 1)),
+            hours = hours,
+            lnsp_all = Dict(hour => copy(lnsp) for hour in hours),
+            vo_by_hour = Dict(hour => copy(vo) for hour in hours),
+            d_by_hour = Dict(hour => copy(d) for hour in hours),
             T = 1,
-            n_times = 2,
+            n_times = length(hours),
         )
 
         path = joinpath(dir, "spectral_cache.jld2")

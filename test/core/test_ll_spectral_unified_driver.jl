@@ -24,14 +24,15 @@ function _write_fake_ll_spectral_cache!(spectral_dir::String,
     touch(lnsp_path)
 
     lnsp = fill(complex(log(100000.0), 0.0), 1, 1)
-    zero_level = zeros(ComplexF64, 1, 1, 1)
+    hours = collect(0:23)
+    zero_levels = zeros(ComplexF64, 1, 1, 137)
     spec = (
-        hours = [0, 1],
-        lnsp_all = Dict(0 => copy(lnsp), 1 => copy(lnsp)),
-        vo_by_hour = Dict(0 => copy(zero_level), 1 => copy(zero_level)),
-        d_by_hour = Dict(0 => copy(zero_level), 1 => copy(zero_level)),
+        hours = hours,
+        lnsp_all = Dict(hour => copy(lnsp) for hour in hours),
+        vo_by_hour = Dict(hour => copy(zero_levels) for hour in hours),
+        d_by_hour = Dict(hour => copy(zero_levels) for hour in hours),
         T = 0,
-        n_times = 2,
+        n_times = length(hours),
     )
     path = Pre.spectral_day_cache_path(cache_dir, vo_d_path, lnsp_path;
                                        T_target = 0)
@@ -79,6 +80,7 @@ function _header_without_creation_time(path)
     json_len = json_len === nothing ? HEADER_SIZE : json_len - 1
     header = Dict{Symbol, Any}(JSON3.read(String(header_bytes[1:json_len])))
     delete!(header, :creation_time)
+    delete!(header, :generation_fingerprint)
     return header
 end
 

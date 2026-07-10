@@ -38,7 +38,7 @@ save_esmf_weights("weights_esmf.nc", r)
 |--------------------|---------------|----------------------|
 | `LatLonMesh`       | `CellBasedGrid` from `(Nx+1)×(Ny+1)` face corners → `TopDownQuadtreeCursor` | O(log(Nx·Ny)) |
 | `CubedSphereMesh`  | 6 per-panel convention-aware grids from CS corners → `CubedSphereToplevelTree` | O(log Nc²) per panel |
-| `ReducedGaussianMesh` | Per-ring `CellBasedGrid(nlon+1, 2)` → `MultiTreeWrapper` | O(nrings · log nlon) |
+| `ReducedGaussianMesh` | Sectorized per-ring `CellBasedGrid` trees → `MultiTreeWrapper` | O(nrings · log nlon) |
 
 All three produce `SphericalCap` extents at every tree level, which is
 required by CR.jl's spherical dual-DFS intersection search.
@@ -51,9 +51,10 @@ required by CR.jl's spherical dual-DFS intersection search.
   longitude offset used by GEOS grid files. Left-handed GEOS panels are
   wound correctly for tree traversal while preserving file-order indices.
 - `ReducedGaussianMesh` clamps polar face latitudes by 0.001° to avoid
-  degenerate polygons at the poles. The omitted cap area is ~8e-11 of the
-  full sphere — negligible, but means `frac_a`/`frac_b` at poles are
-  ~0.987 rather than exactly 1.0.
+  degenerate polygons at the poles. Also, its cell polygons use great-circle
+  edges to approximate curved latitude boundaries. This approximation is
+  visible on unusually coarse synthetic rings and converges as ring
+  resolution increases.
 
 ## Architecture reference
 

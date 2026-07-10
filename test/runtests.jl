@@ -8,14 +8,14 @@
 #   test/diagnostic/  — large numerical sweeps; opt-in via --diagnostic or --all
 #   test/archived/    — never run; kept as reference (see archived/legacy_README.md)
 #   test/orphan/      — promotion candidates; CI-excluded; opt-in via --orphan
-#   test/regridding/  — semantic grouping with its own (optional) runtests.jl
+#   test/regridding/  — conservative-remapping correctness; part of CI baseline
 #
 # Usage:
-#   julia --project=. test/runtests.jl                # core only (CI default)
-#   julia --project=. test/runtests.jl --all          # core + real_data + diagnostic
-#   julia --project=. test/runtests.jl --diagnostic   # core + diagnostic
-#   julia --project=. test/runtests.jl --orphan       # core + orphan watchlist
-#   julia --project=. test/runtests.jl --tiers=core,real_data,orphan
+#   julia --project=test test/runtests.jl                # core + regridding
+#   julia --project=test test/runtests.jl --all          # default + real_data + diagnostic
+#   julia --project=test test/runtests.jl --diagnostic   # default + diagnostic
+#   julia --project=test test/runtests.jl --orphan       # default + orphan watchlist
+#   julia --project=test test/runtests.jl --tiers=core,real_data,orphan
 #
 # Each test file is included into a fresh anonymous module so files don't
 # leak `using .AtmosTransport.X: Y` bindings into each other. On Julia 1.12
@@ -25,13 +25,15 @@
 
 const TIER_FOLDERS = (
     core       = "core",
+    regridding = "regridding",
     real_data  = "real_data",
     diagnostic = "diagnostic",
     orphan     = "orphan",
 )
 
 function _selected_tiers(args::Vector{String})
-    selected = Set{Symbol}((:core,))
+    explicit_tiers = any(startswith(arg, "--tiers=") for arg in args)
+    selected = explicit_tiers ? Set{Symbol}() : Set{Symbol}((:core, :regridding))
     for arg in args
         if arg == "--all"
             push!(selected, :real_data); push!(selected, :diagnostic)
@@ -56,8 +58,19 @@ end
 function _tier_files(tier::Symbol)
     folder = joinpath(@__DIR__, TIER_FOLDERS[tier])
     isdir(folder) || return String[]
-    return sort([joinpath(TIER_FOLDERS[tier], f)
-                 for f in readdir(folder) if endswith(f, ".jl")])
+    tier === :regridding && return [joinpath(TIER_FOLDERS[tier], "runtests.jl")]
+    files = sort([joinpath(TIER_FOLDERS[tier], f)
+                  for f in readdir(folder) if endswith(f, ".jl")])
+    if tier === :core
+        # Package-level analyzers must run before tests that include local
+        # copies of AtmosTransport in anonymous modules. In particular, JET's
+        # package cache otherwise sees an incomplete 13-report snapshot instead
+        # of the standalone package's full report set.
+        health_gates = [joinpath(TIER_FOLDERS[tier], name)
+                        for name in ("test_aqua.jl", "test_jet.jl")]
+        return vcat(health_gates, setdiff(files, health_gates))
+    end
+    return files
 end
 
 function run_test_file_isolated(test_file::AbstractString)
@@ -70,7 +83,7 @@ function run_test_file_isolated(test_file::AbstractString)
 end
 
 selected = _selected_tiers(ARGS)
-for tier in (:core, :real_data, :diagnostic, :orphan)
+for tier in (:core, :regridding, :real_data, :diagnostic, :orphan)
     tier in selected || continue
     files = _tier_files(tier)
     if isempty(files)

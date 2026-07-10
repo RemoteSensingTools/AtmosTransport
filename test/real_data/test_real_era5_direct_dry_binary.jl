@@ -23,13 +23,16 @@ const BIN_PATH = expanduser(
 const THERMO_PATH = expanduser(
     "~/data/AtmosTransport/met/era5/0.5x0.5/physics/era5_thermo_ml_20211201.nc")
 
-for (name, path) in [("binary", BIN_PATH), ("thermo", THERMO_PATH)]
-    if !isfile(path)
-        @warn "Skipping real-data test: $name not found at $path"
-        exit(0)
-    end
-end
+const MISSING_INPUTS = [(name, path)
+                        for (name, path) in [("binary", BIN_PATH), ("thermo", THERMO_PATH)]
+                        if !isfile(path)]
 
+if !isempty(MISSING_INPUTS)
+    @testset "Direct dry-basis binary -> advection" begin
+        @info "Skipping real-data test; inputs are unavailable" missing = MISSING_INPUTS
+        @test_skip isempty(MISSING_INPUTS)
+    end
+else
 ENV["ATMOSTR_NO_STALE_CHECK"] = "1"
 ENV["ATMOSTR_NO_CM_CHECK"] = "1"
 
@@ -159,3 +162,4 @@ end
 end
 
 @info "Real dry-binary test passed"
+end

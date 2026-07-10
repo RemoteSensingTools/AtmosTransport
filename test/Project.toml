@@ -52,10 +52,14 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
+[sources]
+AtmosTransport = {path = ".."}
+
 [compat]
 Adapt = "4"
 Aqua = "0.8"
 ArgParse = "1.2.0"
+AtmosTransport = "0.2"
 ConservativeRegridding = "0.2"
 CubedSphere = "0.3.4"
 Dates = "1"

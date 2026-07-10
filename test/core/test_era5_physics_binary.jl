@@ -397,6 +397,7 @@ if RUN_ALL
 
         if !isfile(joinpath(nc_dir, "era5_convection_20211201.nc"))
             @warn "ERA5 convection NC missing; skipping --all test"
+            @test_skip false
             return
         end
 

@@ -27,13 +27,18 @@ const THERMO_PATH = expanduser(
     "~/data/AtmosTransport/met/era5/physics/era5_thermo_ml_20211201.nc")
 const COEFF_PATH = joinpath(@__DIR__, "..", "..", "config", "era5_L137_coefficients.toml")
 
-for (name, path) in [("binary", BIN_PATH), ("thermo", THERMO_PATH), ("coefficients", COEFF_PATH)]
-    if !isfile(path)
-        @warn "Skipping real-data test: $name not found at $path"
-        exit(0)
-    end
-end
+const MISSING_INPUTS = [(name, path)
+                        for (name, path) in [("binary", BIN_PATH),
+                                            ("thermo", THERMO_PATH),
+                                            ("coefficients", COEFF_PATH)]
+                        if !isfile(path)]
 
+if !isempty(MISSING_INPUTS)
+    @testset "ERA5 moist-to-dry conversion" begin
+        @info "Skipping real-data test; inputs are unavailable" missing = MISSING_INPUTS
+        @test_skip isempty(MISSING_INPUTS)
+    end
+else
 ENV["ATMOSTR_NO_STALE_CHECK"] = "1"
 ENV["ATMOSTR_NO_CM_CHECK"] = "1"
 
@@ -332,3 +337,4 @@ end
 end
 
 @info "All dry-conversion tests passed"
+end

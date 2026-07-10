@@ -1619,6 +1619,9 @@ function process_day(date::Date,
                              substep_cfl_target = positivity_cfl_limit),
                      run_cache = nothing)
     FT = settings.output_float_type
+    settings.include_qv && throw(ArgumentError(
+        "reduced-Gaussian preprocessing does not support output.include_qv=true; " *
+        "set include_qv=false (humidity may still be used internally for dry-basis conversion)"))
     mesh = grid.mesh
     nc = ncells(mesh)
     nf = nfaces(mesh)
@@ -1665,20 +1668,19 @@ function process_day(date::Date,
 
     # Open the streaming binary writer
     vc_merged = vertical.merged_vc
-    transport_grid = AtmosGrid(mesh, vc_merged, CPU(); FT=FT)
+    transport_grid = AtmosGrid(mesh, vc_merged, CPU(); FT=FT, radius=mesh.radius)
     sample_window = (m = buf.m[1], hflux = buf.hflux[1],
                      cm = buf.cm[1], ps = buf.ps[1])
 
     # Declare the canonical window_constant contract
-    # explicitly — all 6 semantic fields + Poisson fields. Otherwise
-    # the RG writer inherits legacy defaults for flux_sampling/delta_semantics
-    # and omits Poisson fields entirely, leaving ambiguity the runtime
-    # parser would silently resolve.
+    # explicitly. The sliding-window payload stores already balanced,
+    # window-constant fluxes and no endpoint deltas, so delta semantics must
+    # be `none`. Poisson metadata still records how those fluxes were built.
     rg_contract = canonical_window_constant_contract(
         steps_per_window     = steps_per_met,
-        humidity_sampling    = settings.include_qv ? :window_endpoints : :none,
+        humidity_sampling    = :none,
         source_flux_sampling = :window_start_endpoint,
-        include_flux_delta   = true,
+        include_flux_delta   = false,
     )
 
     writer = open_streaming_transport_binary(

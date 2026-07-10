@@ -142,7 +142,8 @@ end
                                        Dict{String, Any}("gaussian_number" => 1),
                                        FT)
         vc = HybridSigmaPressure(FT[0, 1000], FT[0, 1])
-        grid = AtmosGrid(target.mesh, vc, CPU(); FT = FT)
+        grid = AtmosGrid(target.mesh, vc, CPU(); FT = FT,
+                         radius = target.mesh.radius)
         ncell = ncells(target.mesh)
         nface = nfaces(target.mesh)
         window = (m = fill(FT(1), ncell, Nz),

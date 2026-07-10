@@ -1,13 +1,14 @@
 # ---------------------------------------------------------------------------
 # test_reduced_gaussian.jl
 #
-# End-to-end tests for ReducedGaussianMesh regridding via the per-ring
+# End-to-end tests for ReducedGaussianMesh regridding via its sectorized
 # MultiTreeWrapper path:
 #   1. Small RG → LatLon: constant-field mass conservation
 #   2. Small RG → CubedSphere: constant-field mass conservation
 #   3. LatLon → small RG: transpose direction
 #   4. Non-uniform field (cos(lat)) mass conservation
 #   5. frac_a / frac_b ≈ 1 for full-sphere pairs
+#   6. Reduced Gaussian → different Reduced Gaussian geometry
 #
 # Uses a small synthetic RG mesh (5 rings, max nlon=16, 56 total cells)
 # so the tests run in seconds even without spatial acceleration.
@@ -23,6 +24,8 @@
     # Destination meshes
     ll = LatLonMesh(Nx = 24, Ny = 12)
     cs = CubedSphereMesh(Nc = 4, convention = GnomonicPanelConvention())
+    too_coarse = ReducedGaussianMesh([0.0], [2])
+    @test_throws ArgumentError build_regridder(too_coarse, ll)
 
     @testset "RG(5-ring) → LL(24×12) constant field" begin
         r = build_regridder(rg, ll; normalize = false)
@@ -37,8 +40,6 @@
 
         # RG→LL: all RG cells land on LL (LL covers the full sphere),
         # so mass conservation should be exact to machine precision.
-        # The RG source area is ~98.7% of the sphere (0.001° polar
-        # clamp in treeify), but ALL of it maps onto LL.
         src_mass = sum(src_field .* r.src_areas)
         dst_mass = sum(dst_field .* r.dst_areas)
         @test isapprox(src_mass, dst_mass; rtol = 1e-10)
@@ -71,11 +72,10 @@
 
     @testset "LL(24×12) → RG(5-ring) constant field" begin
         # Transpose direction: LatLon → ReducedGaussian.
-        # LL covers the full sphere; RG covers ~98.7% (0.001° polar
-        # clamp). Some LL pole-cap cells have no corresponding RG
-        # cells, so their mass is lost — exact mass conservation is
-        # NOT expected for this direction. Instead we check:
-        #   1. dst_mass / src_mass ≈ RG_coverage_fraction (~0.987)
+        # LL covers the full sphere. This unusually coarse RG mesh represents
+        # curved latitude boundaries with great-circle polygon edges, so its
+        # geometric coverage is about 98.7%. We check:
+        #   1. dst_mass / src_mass ≈ RG coverage fraction
         #   2. dst cells are approximately 1.0 (constant input)
         r = build_regridder(ll, rg; normalize = false)
         n_src = length(r.src_areas)
@@ -89,10 +89,9 @@
 
         src_mass = sum(src_field .* r.src_areas)
         dst_mass = sum(dst_field .* r.dst_areas)
-        # RG covers ~98.7% of the sphere → dst_mass ≈ 0.987 × src_mass
         coverage_ratio = dst_mass / src_mass
         @test coverage_ratio > 0.98
-        @test coverage_ratio < 1.001  # should not exceed 1
+        @test coverage_ratio <= 1.0
 
         # All destination cells should be close to 1.0
         @test maximum(abs.(dst_field .- 1.0)) < 0.05
@@ -120,5 +119,20 @@
         dst_mass = sum(dst_field .* r.dst_areas)
         # cos(lat) integral over the sphere is nonzero; check relative conservation.
         @test isapprox(src_mass, dst_mass; rtol = 1e-10)
+    end
+
+    @testset "RG(5-ring) → different RG geometry" begin
+        destination = ReducedGaussianMesh(latitudes, [12, 16, 20, 16, 12])
+        r = build_regridder(rg, destination; normalize = false)
+        destination_field = zeros(length(r.dst_areas))
+        apply_regridder!(destination_field, r, ones(length(r.src_areas)))
+
+        @test length(r.src_areas) == ncells(rg)
+        @test length(r.dst_areas) == ncells(destination)
+        @test minimum(destination_field) > 0.95
+        @test maximum(destination_field) <= 1.0 + 1e-12
+        overlap_fraction = sum(destination_field .* r.dst_areas) / sum(r.src_areas)
+        @test overlap_fraction > 0.99
+        @test overlap_fraction <= 1.0
     end
 end

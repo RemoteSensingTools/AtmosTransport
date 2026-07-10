@@ -3,6 +3,7 @@
 
 using Test
 using Dates
+using JSON3
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
@@ -23,19 +24,30 @@ function _write_fake_spectral_cache!(spectral_dir::String,
     touch(lnsp_path)
 
     lnsp = fill(complex(log(100000.0), 0.0), 1, 1)
-    zero_level = zeros(ComplexF64, 1, 1, 1)
+    hours = collect(0:23)
+    zero_levels = zeros(ComplexF64, 1, 1, 137)
     spec = (
-        hours = [0, 1],
-        lnsp_all = Dict(0 => copy(lnsp), 1 => copy(lnsp)),
-        vo_by_hour = Dict(0 => copy(zero_level), 1 => copy(zero_level)),
-        d_by_hour = Dict(0 => copy(zero_level), 1 => copy(zero_level)),
+        hours = hours,
+        lnsp_all = Dict(hour => copy(lnsp) for hour in hours),
+        vo_by_hour = Dict(hour => copy(zero_levels) for hour in hours),
+        d_by_hour = Dict(hour => copy(zero_levels) for hour in hours),
         T = 0,
-        n_times = 2,
+        n_times = length(hours),
     )
     path = Pre.spectral_day_cache_path(cache_dir, vo_d_path, lnsp_path;
                                        T_target = 0)
     Pre._write_spectral_day_cache(path, spec)
     return path
+end
+
+function _stable_binary_parts(path)
+    bytes = read(path)
+    json_end = something(findfirst(==(0x00), bytes), length(bytes) + 1) - 1
+    header = Dict{Symbol, Any}(JSON3.read(String(bytes[1:json_end])))
+    header_bytes = Int(header[:header_bytes])
+    delete!(header, :creation_time)
+    delete!(header, :generation_fingerprint)
+    return header, bytes[header_bytes + 1:end]
 end
 
 function _rg_test_vertical(::Type{FT}) where FT
@@ -50,14 +62,15 @@ function _rg_test_vertical(::Type{FT}) where FT
     )
 end
 
-function _rg_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir) where FT
+function _rg_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
+                           include_qv::Bool = false) where FT
     return ERA5SpectralSettings((
         output_float_type = FT,
         spectral_dir = spectral_dir,
         spectral_cache_dir = cache_dir,
         T_target = 0,
         min_dp = 0.0,
-        include_qv = false,
+        include_qv = include_qv,
         mass_basis = :moist,
         mass_fix_enable = false,
         target_ps_dry_pa = 98726.0,
@@ -82,6 +95,11 @@ end
                                      Dict{String, Any}("gaussian_number" => 1),
                                      FT)
         vertical = _rg_test_vertical(FT)
+        unsupported_qv = _rg_test_settings(
+            FT, spectral_dir, cache_dir, joinpath(tmp, "unsupported_qv");
+            include_qv = true)
+        @test_throws ArgumentError process_day(
+            date, grid, unsupported_qv, vertical; positivity_cfl_limit = 0.95)
         first_settings = _rg_test_settings(FT, spectral_dir, cache_dir,
                                            joinpath(tmp, "first"))
         second_settings = _rg_test_settings(FT, spectral_dir, cache_dir,
@@ -95,6 +113,9 @@ end
         @test isfile(first_path)
         @test isfile(second_path)
         @test filesize(first_path) == filesize(second_path)
-        @test read(second_path) == read(first_path)
+        first_header, first_payload = _stable_binary_parts(first_path)
+        second_header, second_payload = _stable_binary_parts(second_path)
+        @test second_header == first_header
+        @test second_payload == first_payload
     end
 end

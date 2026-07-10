@@ -22,9 +22,9 @@ AtmosTransport = {path = ".."}
 [compat]
 Adapt = "4"
 ArgParse = "1"
-AtmosTransport = "0.1"
+AtmosTransport = "0.2"
 CUDA = "5"
-ConservativeRegridding = "0.2"
+ConservativeRegridding = "=0.2.0"
 JSON3 = "1"
 KernelAbstractions = "0.9"
 Metal = "1"

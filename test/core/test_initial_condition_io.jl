@@ -406,6 +406,7 @@ end
             expanduser("~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc")
         if !isfile(catrine_ic_path)
             @info "Skipping Catrine equivalence tests; file not present at $catrine_ic_path"
+            @test_skip false
         else
             cfg_catrine = Dict("kind" => "catrine_co2")
             cfg_file    = Dict("kind" => "file",

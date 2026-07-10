@@ -253,6 +253,6 @@ end
         end
     else
         @info "Skipping real N320 window-reader smoke (set ATMOS_ERA5_N320_ROOT to enable)."
+        @test_skip false
     end
 end
-

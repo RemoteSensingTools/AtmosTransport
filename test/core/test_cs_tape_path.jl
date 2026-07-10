@@ -340,30 +340,16 @@ end
 end
 
 @testset "tape_path — strict finalize surfaces manifest failure (P1)" begin
-    # Reviewer P1: `finalize_tape!` previously caught
-    # `_write_manifest` errors and only `@warn`ed. The public API
-    # called it with `quiet=true`, so a caller could get a successful
-    # `cs_surface_emission_footprint(..., tape_path=...)` result with
-    # `records.bin` present but no usable `manifest.toml`. After the
-    # fix, the FullCheckpoint path passes `strict = tape_path !==
-    # nothing`; manifest failures rethrow so the user sees them.
-    mesh, panels_m, panels_rm, am, bm, cm = _problem(; Nc = 4, Nz = 3, nsteps = 2)
-    obj = _objective(mesh)
-    scheme = AT.PPMScheme(AT.NoLimiter())
-
     mktempdir() do parent
-        # Stage a directory at `tape_path/manifest.toml` so the
-        # `_write_manifest` `open(..., "w")` call inside
-        # `finalize_tape!` fails (open-for-write on an existing
-        # directory is `EISDIR` on Linux).
         dir = joinpath(parent, "broken_manifest")
-        mkpath(dir)
-        mkpath(joinpath(dir, "manifest.toml"))  # block file write
-
-        @test_throws Exception AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, am, bm, cm, mesh, obj;
-            scheme = scheme, dt = 1.0,
-            tape_storage = :mmap, tape_path = dir)
+        storage = TapeMod.MmapCSTapeStorage(; dir)
+        # Point the final rename below a parent that does not exist. This is
+        # deterministic even for privileged test processes, unlike chmod or
+        # pre-creating the destination (atomic `mv(...; force=true)` replaces
+        # both files and directories).
+        storage.manifest_path = joinpath(dir, "missing", "manifest.toml")
+        @test_throws Exception TapeMod.finalize_tape!(storage; strict = true)
+        @test storage.closed
     end
 
     # Sanity: without tape_path, manifest failure is still
@@ -373,32 +359,18 @@ end
     # strict=false) which is the existing call path.
     @testset "finalize_tape! warn-mode preserved for temp-dir use" begin
         storage = TapeMod.MmapCSTapeStorage()
+        storage.manifest_path = joinpath(storage.dir, "missing", "manifest.toml")
         TapeMod.finalize_tape!(storage)
         @test storage.closed
     end
 end
 
-@testset "tape_path — strict finalize per-window Stride (P1)" begin
-    # Same strict-mode behaviour applies to Stride per-window
-    # finalization: a broken manifest in any one window subdirectory
-    # surfaces an exception rather than a silent log entry.
-    mesh, panels_m, panels_rm, am, bm, cm = _problem(; Nc = 4, Nz = 3, nsteps = 4)
-    obj = _objective(mesh)
-    scheme = AT.PPMScheme(AT.NoLimiter())
-
+@testset "tape_path — strict finalize for per-window storage (P1)" begin
     mktempdir() do parent
         dir = joinpath(parent, "stride_broken_manifest")
-        mkpath(dir)
-        # Pre-create window_00001/manifest.toml as a directory so the
-        # first window's finalize_tape! cannot write its manifest.
-        win_dir = joinpath(dir, "window_00001")
-        mkpath(win_dir)
-        mkpath(joinpath(win_dir, "manifest.toml"))
-
-        @test_throws Exception AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, am, bm, cm, mesh, obj;
-            scheme = scheme, dt = 1.0,
-            tape_storage = :mmap, tape_path = dir,
-            checkpoint = TapeMod.StrideCheckpoint(2))
+        storage = TapeMod._build_window_storage(:mmap, dir, "window_00001")
+        storage.manifest_path = joinpath(storage.dir, "missing", "manifest.toml")
+        @test_throws Exception TapeMod.finalize_tape!(storage; strict = true)
+        @test storage.closed
     end
 end

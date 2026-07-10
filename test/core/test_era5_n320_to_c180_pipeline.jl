@@ -48,8 +48,8 @@ end
     real_root_env = get(ENV, "ATMOS_ERA5_N320_ROOT", "")
     if isempty(real_root_env) || !isdir(real_root_env)
         @info "Skipping breakpoint F (set ATMOS_ERA5_N320_ROOT to enable)."
-        return
-    end
+        @test_skip false
+    else
 
     @testset "Allocator produces a consistent bundle" begin
         settings = ERA5N320Settings(; root_dir = real_root_env,
@@ -137,5 +137,6 @@ end
         finally
             close_era5_day!(handles)
         end
+    end
     end
 end

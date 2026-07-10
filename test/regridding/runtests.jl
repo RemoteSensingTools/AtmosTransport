@@ -2,10 +2,8 @@
 #
 # Top-level test runner for the offline regridding glue
 # (`AtmosTransport.Regridding`). Invoked either directly
-# (`julia --project test_v2/regridding/runtests.jl`) or included
+# (`julia --project=test test/regridding/runtests.jl`) or included
 # from `test/runtests.jl`.
-#
-# Tier 4 of /home/cfranken/.claude/plans/luminous-prancing-firefly.md.
 
 using Test
 

@@ -93,7 +93,53 @@ function read_spectral_coeffs!(spec::Matrix{ComplexF64}, msg, vals::Vector{Float
     return T
 end
 
-const SPECTRAL_DAY_CACHE_VERSION = 1
+const SPECTRAL_DAY_CACHE_VERSION = 2
+const _ERA5_SPECTRAL_DAY_HOURS = collect(0:23)
+const _ERA5_SPECTRAL_LEVEL_COUNT = 137
+
+function _validate_spectral_coverage(hours,
+                                     vo_seen::AbstractDict,
+                                     d_seen::AbstractDict;
+                                     expected_hours = _ERA5_SPECTRAL_DAY_HOURS,
+                                     nlevels::Int = _ERA5_SPECTRAL_LEVEL_COUNT)
+    actual_hours = sort!(collect(hours))
+    actual_hours == collect(expected_hours) || throw(ArgumentError(
+        "incomplete ERA5 spectral day: LNSP hours=$(actual_hours), expected=$(collect(expected_hours))"))
+    for (name, seen_by_hour) in (("vo", vo_seen), ("d", d_seen))
+        sort!(collect(keys(seen_by_hour))) == actual_hours || throw(ArgumentError(
+            "incomplete ERA5 spectral day: $name hours=$(sort!(collect(keys(seen_by_hour)))), expected=$actual_hours"))
+        for hour in actual_hours
+            seen = seen_by_hour[hour]
+            length(seen) == nlevels || throw(ArgumentError(
+                "$name hour $hour has $(length(seen)) level flags, expected $nlevels"))
+            missing = findall(!, seen)
+            isempty(missing) || throw(ArgumentError(
+                "incomplete ERA5 spectral day: $name hour $hour is missing levels $(missing)"))
+        end
+    end
+    return actual_hours
+end
+
+function _validate_cached_spectral_day(spec)
+    spec.hours == _ERA5_SPECTRAL_DAY_HOURS || throw(ArgumentError(
+        "cached spectral day has hours=$(spec.hours), expected=$(_ERA5_SPECTRAL_DAY_HOURS)"))
+    spec.n_times == length(spec.hours) || throw(ArgumentError(
+        "cached spectral day n_times=$(spec.n_times) does not match $(length(spec.hours)) hours"))
+    expected_shape = (spec.T + 1, spec.T + 1, _ERA5_SPECTRAL_LEVEL_COUNT)
+    for hour in spec.hours
+        haskey(spec.lnsp_all, hour) || throw(ArgumentError("cached spectral day is missing LNSP hour $hour"))
+        haskey(spec.vo_by_hour, hour) || throw(ArgumentError("cached spectral day is missing vo hour $hour"))
+        haskey(spec.d_by_hour, hour) || throw(ArgumentError("cached spectral day is missing d hour $hour"))
+        size(spec.lnsp_all[hour]) == (spec.T + 1, spec.T + 1) || throw(DimensionMismatch(
+            "cached LNSP hour $hour has shape $(size(spec.lnsp_all[hour])); " *
+            "expected $((spec.T + 1, spec.T + 1))"))
+        size(spec.vo_by_hour[hour]) == expected_shape || throw(DimensionMismatch(
+            "cached vo hour $hour has shape $(size(spec.vo_by_hour[hour])); expected $expected_shape"))
+        size(spec.d_by_hour[hour]) == expected_shape || throw(DimensionMismatch(
+            "cached d hour $hour has shape $(size(spec.d_by_hour[hour])); expected $expected_shape"))
+    end
+    return spec
+end
 
 """
     spectral_day_cache_path(cache_dir, vo_d_path, lnsp_path; T_target=0)
@@ -130,7 +176,8 @@ function _load_spectral_day_cache(path::AbstractString)
     d_by_hour = Dict{Int, Array{ComplexF64, 3}}(data["d_by_hour"])
     T = Int(data["T"])
     n_times = Int(data["n_times"])
-    return (; hours, lnsp_all, vo_by_hour, d_by_hour, T, n_times)
+    return _validate_cached_spectral_day(
+        (; hours, lnsp_all, vo_by_hour, d_by_hour, T, n_times))
 end
 
 function _write_spectral_day_cache(path::AbstractString, spec)
@@ -206,7 +253,7 @@ function read_day_spectral_streaming(vo_d_path::String, lnsp_path::String;
         destroy(f)
     end
     T = T_target > 0 ? min(T_target, T_file) : T_file
-    Nlevels = 137
+    Nlevels = _ERA5_SPECTRAL_LEVEL_COUNT
 
     # Read all LNSP hours
     lnsp_all = Dict{Int, Matrix{ComplexF64}}()
@@ -216,6 +263,8 @@ function read_day_spectral_streaming(vo_d_path::String, lnsp_path::String;
     try
         for msg in f
             hour = div(msg["dataTime"], 100)
+            haskey(lnsp_all, hour) && throw(ArgumentError(
+                "duplicate ERA5 LNSP message for hour $hour"))
             read_spectral_coeffs!(spec_buf, msg, vals_buf)
             lnsp_all[hour] = copy(@view spec_buf[1:T + 1, 1:T + 1])
         end
@@ -226,22 +275,34 @@ function read_day_spectral_streaming(vo_d_path::String, lnsp_path::String;
     # Read all VO/D hours
     vo_by_hour = Dict{Int, Array{ComplexF64, 3}}()
     d_by_hour  = Dict{Int, Array{ComplexF64, 3}}()
+    vo_seen = Dict{Int, BitVector}()
+    d_seen = Dict{Int, BitVector}()
     f = GribFile(vo_d_path)
     try
         for msg in f
             name = msg["shortName"]
             level = msg["level"]
             hour = div(msg["dataTime"], 100)
+            1 <= level <= Nlevels || throw(ArgumentError(
+                "ERA5 spectral $name message has level=$level outside 1:$Nlevels"))
             read_spectral_coeffs!(spec_buf, msg, vals_buf)
             if name == "vo"
                 if !haskey(vo_by_hour, hour)
                     vo_by_hour[hour] = zeros(ComplexF64, T + 1, T + 1, Nlevels)
                 end
+                seen = get!(vo_seen, hour, falses(Nlevels))
+                seen[level] && throw(ArgumentError(
+                    "duplicate ERA5 spectral vo message for hour $hour level $level"))
+                seen[level] = true
                 vo_by_hour[hour][:, :, level] .= @view spec_buf[1:T + 1, 1:T + 1]
             elseif name == "d"
                 if !haskey(d_by_hour, hour)
                     d_by_hour[hour] = zeros(ComplexF64, T + 1, T + 1, Nlevels)
                 end
+                seen = get!(d_seen, hour, falses(Nlevels))
+                seen[level] && throw(ArgumentError(
+                    "duplicate ERA5 spectral d message for hour $hour level $level"))
+                seen[level] = true
                 d_by_hour[hour][:, :, level] .= @view spec_buf[1:T + 1, 1:T + 1]
             end
         end
@@ -249,7 +310,7 @@ function read_day_spectral_streaming(vo_d_path::String, lnsp_path::String;
         destroy(f)
     end
 
-    hours = sort(collect(keys(lnsp_all)))
+    hours = _validate_spectral_coverage(keys(lnsp_all), vo_seen, d_seen)
     return (; hours, lnsp_all, vo_by_hour, d_by_hour, T, n_times=length(hours))
 end
 
@@ -260,17 +321,26 @@ function read_hour0_spectral(spectral_dir::String, date::Date;
     vo_d_path = joinpath(spectral_dir, "era5_spectral_$(date_str)_vo_d.gb")
     lnsp_path = joinpath(spectral_dir, "era5_spectral_$(date_str)_lnsp.gb")
 
-    (!isfile(vo_d_path) || !isfile(lnsp_path)) && return nothing
+    has_vo_d = isfile(vo_d_path)
+    has_lnsp = isfile(lnsp_path)
+    if !has_vo_d && !has_lnsp
+        return nothing
+    end
+    vo_d_status = has_vo_d ? "present" : "missing"
+    lnsp_status = has_lnsp ? "present" : "missing"
+    has_vo_d == has_lnsp || throw(ArgumentError(
+        "incomplete ERA5 spectral hour-0 input for $date: " *
+        "vo_d=$vo_d_status, lnsp=$lnsp_status"))
 
     if !isempty(cache_dir)
         path = spectral_day_cache_path(cache_dir, vo_d_path, lnsp_path; T_target)
         if isfile(path)
             try
                 spec = _load_spectral_day_cache(path)
-                hour0 = first(spec.hours)
-                return (lnsp=spec.lnsp_all[hour0],
-                        vo=spec.vo_by_hour[hour0],
-                        d=spec.d_by_hour[hour0],
+                0 in spec.hours || throw(ArgumentError("spectral cache has no hour 0"))
+                return (lnsp=spec.lnsp_all[0],
+                        vo=spec.vo_by_hour[0],
+                        d=spec.d_by_hour[0],
                         T=spec.T)
             catch err
                 @warn "  Spectral hour-0 cache unreadable; falling back to GRIB" path exception=(err, catch_backtrace())
@@ -288,7 +358,7 @@ function read_hour0_spectral(spectral_dir::String, date::Date;
         destroy(f)
     end
     T = T_target > 0 ? min(T_target, T_file) : T_file
-    Nlevels = 137
+    Nlevels = _ERA5_SPECTRAL_LEVEL_COUNT
 
     # Read hour-0 LNSP
     spec_buf = zeros(ComplexF64, T_file + 1, T_file + 1)
@@ -307,11 +377,14 @@ function read_hour0_spectral(spectral_dir::String, date::Date;
     finally
         destroy(f)
     end
-    lnsp_h0 === nothing && return nothing
+    lnsp_h0 === nothing && throw(ArgumentError(
+        "ERA5 spectral LNSP file for $date contains no hour-0 message: $lnsp_path"))
 
     # Read hour-0 VO/D
     vo_h0 = zeros(ComplexF64, T + 1, T + 1, Nlevels)
     d_h0 = zeros(ComplexF64, T + 1, T + 1, Nlevels)
+    vo_seen = falses(Nlevels)
+    d_seen = falses(Nlevels)
     f = GribFile(vo_d_path)
     try
         for msg in f
@@ -319,10 +392,18 @@ function read_hour0_spectral(spectral_dir::String, date::Date;
             hour == 0 || continue
             name = msg["shortName"]
             level = msg["level"]
+            1 <= level <= Nlevels || throw(ArgumentError(
+                "ERA5 spectral $name hour-0 message has level=$level outside 1:$Nlevels"))
             read_spectral_coeffs!(spec_buf, msg, vals_buf)
             if name == "vo"
+                vo_seen[level] && throw(ArgumentError(
+                    "duplicate ERA5 spectral vo hour-0 level $level"))
+                vo_seen[level] = true
                 vo_h0[:, :, level] .= @view spec_buf[1:T + 1, 1:T + 1]
             elseif name == "d"
+                d_seen[level] && throw(ArgumentError(
+                    "duplicate ERA5 spectral d hour-0 level $level"))
+                d_seen[level] = true
                 d_h0[:, :, level] .= @view spec_buf[1:T + 1, 1:T + 1]
             end
         end
@@ -330,5 +411,11 @@ function read_hour0_spectral(spectral_dir::String, date::Date;
         destroy(f)
     end
 
+    missing_vo = findall(!, vo_seen)
+    missing_d = findall(!, d_seen)
+    isempty(missing_vo) || throw(ArgumentError(
+        "ERA5 spectral hour 0 is missing vo levels $missing_vo"))
+    isempty(missing_d) || throw(ArgumentError(
+        "ERA5 spectral hour 0 is missing d levels $missing_d"))
     return (lnsp=lnsp_h0, vo=vo_h0, d=d_h0, T=T)
 end

@@ -299,6 +299,20 @@ end
     return _copy_surface_forcing!(dest, src)
 end
 
+@inline function _copy_optional_vdiff!(dest, src)
+    if dest === nothing || src === nothing
+        dest === src ||
+            throw(ArgumentError("transport window VDIFF capability changed between windows"))
+        return dest
+    end
+    propertynames(dest) == propertynames(src) ||
+        throw(ArgumentError("transport window VDIFF fields changed between windows"))
+    for name in propertynames(dest)
+        _copy_storage!(getproperty(dest, name), getproperty(src, name))
+    end
+    return dest
+end
+
 @inline _copy_surface_forcing!(dest, src) =
     throw(ArgumentError("unsupported surface-forcing refresh from $(typeof(src)) to $(typeof(dest))"))
 
@@ -364,6 +378,8 @@ function _copy_window_payload!(dest::CubedSphereTransportWindow{B},
                                src::CubedSphereTransportWindow{B}) where {B <: AbstractMassBasis}
     _copy_common_window_payload!(dest, src)
     _copy_optional_surface!(dest.surface, src.surface)
+    _copy_optional_vdiff!(dest.vdiff, src.vdiff)
+    _copy_optional_storage!(dest.kz, src.kz, :kz)
     return dest
 end
 

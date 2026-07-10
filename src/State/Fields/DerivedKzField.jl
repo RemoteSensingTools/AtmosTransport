@@ -158,7 +158,7 @@ computed per column from Beljaars-Viterbo surface-field closure.
 - `field_value(f, (i, j, k))` → `f.cache[i, j, k]`. Kernel-safe.
 - `update_field!(f, t)` →
   1. Refreshes every input field at time `t` (surface + delp).
-  2. Recomputes every cell's Kz on the host, writing into `f.cache`.
+  2. Recomputes every cell's Kz on the cache backend.
 
 Kz is stored at **cell centers**. Consumers that need interface Kz
 (e.g. a Thomas solve) should interpolate between adjacent k-levels.
@@ -218,6 +218,14 @@ function DerivedKzField(; surface::NamedTuple, delp, cache::AbstractArray{FT, 3}
         surface, delp, cache, resolved)
 end
 
+function Adapt.adapt_structure(to, f::DerivedKzField{FT}) where FT
+    surface = Adapt.adapt(to, f.surface)
+    delp = Adapt.adapt(to, f.delp)
+    cache = Adapt.adapt(to, f.cache)
+    return DerivedKzField{FT, typeof(surface), typeof(delp), typeof(cache),
+                          typeof(f.params)}(surface, delp, cache, f.params)
+end
+
 @inline field_value(f::DerivedKzField, idx::NTuple{3, Int}) =
     @inbounds f.cache[idx[1], idx[2], idx[3]]
 
@@ -235,59 +243,56 @@ end
     _recompute_kz_cache!(f::DerivedKzField) -> f
 
 Fill `f.cache[i, j, k]` with Kz at cell-center height, using the
-current state of the surface fields and `delp`. CPU host loop — does
-one pressure→height integration per column, then one `_beljaars_viterbo_kz`
-call per level. Per the plan, deriving Kz on the host and reading
-from a (possibly device-side) cache inside the kernel is cleaner
-than porting the full Beljaars-Viterbo physics to a GPU kernel.
+current state of the surface fields and `delp`. One backend-portable kernel
+runs per horizontal column and performs the vertical pressure-to-height
+integration locally, so adapted fields refresh without host scalar indexing.
 """
-function _recompute_kz_cache!(f::DerivedKzField{FT}) where FT
-    cache = f.cache
-    Nx, Ny, Nz = size(cache)
-    p = f.params
-    R_dry = p.cp_dry / FT(3.5)   # ideal diatomic: cp = (7/2) R_dry
+@kernel function _derived_kz_cache_kernel!(cache, surface, delp, p)
+    i, j = @index(Global, NTuple)
+    Nz = size(cache, 3)
+    FT = eltype(cache)
+    R_dry = p.cp_dry / FT(3.5)
 
-    @inbounds for j in 1:Ny, i in 1:Nx
-        # --- Surface fields at this (i, j) column ---
-        h_pbl = max(field_value(f.surface.pblh,  (i, j)), FT(100))
-        us    = max(field_value(f.surface.ustar, (i, j)), FT(0.01))
-        H_sfc = field_value(f.surface.hflux, (i, j))
-        T_sfc = max(field_value(f.surface.t2m,   (i, j)), FT(200))
+    h_pbl = max(field_value(surface.pblh,  (i, j)), FT(100))
+    us    = max(field_value(surface.ustar, (i, j)), FT(0.01))
+    H_sfc = field_value(surface.hflux, (i, j))
+    T_sfc = max(field_value(surface.t2m,   (i, j)), FT(200))
 
-        # --- Surface-driven scalars ---
-        L_ob, H_kin = _obukhov_length(H_sfc, us, T_sfc, p)
-        Pr_inv      = _prandtl_inverse(h_pbl, us, H_kin, T_sfc, L_ob, p)
+    L_ob, H_kin = _obukhov_length(H_sfc, us, T_sfc, p)
+    Pr_inv = _prandtl_inverse(h_pbl, us, H_kin, T_sfc, L_ob, p)
+    R_T_over_g = R_dry * T_sfc / p.gravity
 
-        R_T_over_g = R_dry * T_sfc / p.gravity
-
-        # --- Pass 1: column height total ---
-        z_col = FT(0)
-        p_top = FT(0)
-        for k in 1:Nz
-            delp_k = field_value(f.delp, (i, j, k))
-            p_bot  = p_top + delp_k
-            p_mid  = max((p_top + p_bot) / FT(2), FT(1))
-            z_col += delp_k * R_T_over_g / p_mid
-            p_top  = p_bot
-        end
-
-        # --- Pass 2: Kz at each cell center ---
-        # z_above walks down from z_col (TOA at k=1) to 0 (surface at k=Nz)
-        z_above = z_col
-        p_top   = FT(0)
-        for k in 1:Nz
-            delp_k   = field_value(f.delp, (i, j, k))
-            p_bot    = p_top + delp_k
-            p_mid    = max((p_top + p_bot) / FT(2), FT(1))
-            dz_k     = delp_k * R_T_over_g / p_mid
-            z_center = z_above - dz_k / FT(2)
-
-            cache[i, j, k] = _beljaars_viterbo_kz(z_center, h_pbl, us, L_ob,
-                                                  Pr_inv, p)
-
-            z_above -= dz_k
-            p_top    = p_bot
-        end
+    z_col = zero(FT)
+    p_top = zero(FT)
+    @inbounds for k in 1:Nz
+        delp_k = field_value(delp, (i, j, k))
+        p_bot = p_top + delp_k
+        p_mid = max((p_top + p_bot) / FT(2), FT(1))
+        z_col += delp_k * R_T_over_g / p_mid
+        p_top = p_bot
     end
+
+    z_above = z_col
+    p_top = zero(FT)
+    @inbounds for k in 1:Nz
+        delp_k = field_value(delp, (i, j, k))
+        p_bot = p_top + delp_k
+        p_mid = max((p_top + p_bot) / FT(2), FT(1))
+        dz_k = delp_k * R_T_over_g / p_mid
+        z_center = z_above - dz_k / FT(2)
+        cache[i, j, k] = _beljaars_viterbo_kz(z_center, h_pbl, us, L_ob,
+                                              Pr_inv, p)
+        z_above -= dz_k
+        p_top = p_bot
+    end
+end
+
+function _recompute_kz_cache!(f::DerivedKzField)
+    cache = f.cache
+    Nx, Ny, _ = size(cache)
+    backend = get_backend(cache)
+    kernel! = _derived_kz_cache_kernel!(backend)
+    kernel!(cache, f.surface, f.delp, f.params; ndrange = (Nx, Ny))
+    synchronize(backend)
     return f
 end

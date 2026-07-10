@@ -202,6 +202,13 @@ function apply_dry_basis_reduced!(work::ReducedTransformWorkspace,
     @inbounds for k in 1:Nz, f in 1:nf
         left  = work.face_left[f]
         right = work.face_right[f]
+        if left == 0 || right == 0
+            # Polar stub faces represent a closed boundary, not a real
+            # cell-to-cell connection. Enforce the zero-flux invariant before
+            # touching qv_cell; indexing cell 0 under @inbounds is undefined.
+            work.hflux_arr[f, k] = 0.0
+            continue
+        end
         q_face = 0.5 * (qv_cell[left, k] + qv_cell[right, k])
         q_face = clamp(q_face, 0.0, 0.999999)
         work.hflux_arr[f, k] *= (1.0 - q_face)

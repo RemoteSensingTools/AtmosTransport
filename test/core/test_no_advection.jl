@@ -134,6 +134,27 @@ end
     @test all(cs_state.tracers.CO2[p] == co2_before[p] for p in 1:6)
 end
 
+@testset "with_diffusion allocates cubed-sphere scratch for NoAdvection" begin
+    Nc, Hp, Nz = 2, 1, 2
+    N = Nc + 2Hp
+    mesh = CubedSphereMesh(; Nc, Hp, FT)
+    vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
+    grid = AtmosGrid(mesh, vertical, AtmosTransport.CPU(); FT)
+    panels_m = ntuple(_ -> ones(FT, N, N, Nz), 6)
+    panels_rm = ntuple(_ -> fill(FT(400e-6), N, N, Nz), 6)
+    state = CubedSphereState(DryBasis, mesh, panels_m; CO2=panels_rm)
+    fluxes = allocate_face_fluxes(mesh, Nz; FT, basis=DryBasis)
+    model = TransportModel(state, fluxes, grid, NoAdvection())
+    @test model.workspace.advection_ws === nothing
+
+    kz = AtmosTransport.State.CubedSphereField(
+        ntuple(_ -> ConstantField{FT, 3}(one(FT)), 6))
+    with_kz = with_diffusion(model, ImplicitVerticalDiffusion(; kz_field=kz))
+    @test with_kz.workspace.advection_ws isa
+          AtmosTransport.Operators.Advection.CSAdvectionWorkspace
+    @test size(with_kz.workspace.advection_ws.dz_scratch[1]) == (Nc, Nc, Nz)
+end
+
 # ---------------------------------------------------------------------------
 # Companion-operator rejection — diffusion + emissions both throw cleanly
 # ---------------------------------------------------------------------------

@@ -404,3 +404,39 @@ end
     @test all(all(fluxes_cs.bm[p] .== 2.0) for p in 1:6)
     @test all(all(fluxes_cs.cm[p] .== 4.0) for p in 1:6)
 end
+
+@testset "cubed-sphere window refresh copies diffusion forcing" begin
+    FT = Float64
+    mesh = CubedSphereMesh(; FT, Nc=2, Hp=1)
+    Nz = 2
+    N = mesh.Nc + 2mesh.Hp
+
+    function make_window(value)
+        air_mass = ntuple(_ -> fill(FT(value), N, N, Nz), 6)
+        ps = ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc), 6)
+        fluxes = allocate_face_fluxes(mesh, Nz; FT, basis=DryBasis)
+        surface = AtmosTransport.MetDrivers.PBLSurfaceForcing(
+            ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc), 6),
+            ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc), 6),
+            ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc), 6),
+            ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc), 6))
+        vdiff = (
+            u = ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc, Nz), 6),
+            v = ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc, Nz), 6),
+            t = ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc, Nz), 6),
+            qv = ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc, Nz), 6))
+        kz = ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc, Nz), 6)
+        return AtmosTransport.MetDrivers.CubedSphereTransportWindow(
+            air_mass, ps, fluxes; surface, vdiff, kz)
+    end
+
+    destination = make_window(1)
+    source = make_window(2)
+    AtmosTransport.Models._copy_window_payload!(destination, source)
+
+    @test all(all(==(FT(2)), destination.vdiff.u[p]) for p in 1:6)
+    @test all(all(==(FT(2)), destination.vdiff.v[p]) for p in 1:6)
+    @test all(all(==(FT(2)), destination.vdiff.t[p]) for p in 1:6)
+    @test all(all(==(FT(2)), destination.vdiff.qv[p]) for p in 1:6)
+    @test all(all(==(FT(2)), destination.kz[p]) for p in 1:6)
+end

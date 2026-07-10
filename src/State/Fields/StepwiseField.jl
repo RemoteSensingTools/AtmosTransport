@@ -172,7 +172,11 @@ Binary-search `f.boundaries` for the window `n` such that
 Throws `ArgumentError` if `t` is outside `[f.boundaries[1], f.boundaries[end])`.
 """
 function update_field!(f::StepwiseField, t::Real)
-    b = f.boundaries
+    # Adapt keeps boundaries on the active backend so the complete field
+    # remains a valid isbits kernel argument. Bring this small one-dimensional
+    # coordinate vector to the host for the control-plane binary search; never
+    # scalar-index a device vector from the host.
+    b = f.boundaries isa Array ? f.boundaries : Array(f.boundaries)
     # searchsortedlast(b, t) returns the largest n with b[n] <= t, or 0
     # if t < b[1]. Clamp/check to valid window range [1, n_win].
     n_win = length(b) - 1
@@ -183,7 +187,7 @@ function update_field!(f::StepwiseField, t::Real)
     # bounds by the half-open convention.
     (n == n_win && t == b[end]) &&
         throw(ArgumentError("StepwiseField: time $t is at the exclusive upper boundary $(b[end])"))
-    @inbounds f.current_window[1] = n
+    fill!(f.current_window, n)
     return f
 end
 

@@ -295,13 +295,22 @@ useful for installing a diffusion operator into a model that was
 constructed with the default `NoDiffusion()`.
 """
 function with_diffusion(model::TransportModel, diffusion::AbstractDiffusion)
+    workspace = model.workspace
+    if model.state isa CubedSphereState && !(diffusion isa NoDiffusion) &&
+       workspace.advection_ws === nothing
+        advection_ws = CSAdvectionWorkspace(
+            model.grid.horizontal, model.state.air_mass[1];
+            n_tracers = ntracers(model.state))
+        workspace = TransportModelWorkspace(
+            advection_ws; convection_ws = workspace.convection_ws)
+    end
     return TransportModel{typeof(model.state), typeof(model.fluxes),
                           typeof(model.grid), typeof(model.advection),
-                          typeof(model.workspace), typeof(model.chemistry),
+                          typeof(workspace), typeof(model.chemistry),
                           typeof(diffusion), typeof(model.emissions),
                           typeof(model.convection), typeof(model.convection_forcing)}(
         model.state, model.fluxes, model.grid, model.advection,
-        model.workspace, model.chemistry, diffusion, model.emissions,
+        workspace, model.chemistry, diffusion, model.emissions,
         model.convection, model.convection_forcing)
 end
 

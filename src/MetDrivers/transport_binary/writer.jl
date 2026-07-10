@@ -59,6 +59,21 @@ function _write_transport_payload!(io::IO,
     return nothing
 end
 
+function _write_transport_binary_atomically(write_file::Function, path::AbstractString)
+    staging = String(path) * ".tmp"
+    rm(staging; force=true)
+    try
+        open(staging, "w") do io
+            write_file(io)
+        end
+        mv(staging, path; force=true)
+    catch
+        rm(staging; force=true)
+        rethrow()
+    end
+    return path
+end
+
 function write_transport_binary(path::AbstractString,
                                 grid::AtmosGrid{<:LatLonMesh},
                                 windows::AbstractVector;
@@ -130,14 +145,14 @@ function write_transport_binary(path::AbstractString,
         "n_dcm" => (:dcm in payload_sections) ? _transport_structured_section_elements(Nx, Ny, ncell, nlevel, :dcm) : 0,
         "n_dm" => (:dm in payload_sections) ? _transport_structured_section_elements(Nx, Ny, ncell, nlevel, :dm) : 0,
     ))
-    isempty(extra_header) || merge!(header, Dict{String, Any}(extra_header))
+    isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
 
     validate_transport_contract!(header)
     header_json = JSON3.write(header)
     pad = header_bytes - ncodeunits(header_json)
-    pad >= 0 || error("transport binary header exceeds header_bytes=$(header_bytes)")
+    pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(header_bytes)")
 
-    open(path, "w") do io
+    _write_transport_binary_atomically(path) do io
         write(io, header_json)
         write(io, zeros(UInt8, pad))
         _write_transport_payload!(io, windows, payload_sections, elems_per_window, FT; threaded=threaded)
@@ -205,14 +220,14 @@ function write_transport_binary(path::AbstractString,
         "n_dcm" => (:dcm in payload_sections) ? _transport_faceindexed_section_elements(ncell, nface_h, nlevel, :dcm) : 0,
         "n_dm" => (:dm in payload_sections) ? _transport_faceindexed_section_elements(ncell, nface_h, nlevel, :dm) : 0,
     ))
-    isempty(extra_header) || merge!(header, Dict{String, Any}(extra_header))
+    isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
 
     validate_transport_contract!(header)
     header_json = JSON3.write(header)
     pad = header_bytes - ncodeunits(header_json)
-    pad >= 0 || error("transport binary header exceeds header_bytes=$(header_bytes)")
+    pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(header_bytes)")
 
-    open(path, "w") do io
+    _write_transport_binary_atomically(path) do io
         write(io, header_json)
         write(io, zeros(UInt8, pad))
         _write_transport_payload!(io, windows, payload_sections, elems_per_window, FT; threaded=threaded)

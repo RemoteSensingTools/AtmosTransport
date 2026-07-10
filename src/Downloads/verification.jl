@@ -13,7 +13,7 @@ Download `url` to `dest` with Content-Length integrity checking.
 
 1. HTTP HEAD → Content-Length
 2. If file exists with matching size → skip (verified)
-3. If exists but wrong size → delete and re-download
+3. If exists but wrong size → retain it until a verified replacement is ready
 4. After download: verify local size matches Content-Length
 5. If mismatch: delete corrupt file and retry
 """
@@ -27,35 +27,33 @@ function verified_download(url::String, dest::String; max_retries::Int=3)
             return true
         elseif remote_size > 0
             @warn "  Size mismatch: $(basename(dest)) " *
-                  "local=$(local_size) expected=$(remote_size) — re-downloading"
-            rm(dest; force=true)
-        elseif local_size > 1_000_000
-            @info "  Exists (no remote size check): $(basename(dest)) " *
-                  "($(local_size ÷ 1_000_000) MB)"
-            return true
+                  "local=$(local_size) expected=$(remote_size) — staging a replacement"
         end
     end
 
     mkpath(dirname(dest))
+    staging = dest * ".part"
+    rm(staging; force=true)
     for attempt in 1:max_retries
         try
             @info "  Downloading $(basename(dest)) (attempt $attempt)..."
-            DL.download(url, dest)
-            local_size = filesize(dest)
+            DL.download(url, staging)
+            local_size = filesize(staging)
             @info "    → $(local_size ÷ 1_000_000) MB"
 
-            if remote_size > 0 && local_size != remote_size
+            if local_size <= 0 || (remote_size > 0 && local_size != remote_size)
                 @warn "    Truncated: got $(local_size) bytes, " *
                       "expected $(remote_size) — retrying"
-                rm(dest; force=true)
+                rm(staging; force=true)
                 attempt < max_retries && sleep(5 * attempt)
                 continue
             end
 
+            mv(staging, dest; force=true)
             return true
         catch e
             @warn "  Attempt $attempt failed: $e"
-            isfile(dest) && rm(dest; force=true)
+            rm(staging; force=true)
             attempt < max_retries && sleep(5 * attempt)
         end
     end

@@ -72,6 +72,9 @@ writers use this to patch schedules into the fixed-size JSON header.
 """
 driver_before_close_writer!(_workspace, _reader, _contract, _writer, _context) = nothing
 
+"""Validate a closed staging artifact before it can replace the final path."""
+validate_staged_binary!(_writer) = nothing
+
 function _ready_events(result)
     result === nothing && return ()
     result isa ReadyWindow && return (result,)
@@ -141,6 +144,7 @@ function run_unified_preprocessor_day!(day::UnifiedPreprocessorDay;
                                     day.writer, day.context)
         close_streaming_binary!(day.writer)
         writer_closed = true
+        validate_staged_binary!(day.writer)
         summarize_status!(day.contract; quarantine_path = writer_staging_path(day.writer))
         promote_streaming_binary!(day.writer)
         promoted = true

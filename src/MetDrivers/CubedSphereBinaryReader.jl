@@ -72,6 +72,8 @@ function _cs_on_disk_float_type(path::AbstractString)
         json_end = something(findfirst(==(0x00), raw), length(raw) + 1) - 1
         hdr = JSON3.read(String(raw[1:json_end]))
         float_bytes = Int(get(hdr, :float_bytes, 4))
+        float_bytes in (4, 8) || throw(ArgumentError(
+            "unsupported cubed-sphere binary float_bytes=$(float_bytes)"))
         return float_bytes == 8 ? Float64 : Float32
     end
 end
@@ -86,91 +88,81 @@ _open_cubed_sphere_binary_reader(path::AbstractString) =
 
 function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Float64)
     io = open(bin_path, "r")
-
-    # Read header
-    magic_bytes = read(io, 4)
-    seek(io, 0)
-
-    # Detect header size from JSON
-    raw = read(io, min(filesize(bin_path), 262144))
-    json_end = something(findfirst(==(0x00), raw), length(raw) + 1) - 1
-    hdr = JSON3.read(String(raw[1:json_end]))
-    hdr_dict = Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
     try
+        # Detect header size from JSON.
+        raw = read(io, min(filesize(bin_path), 262144))
+        json_end = something(findfirst(==(0x00), raw), length(raw) + 1) - 1
+        hdr = JSON3.read(String(raw[1:json_end]))
+        hdr_dict = Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
         validate_transport_contract!(hdr_dict)
-    catch e
-        close(io)
-        rethrow(e)
+        json_end < Int(hdr_dict["header_bytes"]) || throw(ArgumentError(
+            "cubed-sphere binary JSON header is not null-terminated before header_bytes"))
+
+        format_version = Int(hdr.format_version)
+        header_bytes = Int(hdr.header_bytes)
+        float_bytes = Int(hdr.float_bytes)
+        Nc = Int(hdr.Nc)
+        npanel = Int(hdr.npanel)
+        nlevel = Int(hdr.nlevel)
+        nwindow = Int(hdr.nwindow)
+        dt_met = Float64(hdr.dt_met_seconds)
+        steps_per_window = Int(hdr.steps_per_window)
+        steps_schedule = _parse_steps_per_window_schedule(hdr, nwindow, steps_per_window)
+        scalar_poisson_scale = Float64(hdr.poisson_balance_target_scale)
+        poisson_scale_schedule = _parse_poisson_scale_schedule(
+            hdr, nwindow, scalar_poisson_scale)
+        mass_basis = _transport_parse_mass_basis(hdr)
+        panel_convention = Symbol(_normalize_cs_panel_convention(hdr.panel_convention))
+        default_geometry = panel_convention === :geos_native ?
+            (; cs_definition = :gmao_equal_distance,
+               coordinate_law = :gmao_equal_distance_gnomonic,
+               center_law = :four_corner_normalized,
+               longitude_offset_deg = -10.0) :
+            (; cs_definition = :equiangular_gnomonic,
+               coordinate_law = :equiangular_gnomonic,
+               center_law = :angular_midpoint,
+               longitude_offset_deg = 0.0)
+        cs_definition = Symbol(replace(lowercase(String(get(hdr, :cs_definition,
+            String(default_geometry.cs_definition)))), '-' => '_', ' ' => '_'))
+        coordinate_law = Symbol(replace(lowercase(String(get(hdr, :cs_coordinate_law,
+            get(hdr, :coordinate_law, String(default_geometry.coordinate_law))))),
+            '-' => '_', ' ' => '_'))
+        center_law = Symbol(replace(lowercase(String(get(hdr, :cs_center_law,
+            get(hdr, :center_law, String(default_geometry.center_law))))),
+            '-' => '_', ' ' => '_'))
+        longitude_offset_deg = Float64(get(hdr, :longitude_offset_deg,
+                                           default_geometry.longitude_offset_deg))
+        A_ifc = Float64.(collect(hdr.A_ifc))
+        B_ifc = Float64.(collect(hdr.B_ifc))
+
+        sections_raw = collect(hdr.payload_sections)
+        payload_sections = Symbol.(lowercase.(String.(sections_raw)))
+        elems_per_window = Int(hdr.elems_per_window)
+
+        cs_header = CubedSphereBinaryHeader(
+            format_version, Nc, npanel, nlevel, nwindow, header_bytes, float_bytes,
+            dt_met, steps_per_window, steps_schedule, mass_basis, panel_convention,
+            cs_definition, coordinate_law, center_law, longitude_offset_deg,
+            A_ifc, B_ifc,
+            payload_sections, elems_per_window, poisson_scale_schedule,
+            Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr)),
+        )
+
+        # Memory-map exactly the payload declared by the validated header.
+        DiskFT = float_bytes == 4 ? Float32 : Float64
+        n_elems = elems_per_window * nwindow
+        expected_bytes = header_bytes + n_elems * sizeof(DiskFT)
+        actual_bytes = filesize(bin_path)
+        actual_bytes == expected_bytes || throw(ArgumentError(
+            "cubed-sphere binary size mismatch for $(bin_path): expected $(expected_bytes) " *
+            "bytes from the header, found $(actual_bytes)"))
+        raw_data = Mmap.mmap(io, Vector{DiskFT}, n_elems, header_bytes)
+
+        return CubedSphereBinaryReader{FT, DiskFT}(raw_data, io, cs_header, bin_path)
+    catch
+        isopen(io) && close(io)
+        rethrow()
     end
-
-    format_version = Int(hdr.format_version)
-    header_bytes = Int(get(hdr, :header_bytes, 16384))
-    float_bytes = Int(get(hdr, :float_bytes, 8))
-    Nc = Int(get(hdr, :Nc, get(hdr, :Nx, 0)))
-    npanel = Int(get(hdr, :npanel, 6))
-    nlevel = Int(hdr.nlevel)
-    nwindow = Int(hdr.nwindow)
-    dt_met = Float64(hdr.dt_met_seconds)
-    steps_per_window = Int(hdr.steps_per_window)
-    steps_schedule = _parse_steps_per_window_schedule(hdr, nwindow, steps_per_window)
-    scalar_poisson_scale = haskey(hdr, :poisson_balance_target_scale) ?
-        Float64(hdr.poisson_balance_target_scale) : 1.0 / (2 * steps_per_window)
-    poisson_scale_schedule = _parse_poisson_scale_schedule(
-        hdr, nwindow, scalar_poisson_scale)
-    mass_basis = Symbol(lowercase(String(get(hdr, :mass_basis, "moist"))))
-    panel_convention_str = lowercase(String(get(hdr, :panel_convention, "gnomonic")))
-    panel_convention = if panel_convention_str in ("gnomonic", "gnomic")
-        :gnomonic
-    elseif panel_convention_str in ("geos_native", "geosnative", "geos-native")
-        :geos_native
-    else
-        @warn "Unknown panel_convention '$panel_convention_str' in binary header, defaulting to gnomonic"
-        :gnomonic
-    end
-    default_geometry = panel_convention === :geos_native ?
-        (; cs_definition = :gmao_equal_distance,
-           coordinate_law = :gmao_equal_distance_gnomonic,
-           center_law = :four_corner_normalized,
-           longitude_offset_deg = -10.0) :
-        (; cs_definition = :equiangular_gnomonic,
-           coordinate_law = :equiangular_gnomonic,
-           center_law = :angular_midpoint,
-           longitude_offset_deg = 0.0)
-    cs_definition = Symbol(replace(lowercase(String(get(hdr, :cs_definition,
-        String(default_geometry.cs_definition)))), '-' => '_', ' ' => '_'))
-    coordinate_law = Symbol(replace(lowercase(String(get(hdr, :cs_coordinate_law,
-        get(hdr, :coordinate_law, String(default_geometry.coordinate_law))))), '-' => '_', ' ' => '_'))
-    center_law = Symbol(replace(lowercase(String(get(hdr, :cs_center_law,
-        get(hdr, :center_law, String(default_geometry.center_law))))), '-' => '_', ' ' => '_'))
-    longitude_offset_deg = Float64(get(hdr, :longitude_offset_deg,
-                                       default_geometry.longitude_offset_deg))
-    A_ifc = Float64.(collect(hdr.A_ifc))
-    B_ifc = Float64.(collect(hdr.B_ifc))
-
-    sections_raw = collect(hdr.payload_sections)
-    payload_sections = Symbol.(lowercase.(String.(sections_raw)))
-    elems_per_window = Int(hdr.elems_per_window)
-
-    cs_header = CubedSphereBinaryHeader(
-        format_version, Nc, npanel, nlevel, nwindow, header_bytes, float_bytes,
-        dt_met, steps_per_window, steps_schedule, mass_basis, panel_convention,
-        cs_definition, coordinate_law, center_law, longitude_offset_deg,
-        A_ifc, B_ifc,
-        payload_sections, elems_per_window, poisson_scale_schedule,
-        Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
-    )
-
-    # Memory-map the data region
-    DiskFT = float_bytes == 4 ? Float32 : Float64
-    data_bytes = filesize(bin_path) - header_bytes
-    n_elems = data_bytes ÷ sizeof(DiskFT)
-    seek(io, 0)
-    raw_data = Mmap.mmap(io, Vector{DiskFT}, n_elems, header_bytes)
-
-    # Keep the payload at its on-disk type (`DiskFT`); the per-window `copyto!`
-    # into `Array{FT}` panels converts element-wise on read. This avoids the
-    # whole-binary FT copy (the F64 OOM described on the struct above).
-    return CubedSphereBinaryReader{FT, DiskFT}(raw_data, io, cs_header, bin_path)
 end
 
 function Base.summary(r::CubedSphereBinaryReader{FT}) where FT

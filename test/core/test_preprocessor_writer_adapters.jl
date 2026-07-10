@@ -25,6 +25,7 @@ using .AtmosTransport.Preprocessing: AbstractBinaryWriter,
                                        close_streaming_binary!,
                                        promote_streaming_binary!,
                                        quarantine_streaming_binary!,
+                                       validate_staged_binary!,
                                        writer_staging_path,
                                        writer_final_path,
                                        HEADER_SIZE
@@ -75,6 +76,38 @@ end
         @test filesize(final) == HEADER_SIZE + bytes
         @test quarantine_streaming_binary!(writer) == staging
         @test isfile(final)
+    end
+end
+
+@testset "staged-size validation runs before final promotion" begin
+    mktempdir() do tmp
+        FT = Float32
+        Nx, Ny, Nz = 2, 2, 1
+        grid = build_target_geometry(Val(:latlon),
+                                     Dict{String, Any}("nlon" => Nx, "nlat" => Ny),
+                                     FT)
+        storage = _fill_ll_storage!(
+            allocate_window_storage(1, FT), FT, Nx, Ny, Nz)
+        merged = allocate_merge_workspace(grid, Nz, Nz, FT)
+        settings = (include_qv=false, tm5_convection_enable=false,
+                    include_surface=false)
+        staging = joinpath(tmp, "bad-size.tmp")
+        final = joinpath(tmp, "preserved.bin")
+        sentinel = Vector{UInt8}(codeunits("previous-valid-output"))
+        write(final, sentinel)
+        writer = LatLonBinaryWriter(
+            staging, "{}", settings, merged, nothing, FT, DryBasis();
+            final_path=final)
+        write_window!(writer, ReadyWindow{LatLonTargetGeometry, FT}(1, (; storage)))
+        close_streaming_binary!(writer)
+        open(staging, "a") do io
+            write(io, UInt8(0xff))
+        end
+
+        @test_throws ArgumentError validate_staged_binary!(writer)
+        quarantine_streaming_binary!(writer)
+        @test read(final) == sentinel
+        @test !ispath(staging)
     end
 end
 

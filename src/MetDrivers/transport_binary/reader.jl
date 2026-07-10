@@ -102,40 +102,32 @@ has_vdiff_fields(r::TransportBinaryReader) =
 
 function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Float32)
     io = open(bin_path, "r")
-    read_sz = min(262144, filesize(bin_path))
-    raw = read(io, read_sz)
-
-    # Validate the self-describing transport-binary
-    # contract BEFORE mmap'ing the payload. Rejects ambiguous/legacy
-    # headers with a clear error (names the missing field + regeneration
-    # command). format_version is a hard boundary: v1 files are obsolete.
-    # This call site is shared with `TransportBinaryDriver` and the
-    # `scripts/diagnostics/inspect_transport_binary.jl` tool, so ONE
-    # validator gates every reader-facing entry point.
-    json_end = something(findfirst(==(0x00), raw), length(raw) + 1) - 1
-    hdr_dict = try
-        hdr_obj = JSON3.read(String(raw[1:json_end]))
-        # Convert JSON3.Object to a plain Dict for the validator.
-        Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr_obj))
-    catch e
-        close(io)
-        rethrow(e)
-    end
     try
+        read_sz = min(262144, filesize(bin_path))
+        raw = read(io, read_sz)
+
+        # Validate the self-describing transport-binary contract before mmap.
+        json_end = something(findfirst(==(0x00), raw), length(raw) + 1) - 1
+        hdr_obj = JSON3.read(String(raw[1:json_end]))
+        hdr_dict = Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr_obj))
         validate_transport_contract!(hdr_dict)
-    catch e
-        close(io)
-        rethrow(e)
+        json_end < Int(hdr_dict["header_bytes"]) || throw(ArgumentError(
+            "transport binary JSON header is not null-terminated before header_bytes"))
+
+        header = _parse_transport_header(raw)
+        DiskFT = _transport_disk_float_type(header.on_disk_float_type)
+        total_elems = header.n_geometry_elems + header.elems_per_window * header.nwindow
+        expected_bytes = header.header_bytes + total_elems * sizeof(DiskFT)
+        actual_bytes = filesize(bin_path)
+        actual_bytes == expected_bytes || throw(ArgumentError(
+            "transport binary size mismatch for $(bin_path): expected $(expected_bytes) bytes " *
+            "from the header, found $(actual_bytes)"))
+        data = Mmap.mmap(io, Vector{DiskFT}, total_elems, header.header_bytes)
+        return TransportBinaryReader{FT, DiskFT}(data, io, header, bin_path)
+    catch
+        isopen(io) && close(io)
+        rethrow()
     end
-
-    header = _parse_transport_header(raw)
-
-    DiskFT = _transport_disk_float_type(header.on_disk_float_type)
-    total_elems = header.n_geometry_elems + header.elems_per_window * header.nwindow
-    seek(io, header.header_bytes)
-    data = Mmap.mmap(io, Vector{DiskFT}, total_elems, header.header_bytes)
-
-    return TransportBinaryReader{FT, DiskFT}(data, io, header, bin_path)
 end
 
 Base.close(r::TransportBinaryReader) = close(r.io)

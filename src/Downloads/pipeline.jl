@@ -67,11 +67,19 @@ function download_data!(cfg::Dict{String, Any};
 
         if verify_only
             for task in tasks
-                if isfile(task.dest_path)
+                status, expected = _existing_task_status(task, config.protocol)
+                if status === :verified
                     sz = filesize(task.dest_path)
                     @info "  ✓ $(basename(task.dest_path)) ($(sz ÷ 1_000_000) MB)"
                     n_ok += 1
                     total_bytes += sz
+                elseif status === :unverifiable
+                    @warn "  ? UNVERIFIABLE (remote size unavailable): $(task.dest_path)"
+                    n_fail += 1
+                elseif status === :corrupt
+                    @warn "  ✗ SIZE MISMATCH: $(task.dest_path) " *
+                          "($(filesize(task.dest_path)) bytes, expected $(expected))"
+                    n_fail += 1
                 else
                     @warn "  ✗ MISSING: $(task.dest_path)"
                     n_fail += 1
@@ -81,18 +89,27 @@ function download_data!(cfg::Dict{String, Any};
         end
 
         for task in tasks
-            if sched.skip_existing && isfile(task.dest_path) &&
-               filesize(task.dest_path) > 0
-                @info "  Skip (exists): $(basename(task.dest_path))"
-                n_skip += 1
-                total_bytes += filesize(task.dest_path)
-                continue
+            if sched.skip_existing
+                status, _ = _existing_task_status(task, config.protocol)
+                if status === :verified
+                    @info "  Skip (verified): $(basename(task.dest_path))"
+                    n_skip += 1
+                    total_bytes += filesize(task.dest_path)
+                    continue
+                elseif status === :unverifiable
+                    @warn "  Skip (legacy file has no verification metadata): $(basename(task.dest_path)). " *
+                          "A future successful download will create a checksum sidecar."
+                    n_skip += 1
+                    total_bytes += filesize(task.dest_path)
+                    continue
+                end
             end
 
             success = execute!(task, config.protocol;
                                max_retries=sched.max_retries,
                                retry_wait=sched.retry_wait_seconds)
             if success
+                _write_download_manifest(task, config.protocol)
                 n_ok += 1
                 total_bytes += isfile(task.dest_path) ? filesize(task.dest_path) : 0
             else
@@ -102,6 +119,92 @@ function download_data!(cfg::Dict{String, Any};
     end
 
     _print_summary(n_ok, n_skip, n_fail, total_bytes, dry_run, verify_only)
+end
+
+_task_remote_url(task::DownloadTask, ::HTTPProtocol) = task.source_url
+_task_remote_url(task::DownloadTask, proto::S3Protocol) =
+    proto.no_sign_request ? "https://$(proto.bucket).s3.amazonaws.com/$(task.source_url)" : nothing
+_task_remote_url(::DownloadTask, ::AbstractDownloadProtocol) = nothing
+
+function _existing_task_status(task::DownloadTask, protocol::AbstractDownloadProtocol)
+    isfile(task.dest_path) || return (:missing, 0)
+    filesize(task.dest_path) > 0 || return (:corrupt, 1)
+    manifest_path = _download_manifest_path(task)
+    isfile(manifest_path) && return _verify_download_manifest(task, protocol)
+    url = _task_remote_url(task, protocol)
+    if url !== nothing
+        expected = _get_content_length(url)
+        expected > 0 && return (
+            filesize(task.dest_path) == expected ? :verified : :corrupt, expected)
+    end
+    return _verify_download_manifest(task, protocol)
+end
+
+_download_manifest_path(task::DownloadTask) = task.dest_path * ".download.toml"
+
+_download_protocol_identity(::CDSProtocol) = (kind="cds",)
+_download_protocol_identity(::MARSProtocol) = (kind="mars",)
+_download_protocol_identity(protocol::HTTPProtocol) =
+    (kind="http", base_url=protocol.base_url)
+_download_protocol_identity(protocol::S3Protocol) =
+    (kind="s3", bucket=protocol.bucket, prefix=protocol.prefix)
+_download_protocol_identity(protocol::OPeNDAPProtocol) =
+    (kind="opendap", base_url=protocol.base_url)
+
+function _download_task_identity(task::DownloadTask, protocol::AbstractDownloadProtocol)
+    request_items = sort!(collect(task.request); by=first)
+    return repr((protocol=_download_protocol_identity(protocol),
+                 source_url=task.source_url, request=request_items))
+end
+
+function _file_sha256(path::AbstractString)
+    return open(path, "r") do io
+        bytes2hex(SHA.sha256(io))
+    end
+end
+
+function _write_download_manifest(task::DownloadTask,
+                                  protocol::AbstractDownloadProtocol)
+    manifest_path = _download_manifest_path(task)
+    staging = manifest_path * ".tmp"
+    manifest = Dict{String, Any}(
+        "format_version" => 1,
+        "task_identity" => _download_task_identity(task, protocol),
+        "size_bytes" => filesize(task.dest_path),
+        "sha256" => _file_sha256(task.dest_path),
+    )
+    rm(staging; force=true)
+    try
+        open(staging, "w") do io
+            TOML.print(io, manifest)
+        end
+        mv(staging, manifest_path; force=true)
+    catch
+        rm(staging; force=true)
+        rethrow()
+    end
+    return manifest_path
+end
+
+function _verify_download_manifest(task::DownloadTask,
+                                   protocol::AbstractDownloadProtocol)
+    manifest_path = _download_manifest_path(task)
+    isfile(manifest_path) || return (:unverifiable, 0)
+    manifest = try
+        TOML.parsefile(manifest_path)
+    catch
+        return (:corrupt, 0)
+    end
+    get(manifest, "format_version", nothing) == 1 || return (:corrupt, 0)
+    get(manifest, "task_identity", nothing) == _download_task_identity(task, protocol) ||
+        return (:corrupt, 0)
+    expected_size = get(manifest, "size_bytes", nothing)
+    expected_size isa Integer || return (:corrupt, 0)
+    filesize(task.dest_path) == expected_size || return (:corrupt, Int(expected_size))
+    expected_sha = get(manifest, "sha256", nothing)
+    expected_sha isa String || return (:corrupt, Int(expected_size))
+    return _file_sha256(task.dest_path) == expected_sha ?
+           (:verified, Int(expected_size)) : (:corrupt, Int(expected_size))
 end
 
 # ---------------------------------------------------------------------------
@@ -227,12 +330,16 @@ function execute!(task::DownloadTask, proto::S3Protocol;
                                  max_retries=max_retries)
     else
         s3_url = "s3://$(proto.bucket)/$(task.source_url)"
-        return _with_retries(basename(task.dest_path), task.dest_path;
+        staging = task.dest_path * ".part"
+        rm(staging; force=true)
+        success = _with_retries(basename(task.dest_path), staging;
                              max_retries, retry_wait) do attempt
             @info "  Downloading $(basename(task.dest_path)) (attempt $attempt)..."
-            run(`aws s3 cp $s3_url $(task.dest_path)`)
-            isfile(task.dest_path) && filesize(task.dest_path) > 0
+            run(`aws s3 cp $s3_url $staging`)
+            isfile(staging) && filesize(staging) > 0
         end
+        success && mv(staging, task.dest_path; force=true)
+        return success
     end
 end
 
@@ -242,12 +349,16 @@ function execute!(task::DownloadTask, proto::CDSProtocol;
     mkpath(dirname(task.dest_path))
     dataset = get(task.request, "dataset", "reanalysis-era5-complete")
     request = Dict{String,Any}(k => v for (k, v) in task.request if k != "dataset")
-    _with_retries(task.name, task.dest_path; max_retries, retry_wait) do attempt
-        script = build_cds_retrieve_script(dataset, request, task.dest_path)
+    staging = task.dest_path * ".part"
+    rm(staging; force=true)
+    success = _with_retries(task.name, staging; max_retries, retry_wait) do attempt
+        script = build_cds_retrieve_script(dataset, request, staging)
         @info "  CDS retrieve: $(task.name) (attempt $attempt)..."
         run_python(script, proto.python_env; label=task.name)
-        isfile(task.dest_path) && filesize(task.dest_path) > 0
+        isfile(staging) && filesize(staging) > 0
     end
+    success && mv(staging, task.dest_path; force=true)
+    return success
 end
 
 # MARS protocol execution (with CDS fallback)
@@ -255,12 +366,15 @@ function execute!(task::DownloadTask, proto::MARSProtocol;
                   max_retries::Int=3, retry_wait::Int=30)
     mkpath(dirname(task.dest_path))
     request = Dict{String,Any}(k => v for (k, v) in task.request if k != "dataset")
-    success = _with_retries(task.name, task.dest_path; max_retries, retry_wait) do attempt
-        script = build_mars_retrieve_script(request, task.dest_path)
+    staging = task.dest_path * ".part"
+    rm(staging; force=true)
+    success = _with_retries(task.name, staging; max_retries, retry_wait) do attempt
+        script = build_mars_retrieve_script(request, staging)
         @info "  MARS retrieve: $(task.name) (attempt $attempt)..."
         run_python(script, proto.python_env; label=task.name)
-        isfile(task.dest_path) && filesize(task.dest_path) > 0
+        isfile(staging) && filesize(staging) > 0
     end
+    success && mv(staging, task.dest_path; force=true)
     if !success && proto.fallback_to_cds
         @warn "  MARS failed, falling back to CDS for $(task.name)"
         return execute!(task, CDSProtocol(proto.python_env);

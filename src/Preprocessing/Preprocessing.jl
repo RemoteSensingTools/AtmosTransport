@@ -55,6 +55,7 @@ using FFTW
 using Printf
 using JSON3
 using JLD2
+using SHA
 using TOML
 using LinearAlgebra: mul!, dot
 using NCDatasets

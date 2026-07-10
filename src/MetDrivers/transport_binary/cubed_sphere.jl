@@ -92,6 +92,44 @@ function _pack_cs_window!(dest::Vector{FT}, offset::Int,
     return nothing
 end
 
+function _cs_section_panel_shape(Nc::Int, nlevel::Int, section::Symbol)
+    if section in (:m, :dm, :kz, :dtrain, :entu, :detu, :entd, :detd) ||
+       _is_gchp_vdiff_payload_section(section)
+        return [Nc, Nc, nlevel]
+    elseif section === :am
+        return [Nc + 1, Nc, nlevel]
+    elseif section === :bm
+        return [Nc, Nc + 1, nlevel]
+    elseif section in (:cm, :cmfmc)
+        return [Nc, Nc, nlevel + 1]
+    elseif section === :ps || _is_pbl_surface_payload_section(section)
+        return [Nc, Nc]
+    end
+    throw(ArgumentError("unsupported CS section $(section)"))
+end
+
+function _validate_streaming_cs_window(writer::StreamingTransportBinaryWriter,
+                                       window, Nc::Int, npanel::Int)
+    expected_Nc = Int(writer.header["Nc"])
+    expected_npanel = Int(writer.header["npanel"])
+    Nc == expected_Nc || throw(DimensionMismatch(
+        "CS write requested Nc=$(Nc); writer expects Nc=$(expected_Nc)"))
+    npanel == expected_npanel || throw(DimensionMismatch(
+        "CS write requested npanel=$(npanel); writer expects npanel=$(expected_npanel)"))
+    for (index, section) in pairs(writer.payload_sections)
+        panels = _cs_window_section(window, section)
+        length(panels) == npanel || throw(DimensionMismatch(
+            "CS section $(section) has $(length(panels)) panels; expected $(npanel)"))
+        for panel in 1:npanel
+            actual = collect(size(panels[panel]))
+            expected = writer.section_shapes[index][panel]
+            actual == expected || throw(DimensionMismatch(
+                "CS section $(section) panel $(panel) has shape $(Tuple(actual)); expected $(Tuple(expected))"))
+        end
+    end
+    return nothing
+end
+
 """
     open_streaming_cs_transport_binary(path, Nc, npanel, nlevel, nwindow, vc;
                                        kwargs...) -> StreamingTransportBinaryWriter
@@ -259,7 +297,7 @@ function open_streaming_cs_transport_binary(
         "n_vdiff_t" => include_gchp_vdiff ? _cs_section_elements(Nc, npanel, nlevel, :vdiff_t) : 0,
         "n_vdiff_qv" => include_gchp_vdiff ? _cs_section_elements(Nc, npanel, nlevel, :vdiff_qv) : 0,
     ))
-    isempty(extra_header) || merge!(header, Dict{String, Any}(extra_header))
+    isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
     header["panel_convention"] = _normalize_cs_panel_convention(header["panel_convention"])
     if !haskey(header, "cs_definition") || !haskey(header, "cs_coordinate_law") ||
        !haskey(header, "cs_center_law") || !haskey(header, "longitude_offset_deg")
@@ -274,17 +312,24 @@ function open_streaming_cs_transport_binary(
     validate_transport_contract!(header)
     header_json = JSON3.write(header)
     pad = header_bytes - ncodeunits(header_json)
-    pad >= 0 || error("transport binary header exceeds header_bytes=$(header_bytes)")
-
-    io = open(path, "w")
-    write(io, header_json)
-    write(io, zeros(UInt8, pad))
+    pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(header_bytes)")
 
     pack_buffer = Vector{FT}(undef, elems_per_window)
+    section_shapes = [[copy(_cs_section_panel_shape(Nc, nlevel, section))
+                       for _ in 1:npanel] for section in payload_sections]
+    staging_path, io = _open_streaming_staging(path)
+    try
+        write(io, header_json)
+        write(io, zeros(UInt8, pad))
+    catch
+        close(io)
+        rm(staging_path; force=true)
+        rethrow()
+    end
 
     return StreamingTransportBinaryWriter{FT}(
-        io, String(path), header, payload_sections, elems_per_window,
-        header_bytes, nwindow, 0, pack_buffer)
+        io, String(path), staging_path, header, payload_sections, elems_per_window,
+        header_bytes, nwindow, 0, pack_buffer, section_shapes)
 end
 
 """
@@ -297,6 +342,7 @@ function write_streaming_cs_window!(writer::StreamingTransportBinaryWriter{FT},
                                      window, Nc::Int, npanel::Int) where FT
     writer.written_windows >= writer.expected_windows &&
         error("Already wrote $(writer.written_windows)/$(writer.expected_windows) windows")
+    _validate_streaming_cs_window(writer, window, Nc, npanel)
     _pack_cs_window!(writer.pack_buffer, 0, window, writer.payload_sections, Nc, npanel)
     write(writer.io, writer.pack_buffer)
     writer.written_windows += 1

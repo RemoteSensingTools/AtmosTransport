@@ -208,21 +208,24 @@ function _transport_disk_float_type(sym::Symbol)
 end
 
 function _transport_parse_on_disk_float_type(hdr)
-    ft_str = string(get(hdr, :float_type, "Float32"))
+    haskey(hdr, :float_type) ||
+        throw(ArgumentError("transport binary header is missing float_type"))
+    ft_str = string(hdr.float_type)
     if ft_str == "Float64"
         return :Float64, 8
-    else
+    elseif ft_str == "Float32"
         return :Float32, 4
     end
+    throw(ArgumentError("unsupported transport binary float_type=$(repr(ft_str)); expected Float32 or Float64"))
 end
 
 function _transport_parse_mass_basis(hdr)
-    if !haskey(hdr, :mass_basis)
-        @warn "Transport binary header has no mass_basis field — assuming moist (legacy binary). " *
-              "Regenerate with the current preprocessor for dry-basis binaries (Invariant 14)."
-    end
-    basis_str = lowercase(string(get(hdr, :mass_basis, "moist")))
-    return basis_str == "dry" ? :dry : :moist
+    haskey(hdr, :mass_basis) ||
+        throw(ArgumentError("transport binary header is missing mass_basis; regenerate the binary"))
+    basis_str = lowercase(string(hdr.mass_basis))
+    basis_str in ("dry", "moist") || throw(ArgumentError(
+        "unsupported transport binary mass_basis=$(repr(basis_str)); expected dry or moist"))
+    return Symbol(basis_str)
 end
 
 @inline function _transport_normalize_symbol(value)
@@ -338,8 +341,8 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     A_ifc = Float64.(collect(hdr.A_ifc))
     B_ifc = Float64.(collect(hdr.B_ifc))
     payload_sections = _transport_parse_sections(hdr)
-    include_qv = Bool(get(hdr, :include_qv, false))
-    include_qv_endpoints = Bool(get(hdr, :include_qv_endpoints, false))
+    include_qv = :qv in payload_sections
+    include_qv_endpoints = (:qv_start in payload_sections) && (:qv_end in payload_sections)
     source_flux_sampling = _transport_parse_symbol_key(hdr, :source_flux_sampling, :unknown)
     air_mass_sampling    = _transport_parse_symbol_key(hdr, :air_mass_sampling,    :unknown)
     flux_sampling        = _transport_parse_symbol_key(hdr, :flux_sampling,        :unknown)
@@ -424,7 +427,12 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     )
 end
 
-_transport_basis_symbol(sym::Symbol) = lowercase(String(sym)) == "dry" ? :dry : :moist
+function _transport_basis_symbol(sym::Symbol)
+    basis = Symbol(lowercase(String(sym)))
+    basis in (:dry, :moist) ||
+        throw(ArgumentError("mass_basis must be :dry or :moist; got $(repr(sym))"))
+    return basis
+end
 _transport_basis_symbol(::DryBasis) = :dry
 _transport_basis_symbol(::MoistBasis) = :moist
 

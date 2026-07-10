@@ -138,15 +138,21 @@ end
 
 function close_streaming_binary!(writer::ReducedGaussianBinaryWriter)
     writer.closed && return writer.path
-    close_streaming_transport_binary!(writer.inner)
-    writer.closed = true
+    try
+        close_streaming_transport_binary!(writer.inner)
+    finally
+        writer.closed = true
+    end
     return writer.path
 end
 
 function close_streaming_binary!(writer::CubedSphereBinaryWriter)
     writer.closed && return writer.path
-    close_streaming_transport_binary!(writer.inner)
-    writer.closed = true
+    try
+        close_streaming_transport_binary!(writer.inner)
+    finally
+        writer.closed = true
+    end
     return writer.path
 end
 
@@ -165,4 +171,33 @@ function quarantine_streaming_binary!(writer::AbstractBinaryWriter)
     close_streaming_binary!(writer)
     isfile(writer.path) && rm(writer.path; force=true)
     return writer.path
+end
+
+function _validate_staged_size(path::AbstractString, expected_bytes::Integer)
+    isfile(path) || throw(ArgumentError(
+        "staged transport binary is missing: $(path)"))
+    actual_bytes = filesize(path)
+    actual_bytes == expected_bytes || throw(ArgumentError(
+        "staged transport binary size mismatch: expected $(expected_bytes) bytes, " *
+        "found $(actual_bytes) at $(path)"))
+    return path
+end
+
+function validate_staged_binary!(writer::LatLonBinaryWriter)
+    return _validate_staged_size(writer.path, writer.bytes_written)
+end
+
+function validate_staged_binary!(writer::ReducedGaussianBinaryWriter)
+    expected = writer.inner.header_bytes +
+               writer.inner.expected_windows * writer.inner.elems_per_window *
+               sizeof(eltype(writer.inner.pack_buffer))
+    return _validate_staged_size(writer.path, expected)
+end
+
+
+function validate_staged_binary!(writer::CubedSphereBinaryWriter)
+    expected = writer.inner.header_bytes +
+               writer.inner.expected_windows * writer.inner.elems_per_window *
+               sizeof(eltype(writer.inner.pack_buffer))
+    return _validate_staged_size(writer.path, expected)
 end

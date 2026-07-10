@@ -74,6 +74,46 @@ function script_provenance(; caller_file::Union{String, Nothing}=nothing)
     )
 end
 
+function _generation_value_signature(value::AbstractArray)
+    isbitstype(eltype(value)) || return repr(value)
+    bytes = reinterpret(UInt8, vec(Array(value)))
+    return (size=collect(size(value)), eltype=string(eltype(value)),
+            sha256=bytes2hex(SHA.sha256(bytes)))
+end
+
+_generation_value_signature(value::NamedTuple) =
+    Dict(String(key) => _generation_value_signature(getfield(value, key))
+         for key in keys(value))
+_generation_value_signature(value) = repr(value)
+
+function _generation_file_signature(path::AbstractString)
+    absolute = abspath(path)
+    isfile(absolute) || return (path=absolute, missing=true)
+    info = stat(absolute)
+    return (path=absolute, size=info.size, mtime=info.mtime)
+end
+
+function generation_fingerprint(; settings, spectral_resolution,
+                                source_paths, next_day_hour0, provenance)
+    payload = Dict{String, Any}(
+        "settings" => repr(settings),
+        "spectral_resolution" => Int(spectral_resolution),
+        "sources" => [_generation_file_signature(path) for path in source_paths],
+        "next_day_hour0" => _generation_value_signature(next_day_hour0),
+        "code" => Dict(
+            "script_path" => provenance.script_path,
+            "script_mtime_unix" => provenance.script_mtime,
+            "git_commit" => provenance.git_commit,
+            "git_dirty" => provenance.git_dirty,
+            # A dirty tree has no stable code revision. Deliberately make its
+            # fingerprint invocation-specific so it can never reuse a binary
+            # whose producing source cannot be identified exactly.
+            "dirty_nonce" => provenance.git_dirty ? provenance.creation_time : "",
+        ),
+    )
+    return bytes2hex(SHA.sha256(codeunits(JSON3.write(payload))))
+end
+
 """
     expected_payload_sections(settings) -> Vector{String}
 
@@ -138,6 +178,7 @@ function build_v4_header(date::Date,
         "mass_basis" => String(settings.mass_basis),
         "payload_sections" => payload_sections,
         "elems_per_window" => counts.elems_per_window,
+        "n_geometry_elems" => 0,
         # The 6 semantic contract fields. If the LL daily writer emits
         # only the 2 Poisson fields, the runtime parser silently defaults
         # the missing ones to the pre-memo-37 :window_start_endpoint path,
@@ -330,7 +371,7 @@ end
 # Peek the JSON header at byte 0 (null-terminated; matches both
 # `_parse_transport_header` and `CubedSphereBinaryReader`). Returns
 # `nothing` on any failure so callers can fall back gracefully.
-function _peek_payload_sections(bin_path::AbstractString)
+function _peek_transport_header(bin_path::AbstractString)
     isfile(bin_path) || return nothing
     raw = open(bin_path, "r") do io
         read(io, min(filesize(bin_path), HEADER_SIZE))
@@ -342,16 +383,38 @@ function _peek_payload_sections(bin_path::AbstractString)
     catch
         return nothing
     end
-    haskey(hdr, :payload_sections) || return nothing
-    return Set(String.(hdr.payload_sections))
+    return Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
 end
 
+function _peek_payload_sections(bin_path::AbstractString)
+    hdr = _peek_transport_header(bin_path)
+    hdr === nothing && return nothing
+    haskey(hdr, "payload_sections") || return nothing
+    return Set(String.(hdr["payload_sections"]))
+end
+
+const _OUTPUT_REUSE_CONTRACT_KEYS = (
+    "format_version", "float_type", "float_bytes", "mass_basis",
+    "grid_type", "horizontal_topology", "Nx", "Ny", "nlevel", "nwindow",
+    "payload_sections", "elems_per_window", "A_ifc", "B_ifc", "merge_map",
+    "merge_min_thickness_Pa", "vertical_mapping_method", "target_vertical_name",
+    "target_coefficients", "dt_met_seconds", "dt_seconds", "half_dt_seconds",
+    "steps_per_window", "source_flux_sampling", "air_mass_sampling",
+    "flux_sampling", "flux_kind", "delta_semantics", "humidity_sampling",
+    "mass_fix_enabled", "mass_fix_target_ps_dry_pa", "mass_fix_qv_global_climatology",
+    "qv_source_type", "qv_source_directory", "include_qv_endpoints",
+    "include_tm5conv", "include_surface", "date", "generation_fingerprint",
+)
+
 """
-    existing_output_schema_matches(bin_path, total_bytes, expected_sections) -> (skip, reason)
+    existing_output_schema_matches(bin_path, total_bytes, expected_sections,
+                                   expected_header=nothing) -> (skip, reason)
 
 SKIP-or-regen decision used by `process_day` writers. Returns
 `(true, "")` when the file exists, byte size matches, AND the on-disk
-`payload_sections` set matches the caller's `expected_sections`.
+`payload_sections` set matches the caller's `expected_sections`. When an
+`expected_header` is supplied, the generation-defining metadata must match as
+well; provenance and run-produced diagnostics are intentionally excluded.
 Returns `(false, reason)` otherwise; `reason` is a human-readable diff
 (`"size 41g vs 23g"` or `"schema added :pbl_hflux removed :hflux"`)
 the caller should `@info` so the user knows *why* the binary is being
@@ -359,7 +422,8 @@ rebuilt rather than skipped.
 """
 function existing_output_schema_matches(bin_path::AbstractString,
                                         total_bytes::Integer,
-                                        expected_sections)
+                                        expected_sections,
+                                        expected_header::Union{Nothing, AbstractDict}=nothing)
     isfile(bin_path) || return (false, "no existing file")
     fs = filesize(bin_path)
     fs == total_bytes ||
@@ -369,6 +433,19 @@ function existing_output_schema_matches(bin_path::AbstractString,
     on_disk === nothing && return (false, "header unparseable (likely pre-v4)")
     expected = Set(String.(expected_sections))
     if on_disk == expected
+        if expected_header !== nothing
+            disk_header = _peek_transport_header(bin_path)
+            disk_header === nothing && return (false, "header unparseable")
+            changed = String[]
+            for key in _OUTPUT_REUSE_CONTRACT_KEYS
+                if !haskey(disk_header, key) || !haskey(expected_header, key) ||
+                   JSON3.write(disk_header[key]) != JSON3.write(expected_header[key])
+                    push!(changed, key)
+                end
+            end
+            isempty(changed) || return (
+                false, "generation contract changed: " * join(changed, ","))
+        end
         return (true, "")
     end
     added   = sort!(collect(setdiff(expected, on_disk)))

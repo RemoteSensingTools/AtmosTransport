@@ -135,6 +135,14 @@ function quarantine_streaming_binary!(writer::LatLonDeferredBinaryWriter)
     return writer.path
 end
 
+function validate_staged_binary!(writer::LatLonDeferredBinaryWriter)
+    writer.inner === nothing && throw(ArgumentError(
+        "lat-lon writer produced no staging artifact"))
+    expected = Int(writer.header["header_bytes"]) +
+               Int(writer.header["nwindow"]) * Int(writer.header["window_bytes"])
+    return _validate_staged_size(writer.path, expected)
+end
+
 function allocate_window_workspace(grid::LatLonTargetGeometry,
                                    settings,
                                    vertical,
@@ -384,8 +392,36 @@ function process_day(date::Date,
     mkpath(settings.out_dir)
     bin_path = output_binary_path(date, settings.out_dir, settings.min_dp, FT)
 
+    provenance = script_provenance()
+    sizes = (Nx = Nx, Ny = Ny, Nz = Nz, Nz_native = Nz_native, Nt = Nt,
+             steps_per_met = steps_per_met)
+    header = build_v4_header(date, grid, vertical, settings, FT, counts, sizes, provenance)
+    source_paths = String[vo_d_path, lnsp_path]
+    if settings.include_qv || settings.mass_basis == :dry
+        push!(source_paths, joinpath(
+            settings.thermo_dir, "era5_thermo_ml_$(date_str).nc"))
+        next_date_str = Dates.format(date + Day(1), "yyyymmdd")
+        push!(source_paths, joinpath(
+            settings.thermo_dir, "era5_thermo_ml_$(next_date_str).nc"))
+    end
+    if settings.tm5_convection_enable
+        push!(source_paths, joinpath(
+            settings.tm5_physics_bin_dir, string(year(date)),
+            "era5_physics_$(date_str).bin"))
+    end
+    settings.include_surface && push!(
+        source_paths, _resolve_era5_surface_path(settings.surface_dir, date))
+    header["generation_fingerprint"] = generation_fingerprint(
+        settings=settings,
+        spectral_resolution=spec.T,
+        source_paths=source_paths,
+        next_day_hour0=next_day_hour0,
+        provenance=provenance,
+    )
+
     expected_sections = expected_payload_sections(settings)
-    skip, reason = existing_output_schema_matches(bin_path, byte_sizes.total_bytes, expected_sections)
+    skip, reason = existing_output_schema_matches(
+        bin_path, byte_sizes.total_bytes, expected_sections, header)
     if skip
         @info "  SKIP (exists, size + schema match): $(basename(bin_path))"
         return bin_path
@@ -395,10 +431,6 @@ function process_day(date::Date,
 
     @info @sprintf("  Output: %s (%.2f GB, %d windows)", basename(bin_path), byte_sizes.total_bytes / 1e9, Nt)
 
-    provenance = script_provenance()
-    sizes = (Nx = Nx, Ny = Ny, Nz = Nz, Nz_native = Nz_native, Nt = Nt,
-             steps_per_met = steps_per_met)
-    header = build_v4_header(date, grid, vertical, settings, FT, counts, sizes, provenance)
     header_json = JSON3.write(header)
     length(header_json) < HEADER_SIZE ||
         error("Header JSON too large: $(length(header_json)) >= $(HEADER_SIZE)")
@@ -452,9 +484,12 @@ function process_day(date::Date,
     @info "  Computing spectral -> gridpoint -> merged for $Nt windows..."
 
     try
+        tmp_path = bin_path * ".tmp"
+        rm(tmp_path; force = true)
         writer = LatLonDeferredBinaryWriter(
-            bin_path, header, workspace, settings, FT,
-            mass_basis_from_symbol(Symbol(settings.mass_basis)))
+            tmp_path, header, workspace, settings, FT,
+            mass_basis_from_symbol(Symbol(settings.mass_basis));
+            final_path = bin_path)
         ctx = LLSpectralUnifiedDriverContext(
             grid, settings, vertical, spec, next_day_hour0, date,
             substep_policy,

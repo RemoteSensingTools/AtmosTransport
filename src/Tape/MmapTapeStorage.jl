@@ -93,6 +93,10 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
         end
         bin_path = joinpath(dir, "records.bin")
         manifest_path = joinpath(dir, "manifest.toml")
+        # A manifest describes one immutable, finalised records.bin. Remove it
+        # before truncating that file so a crash during a new recording can
+        # never make fresh bytes look like the previous completed tape.
+        ispath(manifest_path) && rm(manifest_path; force = true)
         bin_io = open(bin_path, "w+")
         local storage
         try
@@ -523,8 +527,16 @@ function _write_manifest(storage::MmapCSTapeStorage)
             "shapes"  => [collect(s) for s in r.shapes],
         ) for r in storage.records
     ]
-    open(storage.manifest_path, "w") do io
+    tmp_path, io = mktemp(storage.dir; cleanup = false)
+    try
         TOML.print(io, Dict{String, Any}("meta" => meta, "record" => records))
+        flush(io)
+        close(io)
+        mv(tmp_path, storage.manifest_path; force = true)
+    catch
+        isopen(io) && close(io)
+        rm(tmp_path; force = true)
+        rethrow()
     end
     return storage.manifest_path
 end
@@ -661,9 +673,9 @@ function load_mmap_tape(dir::AbstractString; readonly::Bool = true)
         "mmap tape manifest missing integer meta.total_bytes; got $(repr(total_bytes))"))
     cursor = Int64(total_bytes)
     file_size = filesize(bin_path)
-    file_size >= cursor || throw(ArgumentError(
+    file_size == cursor || throw(ArgumentError(
         "mmap tape records.bin is $(file_size) bytes but manifest reports " *
-        "total_bytes = $(cursor); tape is truncated"))
+        "total_bytes = $(cursor); refusing a truncated or trailing-data tape"))
 
     raw_records = get(manifest, "record", Any[])
     raw_records isa AbstractVector || throw(ArgumentError(

@@ -39,6 +39,7 @@ module DataDownloads
 using Dates
 using Logging
 using Printf
+using SHA
 using TOML
 
 # Type hierarchy (sources, protocols, tasks, configs)

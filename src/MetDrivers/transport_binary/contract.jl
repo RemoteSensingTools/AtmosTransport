@@ -64,8 +64,9 @@ struct TransportBinaryContract
             throw(ArgumentError("delta_semantics=$(ds) not in $(Tuple(_TRANSPORT_ALLOWED_DELTA_SEMANTICS))"))
         hs in _TRANSPORT_ALLOWED_HUMIDITY_SAMPLINGS ||
             throw(ArgumentError("humidity_sampling=$(hs) not in $(Tuple(_TRANSPORT_ALLOWED_HUMIDITY_SAMPLINGS))"))
-        Float64(poisson_balance_target_scale) > 0 ||
-            throw(ArgumentError("poisson_balance_target_scale must be > 0"))
+        scale = Float64(poisson_balance_target_scale)
+        isfinite(scale) && scale > 0 ||
+            throw(ArgumentError("poisson_balance_target_scale must be finite and > 0"))
         new(sfs, ams, fs, fk, ds, hs, Float64(poisson_balance_target_scale),
             String(poisson_balance_target_semantics))
     end
@@ -126,6 +127,184 @@ end
 const _CS_WRITER_CONTRACT_KEYS = ("runtime_substep_contract",
                                   "preprocessor_contract",
                                   "adaptive_substeps")
+
+const _TRANSPORT_STRUCTURAL_HEADER_KEYS = Set((
+    "magic", "format_version", "header_bytes", "float_type", "float_bytes",
+    "grid_type", "horizontal_topology", "ncell", "nface_h", "nlevel",
+    "nwindow", "A_ifc", "B_ifc", "mass_basis", "payload_sections",
+    "elems_per_window", "n_geometry_elems", "Nx", "Ny", "Nc", "npanel",
+    "include_qv", "include_qv_endpoints", "include_flux_delta",
+))
+
+"""Merge caller metadata without permitting it to rewrite the binary layout."""
+function _merge_transport_extra_header!(header::Dict{String, Any}, extra_header)
+    for (raw_key, value) in pairs(extra_header)
+        key = String(raw_key)
+        if key in _TRANSPORT_STRUCTURAL_HEADER_KEYS && haskey(header, key) &&
+           !isequal(header[key], value)
+            throw(ArgumentError(
+                "extra_header cannot override structural field $(repr(key)): " *
+                "writer computed $(repr(header[key])), caller supplied $(repr(value))"))
+        end
+        header[key] = value
+    end
+    return header
+end
+
+function _transport_required_int(header, key::String; positive::Bool = true)
+    haskey(header, key) || throw(ArgumentError(
+        "Transport-binary contract violation — missing $(key)"))
+    value = header[key]
+    value isa Integer && !(value isa Bool) || throw(ArgumentError(
+        "Transport-binary contract violation — $(key) must be an integer; got $(repr(value))"))
+    result = Int(value)
+    positive && result <= 0 && throw(ArgumentError(
+        "Transport-binary contract violation — $(key) must be positive; got $(result)"))
+    return result
+end
+
+function _validate_transport_layout!(header::AbstractDict)
+    header_bytes = _transport_required_int(header, "header_bytes")
+    float_bytes = _transport_required_int(header, "float_bytes")
+    float_type = String(get(header, "float_type", ""))
+    expected_float_bytes = float_type == "Float32" ? 4 : float_type == "Float64" ? 8 : nothing
+    expected_float_bytes === nothing && throw(ArgumentError(
+        "Transport-binary contract violation — float_type must be Float32 or Float64; got $(repr(float_type))"))
+    float_bytes == expected_float_bytes || throw(ArgumentError(
+        "Transport-binary contract violation — float_bytes=$(float_bytes) does not match float_type=$(float_type)"))
+
+    ncell = _transport_required_int(header, "ncell")
+    nface_h = _transport_required_int(header, "nface_h")
+    nlevel = _transport_required_int(header, "nlevel")
+    nwindow = _transport_required_int(header, "nwindow")
+    elems_per_window = _transport_required_int(header, "elems_per_window")
+    n_geometry_elems = _transport_required_int(header, "n_geometry_elems"; positive = false)
+    n_geometry_elems >= 0 || throw(ArgumentError(
+        "Transport-binary contract violation — n_geometry_elems must be nonnegative"))
+
+    basis = lowercase(String(get(header, "mass_basis", "")))
+    basis in ("dry", "moist") || throw(ArgumentError(
+        "Transport-binary contract violation — mass_basis must be dry or moist; got $(repr(basis))"))
+    for key in ("dt_met_seconds", "half_dt_seconds")
+        value = try Float64(header[key]) catch; NaN end
+        isfinite(value) && value > 0 || throw(ArgumentError(
+            "Transport-binary contract violation — $(key) must be finite and positive"))
+    end
+    encoded_header_bytes = try
+        ncodeunits(JSON3.write(header))
+    catch
+        throw(ArgumentError(
+            "Transport-binary contract violation — header contains values that cannot be encoded as JSON"))
+    end
+    header_bytes > encoded_header_bytes || throw(ArgumentError(
+        "Transport-binary contract violation — header_bytes leaves no room for a null terminator"))
+
+    A = try Float64.(collect(header["A_ifc"])) catch; Float64[] end
+    B = try Float64.(collect(header["B_ifc"])) catch; Float64[] end
+    length(A) == nlevel + 1 || throw(ArgumentError(
+        "Transport-binary contract violation — A_ifc must have nlevel + 1 entries"))
+    length(B) == nlevel + 1 || throw(ArgumentError(
+        "Transport-binary contract violation — B_ifc must have nlevel + 1 entries"))
+    all(isfinite, A) && all(isfinite, B) || throw(ArgumentError(
+        "Transport-binary contract violation — A_ifc and B_ifc must be finite"))
+
+    sections = try Symbol.(lowercase.(String.(collect(header["payload_sections"])))) catch; Symbol[] end
+    isempty(sections) && throw(ArgumentError(
+        "Transport-binary contract violation — payload_sections must be a nonempty list"))
+    length(unique(sections)) == length(sections) || throw(ArgumentError(
+        "Transport-binary contract violation — payload_sections contains duplicates"))
+
+    endpoint_humidity = (:qv_start in sections, :qv_end in sections)
+    endpoint_humidity[1] == endpoint_humidity[2] || throw(ArgumentError(
+        "Transport-binary contract violation — qv_start and qv_end must appear together"))
+    tm5 = map(s -> s in sections, (:entu, :detu, :entd, :detd))
+    all(tm5) || !any(tm5) || throw(ArgumentError(
+        "Transport-binary contract violation — TM5 convection requires entu, detu, entd, and detd together"))
+    surface = map(s -> s in sections, _PBL_SURFACE_PAYLOAD_SECTIONS)
+    all(surface) || !any(surface) || throw(ArgumentError(
+        "Transport-binary contract violation — surface payload sections must be complete"))
+    vdiff = map(s -> s in sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
+    all(vdiff) || !any(vdiff) || throw(ArgumentError(
+        "Transport-binary contract violation — GCHP VDIFF payload sections must be complete"))
+
+    grid_type = lowercase(String(get(header, "grid_type", "")))
+    topology = lowercase(String(get(header, "horizontal_topology", "")))
+    expected_elems = if grid_type == "latlon" && topology == "structureddirectional"
+        all(s -> s in sections, (:m, :am, :bm, :cm, :ps)) || throw(ArgumentError(
+            "Transport-binary contract violation — latlon payload requires m, am, bm, cm, and ps"))
+        Nx = _transport_required_int(header, "Nx")
+        Ny = _transport_required_int(header, "Ny")
+        Nx * Ny == ncell || throw(ArgumentError(
+            "Transport-binary contract violation — ncell must equal Nx * Ny"))
+        expected_nface_h = (Nx + 1) * Ny + Nx * (Ny + 1)
+        nface_h == expected_nface_h || throw(ArgumentError(
+            "Transport-binary contract violation — nface_h=$(nface_h), expected $(expected_nface_h) for Nx=$(Nx), Ny=$(Ny)"))
+        sum(_transport_structured_section_elements(Nx, Ny, ncell, nlevel, section)
+            for section in sections)
+    elseif grid_type == "reduced_gaussian" && topology == "faceindexed"
+        all(s -> s in sections, (:m, :hflux, :cm, :ps)) || throw(ArgumentError(
+            "Transport-binary contract violation — reduced-Gaussian payload requires m, hflux, cm, and ps"))
+        sum(_transport_faceindexed_section_elements(ncell, nface_h, nlevel, section)
+            for section in sections)
+    elseif grid_type == "cubed_sphere" && topology == "structureddirectional"
+        all(s -> s in sections, (:m, :am, :bm, :cm, :ps)) || throw(ArgumentError(
+            "Transport-binary contract violation — cubed-sphere payload requires m, am, bm, cm, and ps"))
+        Nc = _transport_required_int(header, "Nc")
+        npanel = _transport_required_int(header, "npanel")
+        npanel == 6 || throw(ArgumentError(
+            "Transport-binary contract violation — cubed-sphere npanel must equal 6"))
+        npanel * Nc * Nc == ncell || throw(ArgumentError(
+            "Transport-binary contract violation — ncell must equal npanel * Nc^2"))
+        expected_nface_h = npanel * 2 * Nc * (Nc + 1)
+        nface_h == expected_nface_h || throw(ArgumentError(
+            "Transport-binary contract violation — nface_h=$(nface_h), expected $(expected_nface_h) for C$(Nc)"))
+        sum(_cs_section_elements(Nc, npanel, nlevel, section) for section in sections)
+    else
+        throw(ArgumentError(
+            "Transport-binary contract violation — unsupported grid/topology $(repr(grid_type))/$(repr(topology))"))
+    end
+    expected_elems == elems_per_window || throw(ArgumentError(
+        "Transport-binary contract violation — elems_per_window=$(elems_per_window), expected $(expected_elems) from payload_sections"))
+
+    humidity = _transport_normalize_symbol(header["humidity_sampling"])
+    expected_humidity = endpoint_humidity[1] ? :window_endpoints :
+                        (:qv in sections ? :single_field : :none)
+    humidity == expected_humidity || throw(ArgumentError(
+        "Transport-binary contract violation — humidity_sampling=$(humidity) does not match payload sections"))
+    has_delta = any(s -> s in sections, (:dam, :dbm, :dhflux, :dcm, :dm))
+    delta = _transport_normalize_symbol(header["delta_semantics"])
+    (has_delta == (delta === :forward_window_endpoint_difference)) || throw(ArgumentError(
+        "Transport-binary contract violation — delta_semantics=$(delta) does not match delta payload sections"))
+
+    include_qv = get(header, "include_qv", nothing)
+    include_qv isa Bool && include_qv == (:qv in sections) || throw(ArgumentError(
+        "Transport-binary contract violation — include_qv must match the qv payload section"))
+    include_qv_endpoints = get(header, "include_qv_endpoints", nothing)
+    include_qv_endpoints isa Bool && include_qv_endpoints == endpoint_humidity[1] ||
+        throw(ArgumentError(
+            "Transport-binary contract violation — include_qv_endpoints must match qv_start/qv_end"))
+    include_flux_delta = get(header, "include_flux_delta", nothing)
+    include_flux_delta isa Bool && include_flux_delta == has_delta || throw(ArgumentError(
+        "Transport-binary contract violation — include_flux_delta must match delta payload sections"))
+    for (key, section) in (("n_qv", :qv), ("n_qv_start", :qv_start),
+                           ("n_qv_end", :qv_end))
+        declared = _transport_required_int(header, key; positive=false)
+        expected = section in sections ? ncell * nlevel : 0
+        declared == expected || throw(ArgumentError(
+            "Transport-binary contract violation — $(key)=$(declared), expected $(expected)"))
+    end
+
+    expected_bytes = try
+        payload_elems = Base.checked_add(
+            n_geometry_elems, Base.checked_mul(nwindow, elems_per_window))
+        Base.checked_add(header_bytes, Base.checked_mul(payload_elems, float_bytes))
+    catch error
+        error isa OverflowError || rethrow()
+        throw(ArgumentError(
+            "Transport-binary contract violation — declared payload byte count overflows Int"))
+    end
+    return expected_bytes
+end
 
 """
     validate_cs_writer_contract!(header::AbstractDict)
@@ -322,5 +501,6 @@ function validate_transport_contract!(header::AbstractDict;
             throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_scale_by_window[$win]=" *
                                 "$(scale_schedule[win]), expected $(expected) for flux_kind=$(flux_kind)"))
     end
+    _validate_transport_layout!(header)
     return nothing
 end

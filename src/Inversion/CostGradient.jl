@@ -441,6 +441,7 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         mesh, observation_vec;
         scheme = scheme,
         dt = dt_ft,
+        flux_scale = FT(flux_scale),
         cfl_limit = cfl_limit,
         emission_rates = emission_rates,
         diffusion_op = diffusion_op,

@@ -115,6 +115,7 @@ function _run_cs_footprint_forward(panels_rm0, panels_m0,
                                    objective::AbstractCSFootprintObjective;
                                    scheme = PPMScheme(NoLimiter()),
                                    dt,
+                                   flux_scale = one(eltype(panels_rm0[1])),
                                    cfl_limit = 0.95,
                                    emission_rates = nothing,
                                    perturbation = nothing,
@@ -175,12 +176,13 @@ function _run_cs_footprint_forward(panels_rm0, panels_m0,
             # doesn't have face kernels for LinRoodPPMScheme.
             _linrood_run_forward_step!(panels_rm, panels_m,
                 panels_am_steps[step], panels_bm_steps[step],
-                panels_cm_steps[step], mesh, scheme, ws, midpoint!)
+                panels_cm_steps[step], mesh, scheme, ws, midpoint!;
+                flux_scale = flux_scale)
         else
             strang_split_cs!(panels_rm, panels_m,
                              panels_am_steps[step], panels_bm_steps[step], panels_cm_steps[step],
                              mesh, scheme, ws;
-                             flux_scale = one(eltype(panels_m[1])),
+                             flux_scale = flux_scale,
                              cfl_limit = cfl_limit,
                              midpoint! = midpoint!)
         end
@@ -205,6 +207,7 @@ function _run_cs_observations_forward(panels_rm0, panels_m0,
                                       observations;
                                       scheme = PPMScheme(NoLimiter()),
                                       dt,
+                                      flux_scale = one(eltype(panels_rm0[1])),
                                       cfl_limit = 0.95,
                                       emission_rates = nothing,
                                       diffusion_op = NoDiffusion(),
@@ -272,12 +275,13 @@ function _run_cs_observations_forward(panels_rm0, panels_m0,
             # doesn't have face kernels for LinRoodPPMScheme.
             _linrood_run_forward_step!(panels_rm, panels_m,
                 panels_am_steps[step], panels_bm_steps[step],
-                panels_cm_steps[step], mesh, scheme, ws, midpoint!)
+                panels_cm_steps[step], mesh, scheme, ws, midpoint!;
+                flux_scale = flux_scale)
         else
             strang_split_cs!(panels_rm, panels_m,
                              panels_am_steps[step], panels_bm_steps[step], panels_cm_steps[step],
                              mesh, scheme, ws;
-                             flux_scale = one(eltype(panels_m[1])),
+                             flux_scale = flux_scale,
                              cfl_limit = cfl_limit,
                              midpoint! = midpoint!)
         end

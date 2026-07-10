@@ -33,6 +33,7 @@ function _tape_byte_estimate(panels_m0,
                              mesh::CubedSphereMesh,
                              scheme::CSAdjointSupportedScheme;
                              cfl_limit = 0.95,
+                             flux_scale = one(eltype(panels_m0[1])),
                              diffusion_op = NoDiffusion(),
                              convection_op = NoConvection())
     FT = eltype(panels_m0[1])
@@ -48,6 +49,7 @@ function _tape_byte_estimate(panels_m0,
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(panels_m[1], 3)
     cfl_ft = FT(cfl_limit)
+    fs = FT(flux_scale)
 
     sweep_records = 0
     halo_records = 0
@@ -60,9 +62,10 @@ function _tape_byte_estimate(panels_m0,
         panels_am = panels_am_steps[step]
         panels_bm = panels_bm_steps[step]
         panels_cm = panels_cm_steps[step]
-        n_x = _cs_static_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_ft, :x)
-        n_y = _cs_static_subcycle_count(panels_bm, panels_m, Nc, Hp, Nz, cfl_ft, :y)
-        n_z = _cs_static_subcycle_count(panels_cm, panels_m, Nc, Hp, Nz, cfl_ft, :z)
+        n_pal = _cs_static_palindrome_subcycle_count(
+            panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
+            flux_scale = fs)
+        n_x = n_y = n_z = n_pal
 
         sweep_records += 2n_x + 2n_y + 2n_z
         halo_records += 2n_x + 2n_y + 2
@@ -74,9 +77,9 @@ function _tape_byte_estimate(panels_m0,
         end
         convection_op isa NoConvection || (convection_records += 1)
 
-        fs_x = one(FT) / FT(n_x)
-        fs_y = one(FT) / FT(n_y)
-        fs_z = one(FT) / FT(n_z)
+        fs_x = fs / FT(n_x)
+        fs_y = fs / FT(n_y)
+        fs_z = fs / FT(n_z)
 
         for _ in 1:n_x
             for p in 1:6
@@ -152,6 +155,7 @@ end
     cs_tape_byte_estimate(panels_m0, panels_am_steps, panels_bm_steps,
                           panels_cm_steps, mesh, scheme;
                           cfl_limit = 0.95,
+                          flux_scale = one(eltype(panels_m0[1])),
                           diffusion_op = NoDiffusion(),
                           convection_op = NoConvection())
         -> CSTapeByteEstimate
@@ -255,9 +259,10 @@ function _record_cs_mass_tape(panels_m0,
         panels_am = panels_am_steps[step]
         panels_bm = panels_bm_steps[step]
         panels_cm = panels_cm_steps[step]
-        n_x = _cs_static_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_ft, :x)
-        n_y = _cs_static_subcycle_count(panels_bm, panels_m, Nc, Hp, Nz, cfl_ft, :y)
-        n_z = _cs_static_subcycle_count(panels_cm, panels_m, Nc, Hp, Nz, cfl_ft, :z)
+        n_pal = _cs_static_palindrome_subcycle_count(
+            panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
+            flux_scale = fs)
+        n_x = n_y = n_z = n_pal
         fs_x = fs / FT(n_x)
         fs_y = fs / FT(n_y)
         fs_z = fs / FT(n_z)
@@ -420,9 +425,10 @@ function _record_cs_tracer_tape(panels_rm0,
         panels_am = panels_am_steps[step]
         panels_bm = panels_bm_steps[step]
         panels_cm = panels_cm_steps[step]
-        n_x = _cs_static_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_ft, :x)
-        n_y = _cs_static_subcycle_count(panels_bm, panels_m, Nc, Hp, Nz, cfl_ft, :y)
-        n_z = _cs_static_subcycle_count(panels_cm, panels_m, Nc, Hp, Nz, cfl_ft, :z)
+        n_pal = _cs_static_palindrome_subcycle_count(
+            panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
+            flux_scale = fs)
+        n_x = n_y = n_z = n_pal
         fs_x = fs / FT(n_x)
         fs_y = fs / FT(n_y)
         fs_z = fs / FT(n_z)

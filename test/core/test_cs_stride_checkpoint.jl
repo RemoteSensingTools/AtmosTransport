@@ -106,6 +106,17 @@ function _footprints_equal(a, b)
     return true
 end
 
+function _dot_footprint(result, rates)
+    total = zero(eltype(rates[1][1]))
+    for step in eachindex(result.footprints), p in 1:6
+        total += sum(result.footprints[step][p] .* rates[step][p])
+    end
+    return total
+end
+
+_scaled_rates(rates, scale) =
+    [ntuple(p -> scale .* rates[step][p], 6) for step in eachindex(rates)]
+
 @testset "checkpoint_window_count / checkpoint_window_range" begin
     @test TapeMod.checkpoint_window_count(TapeMod.FullCheckpoint(), 10) == 1
     @test TapeMod.checkpoint_window_range(TapeMod.FullCheckpoint(), 1, 10) == 1:10
@@ -561,6 +572,56 @@ end
             scheme = scheme, dt = 1.0,
             checkpoint = AT.StrideCheckpoint(K))
         @test _footprints_equal(ref, stride)
+    end
+end
+
+@testset "LinRood non-unit flux_scale — FD and checkpoint parity" begin
+    mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
+        ; Nc = 4, Nz = 4, nsteps = 2, FT = Float64)
+    FT = eltype(panels_m[1])
+    N = mesh.Nc + 2mesh.Hp
+    Nz = size(panels_m[1], 3)
+    for p in 1:6
+        @inbounds for k in 1:Nz, j in 1:N, i in 1:N
+            panels_rm[p][i, j, k] = panels_m[p][i, j, k] *
+                (FT(0.05) + FT(0.009) * sin(FT(0.29i + 0.17j + 0.21k + 0.08p)))
+        end
+    end
+    Adv.fill_panel_halos!(panels_rm, mesh; dir = 0)
+
+    objective = _column_mean_objective(mesh)
+    rates = [ntuple(6) do p
+        [sin(0.23step + 0.19p + 0.13i - 0.17j)
+         for i in 1:mesh.Nc, j in 1:mesh.Nc]
+    end for step in eachindex(am_steps)]
+    flux_scale = 1.7
+    epsilon = 2e-6
+
+    for scheme in (AT.LinRoodPPMScheme(5), AT.LinRoodPPMScheme(7))
+        full = AT.cs_surface_emission_footprint(
+            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+            scheme, dt = 1.0, flux_scale)
+        j_plus = AT.run_cs_footprint_forward(
+            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+            scheme, dt = 1.0, flux_scale,
+            emission_rates = _scaled_rates(rates, epsilon))
+        j_minus = AT.run_cs_footprint_forward(
+            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+            scheme, dt = 1.0, flux_scale,
+            emission_rates = _scaled_rates(rates, -epsilon))
+        finite_difference = (j_plus - j_minus) / (2epsilon)
+        @test _dot_footprint(full, rates) ≈ finite_difference rtol = 3e-4 atol = 1e-9
+
+        stride = AT.cs_surface_emission_footprint(
+            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+            scheme, dt = 1.0, flux_scale,
+            checkpoint = AT.StrideCheckpoint(1))
+        revolve = AT.cs_surface_emission_footprint(
+            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+            scheme, dt = 1.0, flux_scale,
+            checkpoint = AT.RevolveCheckpoint())
+        @test _footprints_equal(full, stride)
+        @test _footprints_equal(full, revolve)
     end
 end
 

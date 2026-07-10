@@ -113,6 +113,35 @@ end
     end
 end
 
+@testset "Gaussian inverse remains finite at operational Float32 sizes" begin
+    for (Nc, correlation_length) in ((48, 2.0f0), (48, 3.0f0), (180, 2.0f0))
+        sigma = ntuple(_ -> fill(0.5f0, Nc, Nc), 6)
+        covariance = AT.IsotropicGaussianCSCovariance(sigma, correlation_length)
+        @test all(isfinite, covariance.L_transfer_sqrt)
+        @test minimum(covariance.L_transfer_sqrt) > 0.0f0
+    end
+
+    Nc = 48
+    sigma = ntuple(_ -> fill(0.5f0, Nc, Nc), 6)
+    covariance = AT.IsotropicGaussianCSCovariance(sigma, 2.0f0)
+    x = ntuple(p -> Float32[
+        sin(0.031f0 * i + 0.047f0 * j + 0.13f0 * p)
+        for i in 1:Nc, j in 1:Nc
+    ], 6)
+    inverse_x = ntuple(_ -> zeros(Float32, Nc, Nc), 6)
+    round_trip = ntuple(_ -> zeros(Float32, Nc, Nc), 6)
+
+    AT.apply_B_half_inverse!(inverse_x, covariance, x)
+    AT.apply_B_half!(round_trip, covariance, inverse_x)
+
+    @test all(panel -> all(isfinite, panel), inverse_x)
+    @test all(panel -> all(isfinite, panel), round_trip)
+    relative_error = maximum(
+        maximum(abs.(round_trip[p] .- x[p])) / maximum(abs.(x[p]))
+        for p in 1:6)
+    @test relative_error < 5.0f-3
+end
+
 # ---------------------------------------------------------------------------
 # Forward T(χ): correctness
 # ---------------------------------------------------------------------------

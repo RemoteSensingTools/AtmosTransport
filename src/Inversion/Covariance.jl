@@ -110,6 +110,13 @@ The wrapped-Gaussian normalization pins `C[i, i] = 1`, hence
 `B[i, i] = σ_i²` — the diagonal of `B` recovers the per-cell
 variance, independent of correlation length.
 
+To keep `B^(-1/2)` finite at operational Float32 resolutions, each
+one-dimensional factor of the separable spectrum is floored at its maximum
+times `sqrt(eps(FT))`, then renormalized to preserve the unit diagonal. The
+corresponding minimum two-dimensional covariance eigenvalue is therefore
+approximately its maximum times `eps(FT)`. This is a precision-aware
+regularization of unresolved high-frequency modes.
+
 **v1 limitations**:
 
 - Cross-panel correlation is dropped. Each panel is smoothed in
@@ -214,13 +221,25 @@ function _gaussian_transfer_sqrt_2d(Nc::Int, L::FT) where FT
     k1d ./= k1d[1]
     # FFT eigenvalues of a circulant matrix are the FFT of its first
     # row. The kernel is real and symmetric (`k[Nc - n] = k[n]` modulo
-    # periodicity), so the spectrum is real. Clamp any tiny negative
-    # roundoff to zero before sqrt.
+    # periodicity), so the spectrum is real. Finite precision can make
+    # the smallest eigenvalues negative or exactly zero, especially for
+    # Float32 at operational panel sizes. A zero makes B^(-1/2)
+    # undefined, so regularize the one-dimensional spectrum to a
+    # precision-scaled positive floor. This bounds the condition number
+    # of the two-dimensional square-root transfer at O(inv(sqrt(eps))).
     spec_complex = FFTW.fft(k1d)
     spec_1d = real.(spec_complex)
+    max_spec = maximum(spec_1d)
+    isfinite(max_spec) && max_spec > zero(FT) || throw(ArgumentError(
+        "Gaussian covariance produced an invalid spectral maximum $max_spec"))
+    spectral_floor = max_spec * sqrt(eps(FT))
     @inbounds for k in eachindex(spec_1d)
-        spec_1d[k] = max(spec_1d[k], zero(FT))
+        spec_1d[k] = max(spec_1d[k], spectral_floor)
     end
+    # Flooring slightly changes the zero-lag variance. Renormalize the
+    # spectrum so the corresponding circulant kernel still has unit
+    # diagonal and B[i,i] remains sigma[i]^2.
+    spec_1d .*= FT(Nc) / sum(spec_1d)
     sqrt_spec = sqrt.(spec_1d)
     # Outer product gives the 2D separable spectral square root.
     out = Matrix{FT}(undef, Nc, Nc)
@@ -357,10 +376,11 @@ factorization `B^(1/2) = D · L` (`D` diagonal, `L` symmetric),
 the change of variables `x = x_b + B^(1/2) χ` (Linear) or
 `x = x_b ⊙ exp(B^(1/2) χ)` (LogNormal).
 
-The Gaussian inverse is unstable for inputs with significant
-energy in the high-frequency tail of the spectrum (where the
-correlation transfer function is tiny); use on round-trip clean
-inputs, not arbitrary user data.
+The Gaussian inverse is regularized in the high-frequency tail by the
+precision-scaled spectral floor documented on
+[`IsotropicGaussianCSCovariance`](@ref). It is finite for arbitrary finite
+inputs, but poorly resolved high-frequency modes remain sensitive to
+roundoff.
 """
 function apply_B_half_inverse! end
 
@@ -389,10 +409,9 @@ function _apply_L_inverse_panel!(buf::Matrix{Complex{FT}},
     end
     fft_plan * buf
     @inbounds for j in 1:Nc, i in 1:Nc
-        # `transfer_sqrt` is non-negative; zeros would be division by
-        # zero. The wrapped Gaussian's spectrum is strictly positive
-        # for L > 0, so this is safe by construction, but small
-        # entries amplify high-frequency noise (documented).
+        # Construction applies a precision-scaled positive spectral
+        # floor, so division is finite while still damping unsupported
+        # high-frequency inverse modes.
         buf[i, j] /= transfer_sqrt[i, j]
     end
     ifft_plan * buf

@@ -1092,7 +1092,8 @@ end
 
 
 # NOTE: Evolving-mass pilot functions (_cs_x/y/z_pilot_subcycle_count) were
-# removed — they were dead code (strang_split_cs! uses _cs_static_subcycle_count).
+# removed — they were dead code (`strang_split_cs!` uses the shared static
+# palindrome budget above).
 # The static pilot is sufficient because the gamma-clamped sweep handles CFL > 1
 # safely. If evolving-mass pilots are needed in the future, see git history.
 

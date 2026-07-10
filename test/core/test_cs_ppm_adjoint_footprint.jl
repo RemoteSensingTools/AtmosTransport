@@ -495,6 +495,78 @@ end
         end
     end
 
+    @testset "Footprint uses the production palindrome CFL schedule" begin
+        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
+            _transport_cs_problem(Nc=4, Nz=3, nsteps=1)
+        for flux_steps in (panels_am, panels_bm, panels_cm),
+            panel in flux_steps[1]
+            panel .*= 40
+        end
+
+        flux_scale = 1.5
+        n_pal = Adv._cs_static_palindrome_subcycle_count(
+            panels_am[1], panels_bm[1], panels_cm[1], panels_m,
+            mesh.Nc, mesh.Hp, size(panels_m[1], 3), 0.95;
+            flux_scale)
+        @test n_pal > 1
+
+        scheme = AT.UpwindScheme()
+        objective = AT.CSColumnMeanObjective(1, 2, 2)
+        rates = [ntuple(6) do p
+            [sin(0.17p + 0.31i - 0.23j) for i in 1:mesh.Nc, j in 1:mesh.Nc]
+        end]
+        result = AT.cs_surface_emission_footprint(
+            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+            mesh, objective; scheme, dt=1.0, flux_scale)
+
+        epsilon = 2e-6
+        j_plus = AT.run_cs_footprint_forward(
+            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+            mesh, objective;
+            scheme, dt=1.0, flux_scale,
+            emission_rates=_scaled_rates(rates, epsilon))
+        j_minus = AT.run_cs_footprint_forward(
+            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+            mesh, objective;
+            scheme, dt=1.0, flux_scale,
+            emission_rates=_scaled_rates(rates, -epsilon))
+
+        finite_difference = (j_plus - j_minus) / (2epsilon)
+        @test _dot_footprint(result, rates) ≈ finite_difference rtol=3e-5 atol=1e-10
+    end
+
+    @testset "4D-Var forward and gradient share non-unit flux_scale" begin
+        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
+            _transport_cs_problem(Nc=3, Nz=3, nsteps=2)
+        values = ntuple(_ -> zeros(Float64, mesh.Nc, mesh.Nc), 6)
+        control = AT.CSSurfaceFluxControl(
+            AT.CSSurfaceFluxWindow(:both_steps, 1:2; normalize=true), values)
+        observations = [
+            AT.CSObservation(2, AT.CSColumnMeanObjective(1, 2, 2), 0.02, 0.3),
+        ]
+        flux_scale = 2.0
+        result = AT.cs_surface_flux_4dvar(
+            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+            mesh, observations, control;
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=1.0, flux_scale)
+
+        direction = ntuple(p ->
+            [cos(0.19p + 0.13i - 0.11j) for i in 1:mesh.Nc, j in 1:mesh.Nc], 6)
+        epsilon = 1e-6
+        j_plus = AT.cs_surface_flux_4dvar(
+            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+            mesh, observations, _shift_control(control, direction, epsilon);
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=1.0, flux_scale).cost
+        j_minus = AT.cs_surface_flux_4dvar(
+            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+            mesh, observations, _shift_control(control, direction, -epsilon);
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=1.0, flux_scale).cost
+
+        finite_difference = (j_plus - j_minus) / (2epsilon)
+        @test _dot_control_gradient(result.gradients, [direction]) ≈
+              finite_difference rtol=5e-5 atol=1e-10
+    end
+
     @testset "Limited PPM footprint replays nonlinear branch tape" begin
         mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
             _transport_cs_problem(Nc=4, Nz=6, nsteps=2)

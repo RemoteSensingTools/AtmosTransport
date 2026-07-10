@@ -24,7 +24,9 @@ emission rates in kg s^-1. If `diffusion_op` is supplied, the helper applies
 panel-native `diffusion_workspace` with filled `dz_scratch`. If
 `convection_op=CMFMCConvection()` or `TM5Convection()` is supplied, the
 helper applies the corresponding CS convection column operator after each
-transport step.
+transport step. `flux_scale` multiplies all transport fluxes and is shared
+with the tape/reverse APIs so forward finite differences exercise the same
+model trajectory.
 """
 function run_cs_footprint_forward(panels_rm0, panels_m0,
                                   panels_am_steps,
@@ -34,6 +36,7 @@ function run_cs_footprint_forward(panels_rm0, panels_m0,
                                   objective::AbstractCSFootprintObjective;
                                   scheme = PPMScheme(NoLimiter()),
                                   dt = one(eltype(panels_rm0[1])),
+                                  flux_scale = one(eltype(panels_rm0[1])),
                                   cfl_limit = 0.95,
                                   emission_rates = nothing,
                                   diffusion_op = NoDiffusion(),
@@ -48,6 +51,7 @@ function run_cs_footprint_forward(panels_rm0, panels_m0,
                                      mesh, objective;
                                      scheme = scheme,
                                      dt = FT(dt),
+                                     flux_scale = FT(flux_scale),
                                      cfl_limit = cfl_limit,
                                      emission_rates = emission_rates,
                                      diffusion_op = diffusion_op,

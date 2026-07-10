@@ -98,6 +98,10 @@ struct _CSLinRoodHorizRecord{FT, A3, A3x, A3y, P, ORD}
     flux_scale    :: FT
 end
 
+_scale_linrood_flux_panels(panels::NTuple{6}, flux_scale) =
+    isone(flux_scale) ? panels :
+    ntuple(p -> flux_scale .* panels[p], Val(6))
+
 # Run one LinRood horizontal substep across all six panels, replicating
 # the forward `fv_tp_2d_cs!` (LinRood.jl:695-779). Updates `panels_rm`,
 # `panels_m` in place. With `record_ops = true` (default) captures
@@ -131,6 +135,9 @@ function _record_linrood_horizontal_substep!(
     # forward-replay, and adjoint paths would disagree by a Hp-cell flux shift.
     panels_am = ntuple(p -> _cs_flux_x_interior(panels_am[p], Nc, Hp), Val(6))
     panels_bm = ntuple(p -> _cs_flux_y_interior(panels_bm[p], Nc, Hp), Val(6))
+    fs = FT(flux_scale)
+    panels_am = _scale_linrood_flux_panels(panels_am, fs)
+    panels_bm = _scale_linrood_flux_panels(panels_bm, fs)
 
     init_k!    = _init_q_buf_kernel!(backend, 256)
     y_face_k!  = _ppm_y_face_kernel!(backend, 256)
@@ -252,7 +259,7 @@ function _record_linrood_horizontal_substep!(
         panels_q_buf_phase2, panels_q_buf_phase3,
         panels_fx_in, panels_fx_out, panels_fy_in,
         panels_am, panels_bm,
-        FT(flux_scale),
+        fs,
     )
 end
 
@@ -527,7 +534,8 @@ function _linrood_run_forward_step!(panels_rm, panels_m,
                                      mesh::CubedSphereMesh{FT},
                                      scheme::LinRoodPPMScheme{ORD},
                                      ws::CSAdvectionWorkspace,
-                                     midpoint!) where {FT, ORD}
+                                     midpoint!;
+                                     flux_scale = one(FT)) where {FT, ORD}
     Nz = size(panels_rm[1], 3)
     # The footprint/inversion driver passes Hp-padded flux panels, but the
     # LinRood kernels index the interior faces; strip the halo so this
@@ -537,6 +545,10 @@ function _linrood_run_forward_step!(panels_rm, panels_m,
     Nc, Hp = mesh.Nc, mesh.Hp
     panels_am = ntuple(p -> _cs_flux_x_interior(panels_am[p], Nc, Hp), Val(6))
     panels_bm = ntuple(p -> _cs_flux_y_interior(panels_bm[p], Nc, Hp), Val(6))
+    fs = FT(flux_scale)
+    panels_am = _scale_linrood_flux_panels(panels_am, fs)
+    panels_bm = _scale_linrood_flux_panels(panels_bm, fs)
+    panels_cm = _scale_linrood_flux_panels(panels_cm, fs)
     array_type = typeof(parent(panels_rm[1]))
     ws_lr = LinRoodWorkspace(mesh; FT = FT, Nz = Nz, array_type = array_type)
     # Palindrome H → Z → (midpoint/emissions) → Z → H, matching

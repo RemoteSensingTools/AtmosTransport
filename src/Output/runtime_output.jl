@@ -147,9 +147,11 @@ function _tracer_fields_from_cfg(cfg::AbstractDict, fallback::TracerOutputFields
     layers = haskey(cfg, "layers") ?
              _parse_layer_selection(cfg["layers"], "$(key_prefix).layers") :
              fallback.layers
-    column_mean = Bool(get(cfg, "column_mean", fallback.column_mean))
-    column_mass = Bool(get(cfg, "column_mass_per_area",
-                           get(cfg, "column_mass", fallback.column_mass_per_area)))
+    column_mean = _config_bool(get(cfg, "column_mean", fallback.column_mean),
+                               "$(key_prefix).column_mean")
+    column_mass = _config_bool(get(cfg, "column_mass_per_area",
+                                   get(cfg, "column_mass", fallback.column_mass_per_area)),
+                               "$(key_prefix).column_mass_per_area")
     return TracerOutputFields(layers, column_mean, column_mass)
 end
 
@@ -173,9 +175,11 @@ end
 function output_field_spec(fields_cfg::AbstractDict)
     default_tracer = TracerOutputFields(
         _parse_layer_selection(get(fields_cfg, "layers", "full"), "[output.fields].layers"),
-        Bool(get(fields_cfg, "column_mean", true)),
-        Bool(get(fields_cfg, "column_mass_per_area",
-                 get(fields_cfg, "column_mass", true))),
+        _config_bool(get(fields_cfg, "column_mean", true),
+                     "[output.fields].column_mean"),
+        _config_bool(get(fields_cfg, "column_mass_per_area",
+                         get(fields_cfg, "column_mass", true)),
+                     "[output.fields].column_mass_per_area"),
     )
     air_layers = _parse_layer_selection(get(fields_cfg, "air_mass_layers",
                                             get(fields_cfg, "layers", "full")),
@@ -186,9 +190,11 @@ function output_field_spec(fields_cfg::AbstractDict)
         default_tracer,
         _parse_tracer_overrides(fields_cfg, default_tracer),
         air_layers,
-        Bool(get(fields_cfg, "air_mass", true)),
-        Bool(get(fields_cfg, "air_mass_per_area", true)),
-        Bool(get(fields_cfg, "column_air_mass_per_area", true)),
+        _config_bool(get(fields_cfg, "air_mass", true), "[output.fields].air_mass"),
+        _config_bool(get(fields_cfg, "air_mass_per_area", true),
+                     "[output.fields].air_mass_per_area"),
+        _config_bool(get(fields_cfg, "column_air_mass_per_area", true),
+                     "[output.fields].column_air_mass_per_area"),
     )
 end
 
@@ -214,7 +220,8 @@ function _output_options(output_cfg::AbstractDict, ::Type{FT},
     end
     return SnapshotWriteOptions(float_type = on_disk,
                                 deflate_level = Int(get(output_cfg, "deflate_level", 0)),
-                                shuffle = Bool(get(output_cfg, "shuffle", true)))
+                                shuffle = _config_bool(get(output_cfg, "shuffle", true),
+                                                       "[output].shuffle"))
 end
 
 function _output_path(output_cfg::AbstractDict, default_path::AbstractString)
@@ -288,7 +295,7 @@ function runtime_output_spec(output_cfg::AbstractDict, ::Type{FT};
     format = _parse_output_format(get(output_cfg, "format", "netcdf"))
     options = _output_options(output_cfg, FT, format)
     fields = output_field_spec(get(output_cfg, "fields", Dict{String, Any}()))
-    enabled = Bool(get(output_cfg, "enabled", true))
+    enabled = _config_bool(get(output_cfg, "enabled", true), "[output].enabled")
     path = _output_path(output_cfg, default_path)
     return RuntimeOutputSpec(path, schedule, partition, options, fields, enabled, format)
 end

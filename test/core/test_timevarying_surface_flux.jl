@@ -33,6 +33,14 @@ import Adapt
 
 const FT = Float64
 
+@testset "TimeVarying surface flux — constructor contracts" begin
+    series = ntuple(_ -> zeros(FT, 2, 2, 2), 6)
+    @test_throws ArgumentError TimeVaryingSurfaceFluxSource(:CO2, series, Float64[])
+    @test_throws ArgumentError TimeVaryingSurfaceFluxSource(:CO2, series, [0.0, 0.0])
+    @test_throws ArgumentError TimeVaryingSurfaceFluxSource(:CO2, series, [0.0, Inf])
+    @test_throws DimensionMismatch TimeVaryingSurfaceFluxSource(:CO2, series, [0.0])
+end
+
 # A tiny stand-in for the production `DrivenSimulation` clock: returns a fixed
 # elapsed-seconds value. `current_time(meteo)` is the one method the operator
 # calls to resolve the time-interpolation bracket.

@@ -213,19 +213,25 @@ function _parse_header(raw_bytes::Vector{UInt8})
     n_cm = Int(hdr.n_cm)
     n_ps = Int(hdr.n_ps)
 
-    _has_qv      = version >= 2 && Bool(get(hdr, :include_qv, false))
-    _has_cmfmc   = version >= 2 && Bool(get(hdr, :include_cmfmc, false))
-    _has_surface = version >= 2 && Bool(get(hdr, :include_surface, false))
+    header_bool(key) = begin
+        value = get(hdr, key, false)
+        value isa Bool || throw(ArgumentError(
+            "ERA5 binary header $(key) must be true or false; got $(repr(value))"))
+        value
+    end
+    _has_qv      = version >= 2 && header_bool(:include_qv)
+    _has_cmfmc   = version >= 2 && header_bool(:include_cmfmc)
+    _has_surface = version >= 2 && header_bool(:include_surface)
     _n_qv    = _has_qv      ? Int(get(hdr, :n_qv, 0))   : 0
     _n_cmfmc = _has_cmfmc   ? Int(get(hdr, :n_cmfmc, 0)) : 0
     _n_sfc   = _has_surface ? Int(get(hdr, :n_pblh, 0))  : 0
 
-    _has_tm5conv     = version >= 3 && Bool(get(hdr, :include_tm5conv, false))
-    _has_temperature = version >= 3 && Bool(get(hdr, :include_temperature, false))
+    _has_tm5conv     = version >= 3 && header_bool(:include_tm5conv)
+    _has_temperature = version >= 3 && header_bool(:include_temperature)
     _n_tm5conv     = _has_tm5conv     ? Int(get(hdr, :n_entu, 0))        : 0
     _n_temperature = _has_temperature ? Int(get(hdr, :n_temperature, 0)) : 0
 
-    _has_flux_delta = version >= 4 && Bool(get(hdr, :include_flux_delta, false))
+    _has_flux_delta = version >= 4 && header_bool(:include_flux_delta)
     _n_dam = _has_flux_delta ? Int(get(hdr, :n_dam, 0)) : 0
     _n_dbm = _has_flux_delta ? Int(get(hdr, :n_dbm, 0)) : 0
     _n_dm  = _has_flux_delta ? Int(get(hdr, :n_dm, 0))  : 0

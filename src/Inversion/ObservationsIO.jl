@@ -140,6 +140,7 @@ The file follows `schemas/cs_observations_v1.toml`:
 function write_observations(path::AbstractString, set::CSObservationSet)
     isempty(set.time_origin) && throw(ArgumentError(
         "CSObservationSet.time_origin must be a non-empty ISO-8601 string"))
+    mkpath(dirname(abspath(path)))
     n = length(set)
     isfile(path) && rm(path)
     NCDatasets.NCDataset(path, "c") do ds

@@ -79,7 +79,7 @@ _resolve_mass_basis(cfg::AbstractDict) =
     Symbol(get(get(cfg, "output", Dict()), "mass_basis", "dry"))
 
 _resolve_chain_mass(cfg::AbstractDict) =
-    Bool(get(get(cfg, "numerics", Dict()), "chain_mass", true))
+    _config_bool(get(cfg, "numerics", Dict()), "chain_mass", true, "[numerics].chain_mass")
 
 # Canonical CS substep-positivity contract knobs. Defaults match the gate the
 # regrid path enforces — every CS-producing preprocessor
@@ -106,7 +106,8 @@ function _resolve_positivity_cfl_limit(cfg::AbstractDict)
 end
 
 _resolve_require_substep_positivity(cfg::AbstractDict) =
-    Bool(get(get(cfg, "numerics", Dict()), "require_substep_positivity", true))
+    _config_bool(get(cfg, "numerics", Dict()), "require_substep_positivity", true,
+                 "[numerics].require_substep_positivity")
 
 function _resolve_substep_schedule_policy(cfg::AbstractDict,
                                           positivity_cfl_limit::Real)
@@ -210,7 +211,7 @@ end
 
 function _native_mass_fix_target_kg(cfg::AbstractDict, grid)
     mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
-    Bool(get(mass_fix_cfg, "enable", false)) || return NaN
+    _config_bool(mass_fix_cfg, "enable", false, "[mass_fix].enable") || return NaN
     haskey(mass_fix_cfg, "target_total_kg") &&
         return Float64(mass_fix_cfg["target_total_kg"])
 
@@ -254,13 +255,16 @@ function _process_day_native(cfg::AbstractDict;
     # setup never desync.
     settings_kwargs = (root_dir = expand_data_path(String(src_cfg["root_dir"])),)
     if haskey(src_cfg, "include_surface")
-        settings_kwargs = (settings_kwargs..., include_surface = Bool(src_cfg["include_surface"]))
+        settings_kwargs = (settings_kwargs..., include_surface = _config_bool(
+            src_cfg["include_surface"], "[source].include_surface"))
     end
     if haskey(src_cfg, "include_convection")
-        settings_kwargs = (settings_kwargs..., include_convection = Bool(src_cfg["include_convection"]))
+        settings_kwargs = (settings_kwargs..., include_convection = _config_bool(
+            src_cfg["include_convection"], "[source].include_convection"))
     end
     if haskey(src_cfg, "include_vdiff_fields")
-        settings_kwargs = (settings_kwargs..., include_vdiff_fields = Bool(src_cfg["include_vdiff_fields"]))
+        settings_kwargs = (settings_kwargs..., include_vdiff_fields = _config_bool(
+            src_cfg["include_vdiff_fields"], "[source].include_vdiff_fields"))
     end
     for key in ("physics_dir", "surface_dir")
         if haskey(src_cfg, key)
@@ -343,7 +347,7 @@ function _process_day_native(cfg::AbstractDict;
     smooth_iters >= 0 ||
         error("[numerics].geos_moisture_filter_smooth_iters must be ≥ 0; got $(smooth_iters)")
     mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
-    global_mass_pin = Bool(get(mass_fix_cfg, "enable", false))
+    global_mass_pin = _config_bool(mass_fix_cfg, "enable", false, "[mass_fix].enable")
     configured_global_mass_target_kg = _native_mass_fix_target_kg(cfg, grid)
     ensure_preprocessor_pair_supported(grid, settings; context = "native-source")
 

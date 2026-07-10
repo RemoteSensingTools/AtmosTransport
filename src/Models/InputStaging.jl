@@ -21,6 +21,8 @@
 
 module InputStaging
 
+using ..Models: _config_bool
+
 export InputStager, staged_path_for!, cleanup_staging!
 
 """
@@ -59,7 +61,7 @@ Parse the `[input.staging]` sub-table and build the stager. Keys (all optional):
 - `cleanup_on_exit`  : Bool   (default `true`)
 """
 function InputStager(binary_paths::Vector{String}, staging_cfg::AbstractDict)
-    enabled = Bool(get(staging_cfg, "enabled", false))
+    enabled = _config_bool(staging_cfg, "enabled", false, "[input.staging].enabled")
     if !enabled
         return InputStager(false, binary_paths, "", 0, 0, false,
                            Dict{Int, String}(), Dict{Int, Task}(), Set{Int}())
@@ -72,7 +74,8 @@ function InputStager(binary_paths::Vector{String}, staging_cfg::AbstractDict)
     keep_behind = Int(get(staging_cfg, "keep_behind_days", 0))
     lookahead >= 0   || throw(ArgumentError("[input.staging] lookahead_days must be ≥ 0"))
     keep_behind >= 0 || throw(ArgumentError("[input.staging] keep_behind_days must be ≥ 0"))
-    cleanup = Bool(get(staging_cfg, "cleanup_on_exit", true))
+    cleanup = _config_bool(staging_cfg, "cleanup_on_exit", true,
+                           "[input.staging].cleanup_on_exit")
     mkpath(dir)
     _check_staging_capacity(dir, binary_paths, lookahead + 1 + keep_behind)
     @info "Input staging enabled" dir lookahead_days=lookahead keep_behind_days=keep_behind max_staged_days=(lookahead + 1 + keep_behind)

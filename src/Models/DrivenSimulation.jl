@@ -96,6 +96,23 @@ end
 @inline _basis_symbol(::DryBasis) = :dry
 @inline _basis_symbol(::MoistBasis) = :moist
 
+_same_values(a, b) = a == b
+_same_horizontal_geometry(a::LatLonMesh, b::LatLonMesh) =
+    a.Nx == b.Nx && a.Ny == b.Ny && a.radius == b.radius &&
+    _same_values(a.λᶠ, b.λᶠ) && _same_values(a.φᶠ, b.φᶠ)
+_same_horizontal_geometry(a::ReducedGaussianMesh, b::ReducedGaussianMesh) =
+    a.radius == b.radius && a.nlon_per_ring == b.nlon_per_ring &&
+    _same_values(a.latitudes, b.latitudes) && _same_values(a.lat_faces, b.lat_faces)
+_same_horizontal_geometry(a::CubedSphereMesh, b::CubedSphereMesh) =
+    a.Nc == b.Nc && a.Hp == b.Hp && a.radius == b.radius &&
+    repr(a.definition) == repr(b.definition) && repr(a.convention) == repr(b.convention)
+_same_horizontal_geometry(a, b) =
+    typeof(a) === typeof(b) && ncells(a) == ncells(b) && nfaces(a) == nfaces(b)
+
+_same_vertical_geometry(a::HybridSigmaPressure, b::HybridSigmaPressure) =
+    a.A == b.A && a.B == b.B
+_same_vertical_geometry(a, b) = typeof(a) === typeof(b) && a == b
+
 function _check_grid_compatibility(model_grid::AtmosGrid, driver_grid_ref::AtmosGrid)
     typeof(model_grid.horizontal) === typeof(driver_grid_ref.horizontal) ||
         throw(ArgumentError("model grid $(typeof(model_grid.horizontal)) does not match driver grid $(typeof(driver_grid_ref.horizontal))"))
@@ -105,6 +122,14 @@ function _check_grid_compatibility(model_grid::AtmosGrid, driver_grid_ref::Atmos
         throw(ArgumentError("model and driver horizontal cell counts do not match"))
     nfaces(model_grid.horizontal) == nfaces(driver_grid_ref.horizontal) ||
         throw(ArgumentError("model and driver horizontal face counts do not match"))
+    _same_horizontal_geometry(model_grid.horizontal, driver_grid_ref.horizontal) ||
+        throw(ArgumentError("model and driver horizontal geometry differs despite matching topology/counts"))
+    typeof(model_grid.vertical) === typeof(driver_grid_ref.vertical) ||
+        throw(ArgumentError("model and driver vertical-coordinate types do not match"))
+    _same_vertical_geometry(model_grid.vertical, driver_grid_ref.vertical) ||
+        throw(ArgumentError("model and driver vertical-coordinate coefficients do not match"))
+    model_grid.planet == driver_grid_ref.planet ||
+        throw(ArgumentError("model and driver planetary parameters do not match"))
     return nothing
 end
 
@@ -815,6 +840,8 @@ function DrivenSimulation(model::TransportModel,
         throw(ArgumentError("invalid window range: start_window=$(start_window), stop_window=$(stop_window), total_windows=$(total_windows(driver))"))
     supports_native_vertical_flux(driver) ||
         throw(ArgumentError("DrivenSimulation requires native vertical mass fluxes in the met-driver contract"))
+    isfinite(start_time) ||
+        throw(ArgumentError("DrivenSimulation start_time must be finite; got $(start_time)"))
 
     _check_grid_compatibility(model.grid, driver_grid(driver))
     _check_basis_compatibility(model, driver)
@@ -852,6 +879,10 @@ function DrivenSimulation(model::TransportModel,
     model = _install_convection_forcing(model, driver, window)
     FT = _storage_eltype(model.state.air_mass)
     step_schedule = _driver_step_schedule(driver)
+    all(>(0), step_schedule) || throw(ArgumentError(
+        "DrivenSimulation driver step schedule must contain only positive integers"))
+    isfinite(window_dt(driver)) && window_dt(driver) > 0 || throw(ArgumentError(
+        "DrivenSimulation driver window_dt must be finite and positive"))
     steps_current = step_schedule[Int(start_window)]
     Δt = FT(window_dt(driver)) / FT(steps_current)
     nsteps_total = sum(@view step_schedule[Int(start_window):Int(stop_window)])

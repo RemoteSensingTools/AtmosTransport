@@ -233,6 +233,9 @@ const FluxState = AbstractFaceFluxState
 @inline face_flux_y(s::AbstractStructuredFaceFluxState, i, j, k) = s.bm[i, j, k]
 @inline face_flux_z(s::AbstractFaceFluxState, i, j, k)           = s.cm[i, j, k]
 @inline face_flux(s::AbstractUnstructuredFaceFluxState, f, k)     = s.horizontal_flux[f, k]
+@inline face_flux_x(s::CubedSphereFaceFluxState, panel, i, j, k) = s.am[panel][i, j, k]
+@inline face_flux_y(s::CubedSphereFaceFluxState, panel, i, j, k) = s.bm[panel][i, j, k]
+@inline face_flux_z(s::CubedSphereFaceFluxState, panel, i, j, k) = s.cm[panel][i, j, k]
 
 # ---------------------------------------------------------------------------
 # Allocation helpers

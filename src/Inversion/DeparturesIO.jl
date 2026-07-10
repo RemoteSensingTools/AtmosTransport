@@ -444,6 +444,7 @@ Write `set` to `path` as a v1-compliant NetCDF departures file (see
 Overwrites `path` if it already exists.
 """
 function write_departures(path::AbstractString, set::CSDepartureSet)
+    mkpath(dirname(abspath(path)))
     n = length(set)
     isfile(path) && rm(path)
     NCDatasets.NCDataset(path, "c") do ds

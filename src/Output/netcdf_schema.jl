@@ -125,11 +125,9 @@ _grid_type_string(::CubedSphereMesh) = "cubed_sphere"
 function _define_time!(ds, times)
     defDim(ds, "time", length(times))
     v = defVar(ds, "time", Float64, ("time",),
-               attrib = Dict("units" => "hours since 2000-01-01 00:00:00",
-                             "long_name" => "time",
-                             "standard_name" => "time",
-                             "calendar" => "proleptic_gregorian",
-                             "comment" => "simulation-relative output time; calendar origin is nominal"))
+               attrib = Dict("units" => "hours",
+                             "long_name" => "elapsed simulation time",
+                             "comment" => "hours since the configured simulation start"))
     v[:] = Float64.(times)
     return v
 end

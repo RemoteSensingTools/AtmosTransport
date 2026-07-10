@@ -249,7 +249,8 @@ supports_native_vertical_flux(::CubedSphereTransportDriver) = true
 supports_moisture(::CubedSphereTransportDriver) = false
 supports_convection(driver::CubedSphereTransportDriver) =
     has_cmfmc(driver.reader) || has_tm5conv(driver.reader)
-supports_diffusion(driver::CubedSphereTransportDriver) = has_surface(driver.reader)
+supports_diffusion(driver::CubedSphereTransportDriver) =
+    has_surface(driver.reader) || (:kz in driver.reader.header.payload_sections)
 driver_grid(driver::CubedSphereTransportDriver) = driver.grid
 flux_interpolation_mode(::CubedSphereTransportDriver) = :constant
 flux_kind(driver::CubedSphereTransportDriver) = flux_kind(driver.reader)

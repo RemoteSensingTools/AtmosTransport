@@ -265,6 +265,24 @@ end
 # Outer constructors: allocate zero compensation from the series shape.
 function TimeVaryingSurfaceFluxSource(name::Symbol, series::RateT,
                                       times::T, scheme::S) where {RateT, T, S}
+    isempty(times) && throw(ArgumentError(
+        "time-varying surface source $(name) requires at least one time"))
+    all(t -> isfinite(t), times) || throw(ArgumentError(
+        "time-varying surface source $(name) times must be finite"))
+    all(>(0), diff(times)) || throw(ArgumentError(
+        "time-varying surface source $(name) times must be strictly increasing"))
+    ntime = length(times)
+    if series isa AbstractArray
+        size(series, ndims(series)) == ntime || throw(DimensionMismatch(
+            "time-varying surface source $(name) has $(ntime) times but series trailing dimension $(size(series, ndims(series)))"))
+    elseif series isa Tuple
+        isempty(series) && throw(ArgumentError(
+            "time-varying surface source $(name) series must not be empty"))
+        for (panel, values) in pairs(series)
+            size(values, ndims(values)) == ntime || throw(DimensionMismatch(
+                "time-varying surface source $(name) panel $(panel) has $(size(values, ndims(values))) slices; expected $(ntime)"))
+        end
+    end
     comp = _alloc_flux_comp_from_series(series)
     return TimeVaryingSurfaceFluxSource{RateT, T, S, typeof(comp)}(
         name, series, times, scheme, comp)

@@ -30,7 +30,7 @@ struct _IncompleteVerticalCoordinate{FT} <: AtmosTransport.Grids.AbstractVertica
 
 @testset "PlanetParameters and AtmosGrid" begin
     params = PlanetParameters(; FT=Float32, radius=6.0f6, gravity=9.8f0, reference_pressure=1.0f5)
-    mesh = LatLonMesh(; FT=Float32, Nx=4, Ny=3)
+    mesh = LatLonMesh(; FT=Float32, Nx=4, Ny=3, radius=params.radius)
     vc = HybridSigmaPressure(Float32[0, 100, 300], Float32[0, 0, 1])
     grid = @inferred AtmosGrid(mesh, vc, AtmosTransport.CPU(); planet=params)
 
@@ -140,12 +140,24 @@ end
     rm0 = total_mass(state, :CO2)
 
     model = @inferred TransportModel(state, fluxes, grid, UpwindScheme())
+    @test_throws ArgumentError Simulation(model; Δt=0.0, stop_time=1.0)
+    @test_throws ArgumentError Simulation(model; Δt=1.0, stop_time=NaN)
     sim = Simulation(model; Δt=FT(1800), stop_time=FT(3600))
     run!(sim)
 
     @test sim.iteration == 2
     @test total_air_mass(sim.model.state) ≈ m0 atol=eps(FT) * m0 * 10
     @test total_mass(sim.model.state, :CO2) ≈ rm0 atol=eps(FT) * rm0 * 10
+
+    @test_throws ArgumentError Simulation(model; Δt=FT(1800), stop_time=FT(2700))
+    final_callback_fired = Ref(false)
+    decimal = Simulation(model; Δt=FT(0.1), stop_time=FT(1.0),
+                         callbacks=(final = s -> final_callback_fired[] =
+                             s.time >= s.stop_time,))
+    run!(decimal)
+    @test decimal.iteration == 10
+    @test decimal.time == FT(1.0)
+    @test final_callback_fired[]
 
     state_slopes = CellState(DryBasis, copy(m); CO2=copy(m) .* FT(400e-6))
     fluxes_slopes = allocate_face_fluxes(StructuredTopology(), Nx, Ny, Nz; FT=FT, basis=DryBasis)

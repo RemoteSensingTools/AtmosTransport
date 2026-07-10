@@ -25,8 +25,10 @@ the existing `has_flux_delta`, `has_tm5_convection`, `has_cmfmc`, and
 """
 function binary_capabilities(reader::TransportBinaryReader)
     hdr = reader.header
+    required_advection = _transport_is_structured(hdr) ?
+        (:m, :am, :bm, :cm) : (:m, :hflux, :cm)
     return (
-        advection        = all(s in hdr.payload_sections for s in (:m, :am, :bm, :cm)),
+        advection        = all(s in hdr.payload_sections for s in required_advection),
         replay_gate      = has_flux_delta(reader),
         tm5_convection   = has_tm5_convection(reader),
         cmfmc_convection = has_cmfmc(reader),

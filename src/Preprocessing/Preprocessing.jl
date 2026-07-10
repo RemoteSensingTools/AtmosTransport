@@ -59,6 +59,14 @@ using SHA
 using TOML
 using LinearAlgebra: mul!, dot
 using NCDatasets
+
+function _config_bool(value, path::AbstractString)
+    value isa Bool || throw(ArgumentError("$(path) must be true or false; got $(repr(value))"))
+    return value
+end
+
+_config_bool(cfg::AbstractDict, key::AbstractString, default::Bool, path::AbstractString) =
+    _config_bool(get(cfg, key, default), path)
 using GRIB
 using SHA
 using FastGaussQuadrature: gausslegendre

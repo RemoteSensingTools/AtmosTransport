@@ -97,6 +97,12 @@ function ExponentialDecay(FT::Type{<:AbstractFloat} = Float64; half_lives...)
     nt = NamedTuple(half_lives)
     names = keys(nt)
     N = length(names)
+    N > 0 || throw(ArgumentError("ExponentialDecay requires at least one tracer half-life"))
+    for name in names
+        half_life = nt[name]
+        half_life isa Real && isfinite(half_life) && half_life > 0 ||
+            throw(ArgumentError("ExponentialDecay half-life for $(name) must be finite and positive; got $(repr(half_life))"))
+    end
     rates = ntuple(i -> ConstantField{FT, 0}(FT(log(2) / nt[i])), N)
     return ExponentialDecay{FT, N, typeof(rates)}(rates, names)
 end

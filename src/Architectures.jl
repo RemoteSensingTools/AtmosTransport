@@ -109,7 +109,10 @@ function _backend_symbol(raw)
 end
 
 function runtime_backend_from_config(arch_cfg)
-    use_gpu = Bool(get(arch_cfg, "use_gpu", false))
+    use_gpu_raw = get(arch_cfg, "use_gpu", false)
+    use_gpu_raw isa Bool || throw(ArgumentError(
+        "[architecture].use_gpu must be true or false; got $(repr(use_gpu_raw))"))
+    use_gpu = use_gpu_raw
     raw_backend = get(arch_cfg, "backend", nothing)
 
     if raw_backend === nothing

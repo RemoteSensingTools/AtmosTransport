@@ -28,6 +28,11 @@ using JSON3
 using NCDatasets
 using Printf
 
+function _config_bool(value, path::AbstractString)
+    value isa Bool || throw(ArgumentError("$(path) must be true or false; got $(repr(value))"))
+    return value
+end
+
 import ..expand_data_path
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                GnomonicPanelConvention, GEOSNativePanelConvention,

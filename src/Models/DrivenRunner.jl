@@ -65,6 +65,7 @@ aborts the run with a precise error message.
 module DrivenRunner
 
 using Adapt
+using ..Models: _config_bool
 using Dates: Date, DateTime
 using Printf: @sprintf, @printf
 using Logging
@@ -710,7 +711,8 @@ function _validate_input_binary_expectations(caps, input_cfg::AbstractDict,
             "[input].required_preprocessor_contract=$(repr(required)) but " *
             "$(basename(path)) declares $(repr(actual))."))
     end
-    if Bool(get(input_cfg, "require_adaptive_substeps", false))
+    if _config_bool(input_cfg, "require_adaptive_substeps", false,
+                    "[input].require_adaptive_substeps")
         caps.adaptive_substeps === true || throw(ArgumentError(
             "[input].require_adaptive_substeps=true but $(basename(path)) " *
             "does not declare adaptive_substeps=true."))

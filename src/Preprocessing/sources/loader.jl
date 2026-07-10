@@ -67,9 +67,9 @@ function _build_met_settings(ctor::Type{<:GEOSSettings}, cfg::AbstractDict,
         @warn "[preprocessing] mass_flux_dt_seconds=$(mass_flux_dt) is outside the usual GEOS 400-500 s range."
     end
     level_orientation    = Symbol(get(pre_cfg, "level_orientation", "auto"))
-    include_surface      = Bool(get(pre_cfg, "include_surface", false))
-    include_convection   = Bool(get(pre_cfg, "include_convection", false))
-    include_vdiff_fields = Bool(get(pre_cfg, "include_vdiff_fields", false))
+    include_surface      = _config_bool(pre_cfg, "include_surface", false, "[preprocessing].include_surface")
+    include_convection   = _config_bool(pre_cfg, "include_convection", false, "[preprocessing].include_convection")
+    include_vdiff_fields = _config_bool(pre_cfg, "include_vdiff_fields", false, "[preprocessing].include_vdiff_fields")
     physics_dir          = String(get(pre_cfg, "physics_dir", ""))
     physics_layout       = Symbol(get(pre_cfg, "physics_layout", "auto"))
 
@@ -96,10 +96,10 @@ function _build_met_settings(ctor::Type{<:ERA5GRIBSettings}, cfg::AbstractDict,
     coefs = String(get(vertical_cfg, "coefficients_file",
                        "config/era5_L137_coefficients.toml"))
     level_orientation     = Symbol(get(pre_cfg, "level_orientation", "top_down"))
-    include_surface       = Bool(get(pre_cfg, "include_surface", false))
-    include_convection    = Bool(get(pre_cfg, "include_convection", false))
-    include_vdiff_fields  = Bool(get(pre_cfg, "include_vdiff_fields", false))
-    include_tm5_diffusion = Bool(get(pre_cfg, "include_tm5_diffusion", false))
+    include_surface       = _config_bool(pre_cfg, "include_surface", false, "[preprocessing].include_surface")
+    include_convection    = _config_bool(pre_cfg, "include_convection", false, "[preprocessing].include_convection")
+    include_vdiff_fields  = _config_bool(pre_cfg, "include_vdiff_fields", false, "[preprocessing].include_vdiff_fields")
+    include_tm5_diffusion = _config_bool(pre_cfg, "include_tm5_diffusion", false, "[preprocessing].include_tm5_diffusion")
 
     include_tm5_diffusion && !include_surface &&
         throw(ArgumentError("[preprocessing] include_tm5_diffusion=true requires \
@@ -127,10 +127,10 @@ function _build_met_settings(ctor::Type{MERRA2Settings}, cfg::AbstractDict,
     coefs = String(get(vertical_cfg, "coefficients_file",
                        "config/geos_L72_coefficients.toml"))
     winds_collection      = Symbol(get(pre_cfg, "winds_collection", "tavg3"))
-    include_surface       = Bool(get(pre_cfg, "include_surface", false))
-    include_convection    = Bool(get(pre_cfg, "include_convection", false))
-    include_vdiff_fields  = Bool(get(pre_cfg, "include_vdiff_fields", false))
-    include_tm5_diffusion = Bool(get(pre_cfg, "include_tm5_diffusion", false))
+    include_surface       = _config_bool(pre_cfg, "include_surface", false, "[preprocessing].include_surface")
+    include_convection    = _config_bool(pre_cfg, "include_convection", false, "[preprocessing].include_convection")
+    include_vdiff_fields  = _config_bool(pre_cfg, "include_vdiff_fields", false, "[preprocessing].include_vdiff_fields")
+    include_tm5_diffusion = _config_bool(pre_cfg, "include_tm5_diffusion", false, "[preprocessing].include_tm5_diffusion")
 
     return ctor(; root_dir,
                   coefficients_file = coefs, winds_collection,

@@ -29,7 +29,8 @@ Dry-basis preprocessing requires a humidity source (`input.thermo_dir`).
 """
 function resolve_mass_basis(cfg)
     thermo_dir = expand_data_path(get(get(cfg, "input", Dict()), "thermo_dir", ""))
-    include_qv = Bool(get(get(cfg, "output", Dict{String, Any}()), "include_qv", !isempty(thermo_dir)))
+    include_qv = _config_bool(get(cfg, "output", Dict{String, Any}()),
+                              "include_qv", !isempty(thermo_dir), "[output].include_qv")
     basis_str = lowercase(String(get(get(cfg, "output", Dict{String, Any}()), "mass_basis", "dry")))
     mass_basis = basis_str == "dry" ? :dry : :moist
 
@@ -59,7 +60,7 @@ Parse the optional global dry-surface-pressure mass-fix settings.
 function resolve_mass_fix_settings(cfg)
     mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
     return (
-        mass_fix_enable = Bool(get(mass_fix_cfg, "enable", true)),
+        mass_fix_enable = _config_bool(mass_fix_cfg, "enable", true, "[mass_fix].enable"),
         target_ps_dry_pa = Float64(get(mass_fix_cfg, "target_ps_dry_pa", 98726.0)),
         qv_global_climatology = Float64(get(mass_fix_cfg, "qv_global_climatology", 0.00247)),
     )
@@ -83,7 +84,7 @@ Fields:
 """
 function resolve_tm5_convection_settings(cfg)
     tm5_cfg = get(cfg, "tm5_convection", Dict{String, Any}())
-    enable = Bool(get(tm5_cfg, "enable", false))
+    enable = _config_bool(tm5_cfg, "enable", false, "[tm5_convection].enable")
     bin_dir = expanduser(String(get(tm5_cfg, "physics_bin_dir", "")))
     if enable && isempty(bin_dir)
         error("[tm5_convection] enable=true requires physics_bin_dir " *
@@ -107,7 +108,7 @@ function resolve_surface_settings(cfg)
     surface_cfg = get(cfg, "surface", Dict{String, Any}())
     input_cfg = get(cfg, "input", Dict{String, Any}())
     surface_dir = expand_data_path(get(input_cfg, "surface_dir", ""))
-    include_surface = Bool(get(surface_cfg, "enable", false))
+    include_surface = _config_bool(surface_cfg, "enable", false, "[surface].enable")
     if include_surface && isempty(surface_dir)
         error("[surface] enable=true requires input.surface_dir with ERA5 single-level PBL fields")
     end
@@ -132,7 +133,7 @@ function resolve_preprocessing_cache_settings(cfg)
     spectral_dir_default = get(ENV, "ATMOSTR_SPECTRAL_CACHE_DIR", "")
     spectral_cache_dir = expanduser(String(get(cache_cfg, "spectral_coefficients_dir",
                                                spectral_dir_default)))
-    qv_preload = Bool(get(cache_cfg, "qv_preload", true))
+    qv_preload = _config_bool(cache_cfg, "qv_preload", true, "[cache].qv_preload")
     qv_preload_max_gb = Float64(get(cache_cfg, "qv_preload_max_gb", 8.0))
     qv_preload_max_bytes = Int64(floor(qv_preload_max_gb * 1024.0^3))
     return (

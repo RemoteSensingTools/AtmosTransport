@@ -47,6 +47,8 @@ function CSSurfaceFluxWindow(name::Symbol, steps; weights = nothing,
     isempty(step_vec) && throw(ArgumentError("surface-flux window $name has no steps"))
     any(<=(0), step_vec) &&
         throw(ArgumentError("surface-flux window $name contains non-positive step indices"))
+    length(unique(step_vec)) == length(step_vec) ||
+        throw(ArgumentError("surface-flux window $name contains duplicate step indices"))
     weight_vec = if weights === nothing
         ones(Float64, length(step_vec))
     else
@@ -55,10 +57,12 @@ function CSSurfaceFluxWindow(name::Symbol, steps; weights = nothing,
     length(weight_vec) == length(step_vec) || throw(ArgumentError(
         "surface-flux window $name has $(length(step_vec)) steps but " *
         "$(length(weight_vec)) weights"))
+    all(isfinite, weight_vec) || throw(ArgumentError(
+        "surface-flux window $name weights must be finite"))
     if normalize
         total = sum(weight_vec)
-        total != 0 || throw(ArgumentError(
-            "surface-flux window $name cannot normalize zero-sum weights"))
+        isfinite(total) && total != 0 || throw(ArgumentError(
+            "surface-flux window $name cannot normalize non-finite or zero-sum weights"))
         weight_vec ./= total
     end
     return CSSurfaceFluxWindow(name, step_vec, weight_vec)
@@ -134,12 +138,15 @@ function CSSurfaceFluxControl(window::CSSurfaceFluxWindow,
         throw(ArgumentError("surface-flux control sigma must be nothing, a scalar, or an NTuple{6}"))
     end
     if sigma isa Real
-        sigma > 0 || throw(ArgumentError("surface-flux control scalar sigma must be positive"))
+        isfinite(sigma) && sigma > 0 || throw(ArgumentError(
+            "surface-flux control scalar sigma must be finite and positive"))
     elseif sigma isa NTuple{6}
         @inbounds for p in 1:6
             size(sigma[p]) == size(value[p]) || throw(DimensionMismatch(
                 "surface-flux control sigma panel $p has shape $(size(sigma[p])); " *
                 "expected $(size(value[p]))"))
+            all(x -> isfinite(x) && x > 0, sigma[p]) || throw(ArgumentError(
+                "surface-flux control sigma panel $p must contain finite positive values"))
         end
     end
     return CSSurfaceFluxControl{FT, A2, typeof(background), typeof(sigma)}(

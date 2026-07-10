@@ -141,6 +141,13 @@ function AtmosGrid(horizontal::H, vertical::V, arch::Arch;
                                  radius=radius,
                                  gravity=gravity,
                                  reference_pressure=reference_pressure)
+    if hasproperty(horizontal, :radius)
+        mesh_radius = FT_out(getproperty(horizontal, :radius))
+        mesh_radius == planet_ft.radius ||
+            throw(ArgumentError(
+                "horizontal mesh radius $(mesh_radius) does not match AtmosGrid planet radius $(planet_ft.radius); " *
+                "construct the mesh and PlanetParameters with the same radius"))
+    end
     return AtmosGrid{H, V, Arch, typeof(planet_ft), FT_out}(horizontal, vertical, arch, planet_ft)
 end
 

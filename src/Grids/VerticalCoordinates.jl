@@ -19,6 +19,10 @@ struct HybridSigmaPressure{FT} <: AbstractVerticalCoordinate{FT}
     function HybridSigmaPressure(A::Vector{FT}, B::Vector{FT}) where {FT}
         length(A) == length(B) ||
             throw(DimensionMismatch("A and B must have the same length (Nz+1 interfaces)"))
+        length(A) >= 2 || throw(ArgumentError(
+            "HybridSigmaPressure requires at least two interfaces"))
+        all(isfinite, A) && all(isfinite, B) || throw(ArgumentError(
+            "HybridSigmaPressure coefficients must be finite"))
         return new{FT}(A, B)
     end
 end

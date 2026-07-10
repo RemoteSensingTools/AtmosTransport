@@ -42,6 +42,7 @@ module InitialConditionIO
 
 using NCDatasets
 using Dates
+using ..Models: _config_bool
 
 import ...expand_data_path
 using ..State: AbstractMassBasis, DryBasis, MoistBasis
@@ -972,7 +973,7 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
 
     # Clamp tiny negative VMRs (GEOS-Chem advection can emit ~-1e-6 cells)
     # to zero so the dry-VMR state and downstream mass packing stay physical.
-    clamp_negative = Bool(get(cfg, "clamp_negative", true))
+    clamp_negative = _config_bool(cfg, "clamp_negative", true, "initial-condition clamp_negative")
 
     vmr = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), CS_PANEL_COUNT)
     for p in 1:CS_PANEL_COUNT
@@ -1014,7 +1015,7 @@ function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}}
     A    = grid.vertical.A
     B    = grid.vertical.B
 
-    lowest_layer = Bool(get(cfg, "lowest_layer", false))
+    lowest_layer = _config_bool(cfg, "lowest_layer", false, "initial-condition lowest_layer")
     psurf_fraction = lowest_layer ? FT(NaN) :
                      FT(get(cfg, "psurf_fraction", 0.5))
     total_molecules = Float64(get(cfg, "total_molecules", 1.0e22))
@@ -1673,7 +1674,8 @@ end
 
 # Opt-in flag for the time-varying surface-flux path (default false →
 # byte-identical static monthly-mean behavior).
-@inline _surface_flux_time_varying(cfg) = Bool(get(cfg, "time_varying", false))
+@inline _surface_flux_time_varying(cfg) =
+    _config_bool(cfg, "time_varying", false, "surface-flux time_varying")
 
 # Kinds for which a 3D (lon,lat,time) time-varying series is supported.
 @inline _surface_flux_supports_time_varying(kind::Symbol) = kind === :lmdz_co2

@@ -39,10 +39,39 @@ After each transport step, `sum(air_mass)` and the per-tracer mass
 sum `sum(view(tracers_raw, ..., t))` must each be conserved (within
 floating-point tolerance).
 """
+function _validate_cell_state_storage(air_mass, tracers_raw, tracer_names)
+    ndims(tracers_raw) == ndims(air_mass) + 1 || throw(DimensionMismatch(
+        "CellState tracers_raw must have exactly one trailing tracer dimension; " *
+        "got ndims(air_mass)=$(ndims(air_mass)), ndims(tracers_raw)=$(ndims(tracers_raw))"))
+    size(tracers_raw)[1:ndims(air_mass)] == size(air_mass) || throw(DimensionMismatch(
+        "CellState tracer spatial shape $(size(tracers_raw)[1:ndims(air_mass)]) " *
+        "must match air_mass shape $(size(air_mass))"))
+    size(tracers_raw, ndims(tracers_raw)) == length(tracer_names) ||
+        throw(DimensionMismatch(
+            "CellState tracer axis has $(size(tracers_raw, ndims(tracers_raw))) entries " *
+            "but tracer_names has $(length(tracer_names))"))
+    all(name -> name isa Symbol, tracer_names) ||
+        throw(ArgumentError("CellState tracer_names must contain only Symbol values"))
+    length(unique(tracer_names)) == length(tracer_names) ||
+        throw(ArgumentError("CellState tracer_names must be unique; got $(tracer_names)"))
+    eltype(tracers_raw) === eltype(air_mass) || throw(ArgumentError(
+        "CellState air_mass and tracers_raw must have the same element type; got " *
+        "$(eltype(air_mass)) and $(eltype(tracers_raw))"))
+    return nothing
+end
+
 struct CellState{Basis <: AbstractMassBasis, A <: AbstractArray, Raw <: AbstractArray, Names <: Tuple}
     air_mass     :: A
     tracers_raw  :: Raw
     tracer_names :: Names
+
+    function CellState{Basis, A, Raw, Names}(air_mass::A, tracers_raw::Raw,
+                                             tracer_names::Names) where
+            {Basis <: AbstractMassBasis, A <: AbstractArray,
+             Raw <: AbstractArray, Names <: Tuple}
+        _validate_cell_state_storage(air_mass, tracers_raw, tracer_names)
+        return new{Basis, A, Raw, Names}(air_mass, tracers_raw, tracer_names)
+    end
 end
 
 # ---------------------------------------------------------------------------

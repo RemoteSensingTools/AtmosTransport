@@ -15,6 +15,38 @@ Panel-native prognostic state for cubed-sphere transport.
 - `tracer_names :: Names` — names of the tracer axis in storage order.
 - `halo_width :: Int` — halo width `Hp` needed to recover the physical interior.
 """
+function _validate_cs_state_storage(air_mass, tracers_raw, tracer_names, halo_width)
+    halo_width >= 0 || throw(ArgumentError(
+        "CubedSphereState halo_width must be non-negative, got $(halo_width)"))
+    reference_shape = size(air_mass[1])
+    length(reference_shape) == 3 || throw(DimensionMismatch(
+        "CubedSphereState air-mass panels must be rank 3, got shape $(reference_shape)"))
+    reference_shape[1] > 2 * halo_width && reference_shape[2] > 2 * halo_width ||
+        throw(DimensionMismatch(
+            "CubedSphereState halo_width=$(halo_width) leaves no physical panel " *
+            "interior for shape $(reference_shape)"))
+    all(panel -> size(panel) == reference_shape, air_mass) ||
+        throw(DimensionMismatch("CubedSphereState air-mass panels must have identical shapes"))
+    all(panel -> ndims(panel) == 4, tracers_raw) || throw(DimensionMismatch(
+        "CubedSphereState tracer panels must be rank 4"))
+    all(panel -> size(panel)[1:3] == reference_shape, tracers_raw) ||
+        throw(DimensionMismatch(
+            "CubedSphereState tracer panel spatial shapes must match air-mass panels"))
+    all(panel -> size(panel, 4) == length(tracer_names), tracers_raw) ||
+        throw(DimensionMismatch(
+            "CubedSphereState tracer axes must match $(length(tracer_names)) tracer names"))
+    all(name -> name isa Symbol, tracer_names) || throw(ArgumentError(
+        "CubedSphereState tracer_names must contain only Symbol values"))
+    length(unique(tracer_names)) == length(tracer_names) || throw(ArgumentError(
+        "CubedSphereState tracer_names must be unique; got $(tracer_names)"))
+    all(panel -> eltype(panel) === eltype(air_mass[1]), air_mass) ||
+        throw(ArgumentError("CubedSphereState air-mass panels must share one element type"))
+    all(panel -> eltype(panel) === eltype(air_mass[1]), tracers_raw) ||
+        throw(ArgumentError(
+            "CubedSphereState air-mass and tracer panels must share one element type"))
+    return nothing
+end
+
 struct CubedSphereState{Basis <: AbstractMassBasis,
                         A3 <: AbstractArray,
                         Raw4 <: AbstractArray,
@@ -23,6 +55,16 @@ struct CubedSphereState{Basis <: AbstractMassBasis,
     tracers_raw  :: NTuple{6, Raw4}
     tracer_names :: Names
     halo_width   :: Int
+
+    function CubedSphereState{Basis, A3, Raw4, Names}(
+            air_mass::NTuple{6, A3}, tracers_raw::NTuple{6, Raw4},
+            tracer_names::Names, halo_width::Int) where
+            {Basis <: AbstractMassBasis, A3 <: AbstractArray,
+             Raw4 <: AbstractArray, Names <: Tuple}
+        _validate_cs_state_storage(air_mass, tracers_raw, tracer_names, halo_width)
+        return new{Basis, A3, Raw4, Names}(
+            air_mass, tracers_raw, tracer_names, halo_width)
+    end
 end
 
 @inline halo_width(state::CubedSphereState) = state.halo_width

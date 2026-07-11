@@ -22,6 +22,13 @@ using CUDA: CuArray, CUDABackend
 
 AtmosTransport.Architectures.array_type(::GPU) = CuArray
 AtmosTransport.Architectures.device(::GPU)     = CUDABackend()
+AtmosTransport.Architectures._array_adapter_for(::CUDA.AbstractGPUArray) = CuArray
+
+function AtmosTransport.Architectures._reclaim_backend_pool!(::CUDA.AbstractGPUArray)
+    CUDA.synchronize()
+    CUDA.reclaim()
+    return nothing
+end
 
 _pinned_host_panel(a::CuArray{T,N}) where {T,N} =
     CUDA.pin(Array{T,N}(undef, size(a)))

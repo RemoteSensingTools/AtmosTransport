@@ -81,6 +81,45 @@ end
     @test occursin("face-indexed meshes supports UpwindScheme only", sprint(showerror, err))
 end
 
+@testset "State and flux containers reject inconsistent storage" begin
+    air = ones(Float64, 4, 3, 2)
+    raw = zeros(Float64, 4, 3, 2, 1)
+
+    @test CellState(DryBasis, air, raw, (:CO2,)).tracer_names == (:CO2,)
+    @test_throws DimensionMismatch CellState(
+        DryBasis, air, zeros(Float64, 4, 2, 2, 1), (:CO2,))
+    @test_throws DimensionMismatch CellState(
+        DryBasis, air, zeros(Float64, 4, 3, 2, 2), (:CO2,))
+    @test_throws ArgumentError CellState(
+        DryBasis, air, zeros(Float64, 4, 3, 2, 2), (:CO2, :CO2))
+    @test_throws ArgumentError CellState(
+        DryBasis, air, zeros(Float32, 4, 3, 2, 1), (:CO2,))
+
+    @test_throws DimensionMismatch StructuredFaceFluxState{DryBasis}(
+        zeros(4, 3, 2), zeros(4, 4, 2), zeros(4, 3, 3))
+    @test_throws ArgumentError StructuredFaceFluxState{DryBasis}(
+        zeros(Float32, 5, 3, 2), zeros(Float64, 4, 4, 2), zeros(Float64, 4, 3, 3))
+    @test_throws DimensionMismatch FaceIndexedFluxState{DryBasis}(
+        zeros(8, 2), zeros(4, 2))
+
+    mesh = CubedSphereMesh(; FT=Float64, Nc=2, Hp=1)
+    n = mesh.Nc + 2 * mesh.Hp
+    panels_air = ntuple(_ -> ones(Float64, n, n, 2), 6)
+    panels_raw = ntuple(_ -> zeros(Float64, n, n, 2, 1), 6)
+    @test CubedSphereState(
+        DryBasis, panels_air, panels_raw, (:CO2,); halo_width=1).halo_width == 1
+    bad_panels_raw = ntuple(p -> zeros(Float64, n, n, p == 6 ? 1 : 2, 1), 6)
+    @test_throws DimensionMismatch CubedSphereState(
+        DryBasis, panels_air, bad_panels_raw, (:CO2,); halo_width=1)
+    @test_throws DimensionMismatch CubedSphereState(
+        DryBasis, panels_air, panels_raw, (:CO2,); halo_width=2)
+
+    mixed_met = AtmosTransport.State.MetState(
+        ones(Float64, 4, 3), ones(Float32, 4, 3, 2))
+    @test eltype(mixed_met.ps) === Float64
+    @test eltype(mixed_met.q) === Float32
+end
+
 @testset "Abstract grid contracts fail with actionable errors" begin
     mesh = _IncompleteHorizontalMesh()
     smesh = _IncompleteStructuredMesh()
@@ -317,6 +356,15 @@ end
     panels_rm = ntuple(_ -> fill(FT(400e-6), N, N, Nz), 6)
     cs_state = CubedSphereState(DryBasis, mesh, panels_m; CO2=panels_rm)
     cs_fluxes = allocate_face_fluxes(mesh, Nz; FT=FT, basis=DryBasis)
+
+    ws_a = AtmosTransport.Operators.Advection.CSAdvectionWorkspace(mesh, Nz)
+    ws_b = AtmosTransport.Operators.Advection.CSAdvectionWorkspace(mesh, Nz)
+    AtmosTransport.Operators.Advection._record_cs_subcycle_growth!(ws_a, 2, 3, 4)
+    @test ws_a.max_subcycles[] == (2, 3, 4)
+    @test ws_b.max_subcycles[] == (1, 1, 1)
+    ws_adapted = Adapt.adapt(Array, ws_a)
+    @test ws_adapted.max_subcycles[] == ws_a.max_subcycles[]
+    @test ws_adapted.max_subcycles !== ws_a.max_subcycles
 
     m0 = total_air_mass(cs_state)
     rm0 = total_mass(cs_state, :CO2)

@@ -99,6 +99,21 @@ julia> flux_basis(moist)
 MoistBasis()
 ```
 """
+function _validate_structured_flux_storage(am, bm, cm)
+    all(array -> ndims(array) == 3, (am, bm, cm)) || throw(DimensionMismatch(
+        "StructuredFaceFluxState fields must all be rank 3"))
+    expected_am = (size(cm, 1) + 1, size(cm, 2), size(cm, 3) - 1)
+    expected_bm = (size(cm, 1), size(cm, 2) + 1, size(cm, 3) - 1)
+    size(am) == expected_am || throw(DimensionMismatch(
+        "StructuredFaceFluxState am has shape $(size(am)); expected $(expected_am) from cm"))
+    size(bm) == expected_bm || throw(DimensionMismatch(
+        "StructuredFaceFluxState bm has shape $(size(bm)); expected $(expected_bm) from cm"))
+    eltype(am) === eltype(cm) && eltype(bm) === eltype(cm) || throw(ArgumentError(
+        "StructuredFaceFluxState fields must share one element type; got " *
+        "$(eltype(am)), $(eltype(bm)), and $(eltype(cm))"))
+    return nothing
+end
+
 struct StructuredFaceFluxState{Basis <: AbstractMassBasis,
                                 AX <: AbstractArray,
                                 AY <: AbstractArray,
@@ -106,6 +121,14 @@ struct StructuredFaceFluxState{Basis <: AbstractMassBasis,
     am :: AX
     bm :: AY
     cm :: AZ
+
+    function StructuredFaceFluxState{Basis, AX, AY, AZ}(
+            am::AX, bm::AY, cm::AZ) where
+            {Basis <: AbstractMassBasis, AX <: AbstractArray,
+             AY <: AbstractArray, AZ <: AbstractArray}
+        _validate_structured_flux_storage(am, bm, cm)
+        return new{Basis, AX, AY, AZ}(am, bm, cm)
+    end
 end
 
 function StructuredFaceFluxState{B}(am::AX, bm::AY, cm::AZ) where {B <: AbstractMassBasis,
@@ -150,11 +173,32 @@ If a future mesh requires non-columnar vertical connectivity, define a new
 concrete subtype of `AbstractUnstructuredFaceFluxState` with different storage —
 the abstract hierarchy supports this without breaking existing code.
 """
+function _validate_face_indexed_flux_storage(horizontal_flux, cm)
+    ndims(horizontal_flux) == 2 || throw(DimensionMismatch(
+        "FaceIndexedFluxState horizontal_flux must be rank 2, got shape $(size(horizontal_flux))"))
+    ndims(cm) == 2 || throw(DimensionMismatch(
+        "FaceIndexedFluxState cm must be rank 2, got shape $(size(cm))"))
+    size(cm, 2) == size(horizontal_flux, 2) + 1 || throw(DimensionMismatch(
+        "FaceIndexedFluxState cm must have one more vertical interface than " *
+        "horizontal_flux levels; got $(size(cm, 2)) and $(size(horizontal_flux, 2))"))
+    eltype(horizontal_flux) === eltype(cm) || throw(ArgumentError(
+        "FaceIndexedFluxState fields must share one element type; got " *
+        "$(eltype(horizontal_flux)) and $(eltype(cm))"))
+    return nothing
+end
+
 struct FaceIndexedFluxState{Basis <: AbstractMassBasis,
                              A <: AbstractArray,
                              AZ <: AbstractArray} <: AbstractUnstructuredFaceFluxState{Basis}
     horizontal_flux :: A
     cm              :: AZ
+
+    function FaceIndexedFluxState{Basis, A, AZ}(
+            horizontal_flux::A, cm::AZ) where
+            {Basis <: AbstractMassBasis, A <: AbstractArray, AZ <: AbstractArray}
+        _validate_face_indexed_flux_storage(horizontal_flux, cm)
+        return new{Basis, A, AZ}(horizontal_flux, cm)
+    end
 end
 
 """
@@ -164,6 +208,26 @@ Panel-native structured-directional flux storage for cubed-sphere transport.
 Each field is an `NTuple{6}` of halo-padded panel arrays matching the
 `strang_split_cs!` contract.
 """
+function _validate_cs_flux_storage(am, bm, cm)
+    all(panel -> ndims(panel) == 3, (am..., bm..., cm...)) ||
+        throw(DimensionMismatch(
+            "CubedSphereFaceFluxState panels must all be rank 3"))
+    reference_cm = size(cm[1])
+    all(panel -> size(panel) == reference_cm, cm) || throw(DimensionMismatch(
+        "CubedSphereFaceFluxState cm panels must have identical shapes"))
+    expected_am = (reference_cm[1] + 1, reference_cm[2], reference_cm[3] - 1)
+    expected_bm = (reference_cm[1], reference_cm[2] + 1, reference_cm[3] - 1)
+    all(panel -> size(panel) == expected_am, am) || throw(DimensionMismatch(
+        "CubedSphereFaceFluxState am panels must all have shape $(expected_am)"))
+    all(panel -> size(panel) == expected_bm, bm) || throw(DimensionMismatch(
+        "CubedSphereFaceFluxState bm panels must all have shape $(expected_bm)"))
+    reference_eltype = eltype(cm[1])
+    all(panel -> eltype(panel) === reference_eltype, (am..., bm..., cm...)) ||
+        throw(ArgumentError(
+            "CubedSphereFaceFluxState panels must share one element type"))
+    return nothing
+end
+
 struct CubedSphereFaceFluxState{Basis <: AbstractMassBasis,
                                 AX <: AbstractArray,
                                 AY <: AbstractArray,
@@ -171,6 +235,14 @@ struct CubedSphereFaceFluxState{Basis <: AbstractMassBasis,
     am :: NTuple{6, AX}
     bm :: NTuple{6, AY}
     cm :: NTuple{6, AZ}
+
+    function CubedSphereFaceFluxState{Basis, AX, AY, AZ}(
+            am::NTuple{6, AX}, bm::NTuple{6, AY}, cm::NTuple{6, AZ}) where
+            {Basis <: AbstractMassBasis, AX <: AbstractArray,
+             AY <: AbstractArray, AZ <: AbstractArray}
+        _validate_cs_flux_storage(am, bm, cm)
+        return new{Basis, AX, AY, AZ}(am, bm, cm)
+    end
 end
 
 function CubedSphereFaceFluxState{B}(am::NTuple{6}, bm::NTuple{6}, cm::NTuple{6}) where {B <: AbstractMassBasis}

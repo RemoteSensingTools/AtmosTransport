@@ -26,10 +26,6 @@
 
 using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend, CPU as KA_CPU
 
-# Track max (n_x, n_y, n_z) across the run; emit one @info line each time
-# any component grows. Quiet on stable flows, surfaces CFL hotspots early.
-const _STRANG_CS_MAX_SUB = Ref((1, 1, 1))
-
 # =========================================================================
 # CS panel sweep kernels
 #
@@ -887,6 +883,8 @@ Pre-allocated cubed-sphere transport workspace.
   ping-pong path, avoiding the per-sweep copy-back kernels.
 - `w_scratch`, `dz_scratch` are panel-native column-operator workspaces
   with one structured `(Nc, Nc, Nz)` scratch array per panel.
+- `max_subcycles` tracks this workspace's high-water mark for CFL diagnostics;
+  keeping it with the workspace prevents unrelated simulations sharing state.
 """
 struct CSAdvectionWorkspace{FT, A <: AbstractArray{FT, 3},
                             S <: NTuple{6, <:AbstractArray{FT, 3}},
@@ -900,6 +898,7 @@ struct CSAdvectionWorkspace{FT, A <: AbstractArray{FT, 3},
     rm_4d_A    :: A4
     m_pp_buf   :: P3
     rm_4d_pp_buf :: P4
+    max_subcycles :: Base.RefValue{NTuple{3, Int}}
 end
 
 function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
@@ -921,7 +920,8 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
     return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf)}(
-        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A, m_pp_buf, rm_4d_pp_buf)
+        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A, m_pp_buf, rm_4d_pp_buf,
+        Ref((1, 1, 1)))
 end
 
 function CSAdvectionWorkspace(mesh::CubedSphereMesh,
@@ -943,7 +943,8 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh,
     return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf)}(
-        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A, m_pp_buf, rm_4d_pp_buf)
+        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A, m_pp_buf, rm_4d_pp_buf,
+        Ref((1, 1, 1)))
 end
 
 function Adapt.adapt_structure(to, ws::CSAdvectionWorkspace{FT}) where FT
@@ -957,7 +958,18 @@ function Adapt.adapt_structure(to, ws::CSAdvectionWorkspace{FT}) where FT
     return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf)}(
-        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A, m_pp_buf, rm_4d_pp_buf)
+        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A, m_pp_buf, rm_4d_pp_buf,
+        Ref(ws.max_subcycles[]))
+end
+
+@inline function _record_cs_subcycle_growth!(workspace::CSAdvectionWorkspace,
+                                              n_x::Int, n_y::Int, n_z::Int)
+    mx, my, mz = workspace.max_subcycles[]
+    if n_x > mx || n_y > my || n_z > mz
+        workspace.max_subcycles[] = (max(mx, n_x), max(my, n_y), max(mz, n_z))
+        @info "strang_split_cs! subcycle count grew" n_x n_y n_z
+    end
+    return nothing
 end
 
 # =========================================================================
@@ -1199,12 +1211,7 @@ function strang_split_cs!(panels_rm::NTuple{6},
     n_y = n_pal
     n_z = n_pal
 
-    let (mx, my, mz) = _STRANG_CS_MAX_SUB[]
-        if n_x > mx || n_y > my || n_z > mz
-            _STRANG_CS_MAX_SUB[] = (max(mx, n_x), max(my, n_y), max(mz, n_z))
-            @info "strang_split_cs! subcycle count grew" n_x n_y n_z
-        end
-    end
+    _record_cs_subcycle_growth!(workspace, n_x, n_y, n_z)
 
     fs_x = fs / FT(n_x)
     fs_y = fs / FT(n_y)
@@ -1340,12 +1347,7 @@ function _strang_split_cs_mt_copyback!(panels_rm_4d::NTuple{6},
     n_y = n_pal
     n_z = n_pal
 
-    let (mx, my, mz) = _STRANG_CS_MAX_SUB[]
-        if n_x > mx || n_y > my || n_z > mz
-            _STRANG_CS_MAX_SUB[] = (max(mx, n_x), max(my, n_y), max(mz, n_z))
-            @info "strang_split_cs! subcycle count grew" n_x n_y n_z
-        end
-    end
+    _record_cs_subcycle_growth!(workspace, n_x, n_y, n_z)
 
     fs_x = fs / FT(n_x)
     fs_y = fs / FT(n_y)
@@ -1482,12 +1484,7 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
     n_y = n_pal
     n_z = n_pal
 
-    let (mx, my, mz) = _STRANG_CS_MAX_SUB[]
-        if n_x > mx || n_y > my || n_z > mz
-            _STRANG_CS_MAX_SUB[] = (max(mx, n_x), max(my, n_y), max(mz, n_z))
-            @info "strang_split_cs! subcycle count grew" n_x n_y n_z
-        end
-    end
+    _record_cs_subcycle_growth!(workspace, n_x, n_y, n_z)
 
     fs_x = fs / FT(n_x)
     fs_y = fs / FT(n_y)

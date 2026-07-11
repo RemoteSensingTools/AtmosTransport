@@ -76,7 +76,7 @@ using ...SectionTimer
 using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
-using ..Grids: nlevels
+using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, nlevels
 using ..Operators: LinRoodPPMScheme, PPMScheme, SlopesScheme, UpwindScheme,
                   ImplicitVerticalDiffusion,
                   uses_diffusive_surface_flux_boundary,
@@ -587,12 +587,37 @@ end
 # in-tree uses MoistBasis, so no behaviour change for shipped configs.
 # ===========================================================================
 
+function _allocate_structured_runner_fluxes(mesh::LatLonMesh, Nz::Int, FT, basis)
+    return allocate_face_fluxes(mesh, Nz; FT = FT, basis = basis)
+end
+
+function _allocate_structured_runner_fluxes(mesh::ReducedGaussianMesh, Nz::Int, FT, basis)
+    return allocate_face_fluxes(mesh, Nz; FT = FT, basis = basis)
+end
+
+function _allocate_structured_runner_fluxes(mesh, _Nz::Int, _FT, _basis)
+    throw(ArgumentError(
+        "TransportBinaryDriver model construction requires a lat-lon or " *
+        "reduced-Gaussian grid; got $(typeof(mesh))"))
+end
+
+function _allocate_cs_runner_fluxes(mesh::CubedSphereMesh, Nz::Int, FT, basis)
+    return allocate_face_fluxes(mesh, Nz; FT = FT, basis = basis)
+end
+
+function _allocate_cs_runner_fluxes(mesh, _Nz::Int, _FT, _basis)
+    throw(ArgumentError(
+        "CubedSphereTransportDriver returned incompatible horizontal grid " *
+        "$(typeof(mesh)); expected CubedSphereMesh"))
+end
+
 function _make_structured_model(driver::TransportBinaryDriver;
                                 FT::Type{<:AbstractFloat},
                                 recipe,
                                 tracer_specs,
                                 cfg)
     grid = driver_grid(driver)
+    mesh = grid.horizontal
     window = load_transport_window(driver, 1)
     air_mass = copy(window.air_mass)
 
@@ -612,8 +637,8 @@ function _make_structured_model(driver::TransportBinaryDriver;
 
     tracer_tuple = NamedTuple{tracer_names_tup}(Tuple(rm_arrays))
     state = CellState(basis_type, air_mass; tracer_tuple...)
-    fluxes = allocate_face_fluxes(grid.horizontal, nlevels(grid);
-                                  FT = FT, basis = basis_type)
+    fluxes = _allocate_structured_runner_fluxes(
+        mesh, nlevels(grid), FT, basis_type)
     model = TransportModel(state, fluxes, grid, recipe.advection;
                            diffusion = recipe.diffusion,
                            convection = recipe.convection,
@@ -1192,7 +1217,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
     end
 
     state  = CubedSphereState(BasisT, mesh, air_mass; tracer_kwargs...)
-    fluxes = allocate_face_fluxes(mesh, Nz; FT = FT, basis = BasisT)
+    fluxes = _allocate_cs_runner_fluxes(mesh, Nz, FT, BasisT)
 
     # Build the CS physics object. The recipe-selected operators are installed
     # on the model here; the kernels start running later in the `step!(sim)`
@@ -1295,7 +1320,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
         # handoff is continuity-consistent. We rebuild the
         # sim around each day's driver; state + physics carry over.
         if driver_idx != 1
-            fluxes_d = allocate_face_fluxes(mesh, Nz; FT = FT, basis = BasisT)
+            fluxes_d = _allocate_cs_runner_fluxes(mesh, Nz, FT, BasisT)
             # Match the device of the already-adapted `state`: on GPU runs
             # the freshly-allocated fluxes start as CPU Arrays and would
             # mix types with GPU tracers otherwise. `invokelatest` guards

@@ -20,6 +20,7 @@ export runtime_backend_from_config, autodetect_gpu_backend, is_gpu_backend
 export ensure_backend_runtime!, backend_array_adapter, backend_label
 export backend_device_name, backend_name, synchronize_backend!
 export array_adapter_for, assert_backend_residency!, assert_backend_float_type!
+export reclaim_backend_pool!
 
 abstract type AbstractArchitecture end
 
@@ -72,19 +73,22 @@ backend_name(::CPUBackend) = :cpu
 backend_name(::CUDAGPUBackend) = :cuda
 backend_name(::MetalGPUBackend) = :metal
 
-_runtime_module(name::Symbol) = Base.invokelatest(getfield, Main, name)
+const _RUNTIME_PACKAGE_IDS = (
+    CUDA = Base.PkgId(Base.UUID("052768ef-5323-5732-b1bb-66c8b64840ba"), "CUDA"),
+    Metal = Base.PkgId(Base.UUID("dde4c033-4e86-420c-a63e-0dd931031962"), "Metal"),
+)
 
 function _load_runtime_package!(name::Symbol)
-    if !isdefined(Main, name)
-        if name === :CUDA
-            Core.eval(Main, :(using CUDA))
-        elseif name === :Metal
-            Core.eval(Main, :(using Metal))
-        else
-            throw(ArgumentError("unsupported runtime package $(name)"))
-        end
+    hasproperty(_RUNTIME_PACKAGE_IDS, name) ||
+        throw(ArgumentError("unsupported runtime package $(name)"))
+    pkgid = getproperty(_RUNTIME_PACKAGE_IDS, name)
+    try
+        return Base.require(pkgid)
+    catch err
+        throw(ArgumentError(
+            "$(name) backend requested, but $(name).jl could not be loaded from " *
+            "the active environment: $(sprint(showerror, err))"))
     end
-    return _runtime_module(name)
 end
 
 _backend_from_symbol(::Val{:cpu}) = CPUBackend()
@@ -142,7 +146,7 @@ function autodetect_gpu_backend()
 
     failures = String[]
     for backend in candidates
-        if backend isa MetalGPUBackend && !Sys.isapple() && !isdefined(Main, :Metal)
+        if backend isa MetalGPUBackend && !Sys.isapple()
             continue
         end
         ok, err = _try_backend!(backend)
@@ -187,26 +191,26 @@ backend_array_adapter(::CPUBackend) = Array
 
 function backend_array_adapter(backend::CUDAGPUBackend)
     ensure_backend_runtime!(backend)
-    return getproperty(_runtime_module(:CUDA), :CuArray)
+    return getproperty(_load_runtime_package!(:CUDA), :CuArray)
 end
 
 function backend_array_adapter(backend::MetalGPUBackend)
     ensure_backend_runtime!(backend)
-    return getproperty(_runtime_module(:Metal), :MtlArray)
+    return getproperty(_load_runtime_package!(:Metal), :MtlArray)
 end
 
 backend_device_name(::CPUBackend) = "CPU"
 
 function backend_device_name(backend::CUDAGPUBackend)
     ensure_backend_runtime!(backend)
-    CUDA = _runtime_module(:CUDA)
+    CUDA = _load_runtime_package!(:CUDA)
     return string(Base.invokelatest(getproperty(CUDA, :name),
                                     Base.invokelatest(getproperty(CUDA, :device))))
 end
 
 function backend_device_name(backend::MetalGPUBackend)
     ensure_backend_runtime!(backend)
-    Metal = _runtime_module(:Metal)
+    Metal = _load_runtime_package!(:Metal)
     dev = isdefined(Metal, :device) ?
           Base.invokelatest(getproperty(Metal, :device)) :
           nothing
@@ -222,13 +226,13 @@ synchronize_backend!(::CPUBackend) = nothing
 
 function synchronize_backend!(backend::CUDAGPUBackend)
     ensure_backend_runtime!(backend)
-    Base.invokelatest(getproperty(_runtime_module(:CUDA), :synchronize))
+    Base.invokelatest(getproperty(_load_runtime_package!(:CUDA), :synchronize))
     return nothing
 end
 
 function synchronize_backend!(backend::MetalGPUBackend)
     ensure_backend_runtime!(backend)
-    Metal = _runtime_module(:Metal)
+    Metal = _load_runtime_package!(:Metal)
     if isdefined(Metal, :synchronize)
         Base.invokelatest(getproperty(Metal, :synchronize))
     else
@@ -239,20 +243,26 @@ end
 
 function array_adapter_for(reference_array)
     ref = reference_array isa Tuple ? reference_array[1] : reference_array
-    if isdefined(Main, :CUDA)
-        CUDA = _runtime_module(:CUDA)
-        if isdefined(CUDA, :AbstractGPUArray)
-            AbstractGPUArray = getproperty(CUDA, :AbstractGPUArray)
-            ref isa AbstractGPUArray && return getproperty(CUDA, :CuArray)
-        end
-    end
-    if isdefined(Main, :Metal)
-        Metal = _runtime_module(:Metal)
-        MtlArray = getproperty(Metal, :MtlArray)
-        ref isa MtlArray && return MtlArray
-    end
-    return Array
+    # Optional-package extensions may have loaded after this caller was
+    # compiled, so cross the world-age boundary at this single startup lookup.
+    return Base.invokelatest(_array_adapter_for, ref)
 end
+
+_array_adapter_for(::Any) = Array
+
+"""
+    reclaim_backend_pool!(reference_array)
+
+Release backend allocator caches associated with `reference_array` after
+startup transients become unreachable. CPU arrays are a no-op; optional GPU
+extensions provide device-specific methods without inspecting `Main`.
+"""
+function reclaim_backend_pool!(reference_array)
+    ref = reference_array isa Tuple ? reference_array[1] : reference_array
+    return Base.invokelatest(_reclaim_backend_pool!, ref)
+end
+
+_reclaim_backend_pool!(::Any) = nothing
 
 _is_backend_array(::CPUBackend, backing) = backing isa Array
 

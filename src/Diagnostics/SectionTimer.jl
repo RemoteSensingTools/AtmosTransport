@@ -23,13 +23,15 @@ using Printf
 _nvtx_start(_) = nothing
 _nvtx_end(_) = nothing
 
-const _ENABLED = Ref(false)
-const _ALLOC_ENABLED = Ref(false)
-const _NVTX_ENABLED = Ref(false)
+const _ENABLED = Threads.Atomic{Bool}(false)
+const _ALLOC_ENABLED = Threads.Atomic{Bool}(false)
+const _NVTX_ENABLED = Threads.Atomic{Bool}(false)
+const _EPOCH = Threads.Atomic{UInt}(0)
 const _TIMINGS = Dict{Symbol, Vector{Float64}}()
 const _ALLOCATIONS = Dict{Symbol, Vector{Int64}}()
 const _WALL_T0 = Ref{Float64}(0.0)
 const _WALL_TOTAL = Ref{Float64}(0.0)
+const _LOCK = ReentrantLock()
 
 """
     enable!(; timing=true, allocations=false, nvtx=false)
@@ -38,13 +40,19 @@ Reset and turn on. `timing` controls host-side wall-clock accumulation;
 default — under `ATMOSTR_NVTX=1` it is set independently of timing).
 """
 function enable!(; timing::Bool = true, allocations::Bool = false, nvtx::Bool = false)
-    empty!(_TIMINGS)
-    empty!(_ALLOCATIONS)
-    _ENABLED[] = timing
-    _ALLOC_ENABLED[] = allocations
-    _NVTX_ENABLED[] = nvtx
-    _WALL_T0[] = time_ns() / 1e9
-    _WALL_TOTAL[] = 0.0
+    _ENABLED[] = false
+    _ALLOC_ENABLED[] = false
+    _NVTX_ENABLED[] = false
+    lock(_LOCK) do
+        _EPOCH[] = _EPOCH[] + UInt(1)
+        empty!(_TIMINGS)
+        empty!(_ALLOCATIONS)
+        _WALL_T0[] = time_ns() / 1e9
+        _WALL_TOTAL[] = 0.0
+        _ALLOC_ENABLED[] = allocations
+        _NVTX_ENABLED[] = nvtx
+        _ENABLED[] = timing
+    end
     return nothing
 end
 
@@ -54,23 +62,46 @@ Stop accumulating; existing samples remain in `_TIMINGS` until `enable!`
 is called again.
 """
 function disable!()
-    _WALL_TOTAL[] = (time_ns() / 1e9) - _WALL_T0[]
     _ENABLED[] = false
     _ALLOC_ENABLED[] = false
     _NVTX_ENABLED[] = false
+    lock(_LOCK) do
+        _EPOCH[] = _EPOCH[] + UInt(1)
+        _WALL_TOTAL[] = (time_ns() / 1e9) - _WALL_T0[]
+    end
     return nothing
 end
 
 is_enabled() = _ENABLED[]
 
 @inline function record_sample!(section::Symbol, ns::Float64, bytes::Int64 = Int64(0))
-    samples = get!(() -> Float64[], _TIMINGS, section)
-    push!(samples, ns)
-    if _ALLOC_ENABLED[]
-        allocs = get!(() -> Int64[], _ALLOCATIONS, section)
-        push!(allocs, bytes)
+    epoch = _EPOCH[]
+    record_allocations = _ALLOC_ENABLED[]
+    return _record_sample!(section, ns, bytes, epoch, record_allocations)
+end
+
+@inline function _record_sample!(section::Symbol, ns::Float64, bytes::Int64,
+                                 epoch::UInt, record_allocations::Bool)
+    lock(_LOCK) do
+        (_ENABLED[] && _EPOCH[] == epoch) || return nothing
+        samples = get!(() -> Float64[], _TIMINGS, section)
+        push!(samples, ns)
+        if record_allocations
+            allocs = get!(() -> Int64[], _ALLOCATIONS, section)
+            push!(allocs, bytes)
+        end
     end
     return nothing
+end
+
+function _timer_snapshot()
+    return lock(_LOCK) do
+        timings = Dict(section => copy(samples) for (section, samples) in _TIMINGS)
+        allocations = Dict(section => copy(samples) for (section, samples) in _ALLOCATIONS)
+        wall_t0 = _WALL_T0[]
+        wall_total = _WALL_TOTAL[]
+        (; timings, allocations, wall_t0, wall_total)
+    end
 end
 
 """
@@ -78,15 +109,17 @@ end
 Time `expr` and accumulate the elapsed nanoseconds under `name` (a
 `Symbol`). When `ATMOSTR_NVTX=1`, also emits an NVTX range labeled with
 `name`. When everything is off the macro just executes `expr` with
-zero overhead beyond a single `Ref` load.
+zero overhead beyond a single atomic flag load.
 """
 macro section(name, expr)
     nvtx_label = name isa QuoteNode ? String(name.value) : "section"
     timed = quote
+        local _timer_epoch = _EPOCH[]
         if _ENABLED[]
             local _t0 = time_ns()
             local _result
-            local _bytes = if _ALLOC_ENABLED[]
+            local _record_allocations = _ALLOC_ENABLED[]
+            local _bytes = if _record_allocations
                 Int64(Base.@allocated begin
                     _result = $(esc(expr))
                 end)
@@ -94,7 +127,8 @@ macro section(name, expr)
                 _result = $(esc(expr))
                 Int64(0)
             end
-            record_sample!($(esc(name)), Float64(time_ns() - _t0), _bytes)
+            _record_sample!($(esc(name)), Float64(time_ns() - _t0), _bytes,
+                            _timer_epoch, _record_allocations)
             _result
         else
             $(esc(expr))
@@ -115,16 +149,20 @@ macro section(name, expr)
 end
 
 @inline function _time_section_inner(f, name::Symbol)
+    epoch = _EPOCH[]
     _ENABLED[] || return f()
     t0 = time_ns()
-    if _ALLOC_ENABLED[]
+    record_allocations = _ALLOC_ENABLED[]
+    if record_allocations
         local result
         bytes = Int64(Base.@allocated (result = f()))
-        record_sample!(name, Float64(time_ns() - t0), bytes)
+        _record_sample!(name, Float64(time_ns() - t0), bytes,
+                        epoch, record_allocations)
         return result
     else
         result = f()
-        record_sample!(name, Float64(time_ns() - t0), Int64(0))
+        _record_sample!(name, Float64(time_ns() - t0), Int64(0),
+                        epoch, record_allocations)
         return result
     end
 end
@@ -171,14 +209,18 @@ of section totals (not over wall-clock — a section can overlap none, so covera
 is reported separately).
 """
 function report(io::IO = stderr)
-    isempty(_TIMINGS) && (println(io, "[SectionTimer] no samples"); return)
-    section_total_ns = sum(sum(v) for v in values(_TIMINGS); init=0.0)
-    section_total_alloc = sum(sum(v) for v in values(_ALLOCATIONS); init=Int64(0))
-    wall_s = _WALL_TOTAL[] > 0 ? _WALL_TOTAL[] : (time_ns() / 1e9 - _WALL_T0[])
+    snapshot = _timer_snapshot()
+    timings = snapshot.timings
+    allocations = snapshot.allocations
+    isempty(timings) && (println(io, "[SectionTimer] no samples"); return)
+    section_total_ns = sum(sum(v) for v in values(timings); init=0.0)
+    section_total_alloc = sum(sum(v) for v in values(allocations); init=Int64(0))
+    wall_s = snapshot.wall_total > 0 ? snapshot.wall_total :
+             (time_ns() / 1e9 - snapshot.wall_t0)
     @printf(io, "[SectionTimer] wall=%.2fs  covered=%.2fs (%.1f%%)\n",
             wall_s, section_total_ns / 1e9,
             wall_s > 0 ? 100 * (section_total_ns / 1e9) / wall_s : 0.0)
-    if !isempty(_ALLOCATIONS)
+    if !isempty(allocations)
         @printf(io, "[SectionTimer] allocated=%.3f MiB\n",
                 section_total_alloc / 2.0^20)
         @printf(io, "%-30s %8s %10s %10s %10s %10s %10s %8s %12s %12s\n",
@@ -189,11 +231,11 @@ function report(io::IO = stderr)
                 "section", "n_calls", "total_s", "mean_ms", "p50_ms",
                 "p95_ms", "max_ms", "frac%")
     end
-    for (sec, samples) in sort(collect(_TIMINGS); by = p -> -sum(p.second))
+    for (sec, samples) in sort(collect(timings); by = p -> -sum(p.second))
         n, total_s, mean_ms, p50_ms, p95_ms, max_ms = _summary_row(samples)
         frac = 100 * (sum(samples) / max(section_total_ns, eps()))
-        if !isempty(_ALLOCATIONS)
-            alloc = sum(get(_ALLOCATIONS, sec, Int64[]))
+        if !isempty(allocations)
+            alloc = sum(get(allocations, sec, Int64[]))
             mean_kib = n == 0 ? 0.0 : alloc / n / 2.0^10
             @printf(io, "%-30s %8d %10.3f %10.3f %10.3f %10.3f %10.3f %8.2f %12.3f %12.3f\n",
                     String(sec), n, total_s, mean_ms, p50_ms, p95_ms, max_ms, frac,
@@ -213,15 +255,18 @@ Emit the same summary as `report` to a CSV at `path`. Header:
 Returns the path on success, or `nothing` if there are no samples.
 """
 function write_csv(path::AbstractString)
-    isempty(_TIMINGS) && return nothing
-    section_total_ns = sum(sum(v) for v in values(_TIMINGS); init=0.0)
+    snapshot = _timer_snapshot()
+    timings = snapshot.timings
+    allocations = snapshot.allocations
+    isempty(timings) && return nothing
+    section_total_ns = sum(sum(v) for v in values(timings); init=0.0)
     mkpath(dirname(abspath(path)))
     open(path, "w") do io
         println(io, "section,n_calls,total_s,mean_ms,p50_ms,p95_ms,max_ms,fraction_of_total,allocated_bytes,mean_alloc_bytes")
-        for (sec, samples) in sort(collect(_TIMINGS); by = p -> -sum(p.second))
+        for (sec, samples) in sort(collect(timings); by = p -> -sum(p.second))
             n, total_s, mean_ms, p50_ms, p95_ms, max_ms = _summary_row(samples)
             frac = sum(samples) / max(section_total_ns, eps())
-            alloc = sum(get(_ALLOCATIONS, sec, Int64[]))
+            alloc = sum(get(allocations, sec, Int64[]))
             mean_alloc = n == 0 ? 0.0 : alloc / n
             @printf(io, "%s,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%.3f\n",
                     String(sec), n, total_s, mean_ms, p50_ms, p95_ms, max_ms, frac,

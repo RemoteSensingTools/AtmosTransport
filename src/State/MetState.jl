@@ -21,13 +21,13 @@ Container for meteorological fields upstream of the transport core.
 Transport operators never receive MetState directly. It is consumed by
 `build_dry_fluxes!` to produce `AbstractFaceFluxState` and `CellState.air_dry_mass`.
 """
-struct MetState{PA <: AbstractArray, QA <: AbstractArray, M}
+struct MetState{PA <: AbstractArray, QA <: AbstractArray, M <: NamedTuple}
     ps      :: PA
     q       :: QA
     metvars :: M
 
     function MetState(ps::PA, q::QA, metvars::M) where
-            {PA <: AbstractArray, QA <: AbstractArray, M}
+            {PA <: AbstractArray, QA <: AbstractArray, M <: NamedTuple}
         ndims(q) == ndims(ps) + 1 || throw(DimensionMismatch(
             "MetState q must have exactly one more dimension than ps; got ndims(ps)=$(ndims(ps)), ndims(q)=$(ndims(q))"))
         size(q)[1:ndims(ps)] == size(ps) || throw(DimensionMismatch(

@@ -475,19 +475,7 @@ function _reclaim_backend_pool_after_startup!(model_air_mass)
     # conditions and first-window forcing. They are dead before the run loop,
     # but CUDA.jl's pool keeps them reserved unless we explicitly trim it.
     GC.gc(false)
-    if isdefined(Main, :CUDA)
-        CUDA = getproperty(Main, :CUDA)
-        if isdefined(CUDA, :synchronize)
-            Base.invokelatest(getproperty(CUDA, :synchronize))
-        end
-        if isdefined(CUDA, :reclaim)
-            Base.invokelatest(getproperty(CUDA, :reclaim))
-        end
-    elseif isdefined(Main, :Metal)
-        Metal = getproperty(Main, :Metal)
-        isdefined(Metal, :synchronize) &&
-            Base.invokelatest(getproperty(Metal, :synchronize))
-    end
+    reclaim_backend_pool!(model_air_mass)
     return nothing
 end
 

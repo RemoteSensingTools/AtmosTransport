@@ -20,6 +20,11 @@ const Runner = AtmosTransport.Models.DrivenRunner
     @test_throws ArgumentError Arch.runtime_backend_from_config(Dict("use_gpu" => true,
                                                                       "backend" => "cpu"))
     @test_throws ArgumentError Arch.runtime_backend_from_config(Dict("backend" => "rocm"))
+
+    architecture_source = read(joinpath(@__DIR__, "..", "..", "src", "Architectures.jl"), String)
+    driven_source = read(joinpath(@__DIR__, "..", "..", "src", "Models", "DrivenSimulation.jl"), String)
+    @test !occursin(r"\bisdefined\(Main|\bgetproperty\(Main|Core\.eval\(Main", architecture_source)
+    @test !occursin(r"\bisdefined\(Main|\bgetproperty\(Main|Core\.eval\(Main", driven_source)
 end
 
 @testset "Metal requires Float32" begin

@@ -154,14 +154,13 @@ containing `GEOSFP.YYYYMMDD.{A1,A3mstE,A3dyn}.025x03125.nc` files (or
 pre-regridded CS equivalents) and the preprocessor embeds `PBLH`,
 `USTAR`, `HFLUX`, `T2M`, `CMFMC`, and `DTRAIN` in the transport binary.
 
-**MERRA-2.** Descriptor stub at `config/met_sources/merra2.toml`,
-but MERRA-2 is **not** an `AbstractGEOSSettings` preprocessing
-path — it has no native MFXC/MFYC, so the GEOS shortcut doesn't
-apply. A MERRA-2 preprocessing path would need its own settings
-type that derives mass fluxes from U/V/DELP at LL cell centers
-(closer in shape to the spectral path); not implemented today.
-NASA Earthdata Login auth would be required for actual data
-access.
+**MERRA-2.** `MERRA2Settings` and the wind-derived CS writer are implemented.
+They read native 0.5° × 0.625° PS/QV/U/V fields, derive mass fluxes, and write
+CS transport binaries through the canonical preprocessing CLI; see
+`config/preprocessing/merra2_c180_dec2021_f32.toml`. MERRA-2 has no native
+MFXC/MFYC, so this is deliberately separate from `AbstractGEOSSettings`.
+The unified `OPeNDAPProtocol.execute!` downloader is still unavailable, so
+raw files must currently be staged separately with NASA Earthdata credentials.
 
 ## The quickstart bundle
 

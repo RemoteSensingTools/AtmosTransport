@@ -114,39 +114,60 @@ function _print_help(io::IO = stdout)
     return nothing
 end
 
+function _parse_cli(args::Vector{String})
+    if args == ["-h"] || args == ["--help"]
+        return nothing
+    end
+    isempty(args) && throw(ArgumentError("missing required <config.toml>"))
+    length(args) == 1 || throw(ArgumentError(
+        "expected exactly one <config.toml>; got $(length(args)) arguments"))
+    startswith(args[1], "-") && throw(ArgumentError("unknown option: $(args[1])"))
+    cfg_path = expanduser(args[1])
+    isfile(cfg_path) || throw(ArgumentError("Config not found: $cfg_path"))
+    return cfg_path
+end
+
 function main()
     global_logger(ConsoleLogger(stderr, Logging.Info; show_limited = false))
-    if any(arg -> arg in ("-h", "--help"), ARGS)
+    cfg_path = _parse_cli(ARGS)
+    if cfg_path === nothing
         _print_help(stdout)
         return nothing
     end
-    if isempty(ARGS)
-        _print_help(stderr)
-        error("missing required <config.toml>")
-    end
-    cfg_path = expanduser(ARGS[1])
-    isfile(cfg_path) || error("Config not found: $cfg_path")
     cfg = TOML.parsefile(cfg_path)
     return _run_with_optional_profiling(cfg)
 end
 
 # GPU profiling brackets, gated on ATMOSTR_PROFILE_MODE.
-#   "full"   — wrap the entire run in CUDA.@profile; CUPTI activity summary
-#              printed at end. Honors nsys if launched under it.
+#   "full"   — enable CUDA profiling for the entire run.
 #   "window" — spawn an async timer that calls CUDA.Profile.start() after
 #              ATMOSTR_PROFILE_WARMUP_SEC and CUDA.Profile.stop() +
 #              process exit after ATMOSTR_PROFILE_DUR_SEC. Used with
 #              `nsys profile -c cudaProfilerApi --capture-range-end=stop`.
 #   ""       — unchanged.
+const _CUDA_PKGID = Base.PkgId(
+    Base.UUID("052768ef-5323-5732-b1bb-66c8b64840ba"), "CUDA")
+
+_loaded_cuda_module() = get(Base.loaded_modules, _CUDA_PKGID, nothing)
+
+function _profile_full_run(CUDA, cfg)
+    run = () -> run_driven_simulation(cfg)
+    if CUDA.Profile.detect_cupti()
+        @info "CUDA session is already externally profiled; using external collection"
+        return CUDA.Profile.profile_externally(run)
+    end
+    return CUDA.Profile.profile_internally(run)
+end
+
 function _run_with_optional_profiling(cfg)
     mode = lowercase(get(ENV, "ATMOSTR_PROFILE_MODE", ""))
-    if mode == "" || !isdefined(Main, :CUDA)
+    CUDA = _loaded_cuda_module()
+    if mode == "" || CUDA === nothing
         return run_driven_simulation(cfg)
     end
-    CUDA = getfield(Main, :CUDA)
     if mode == "full"
-        @info "ATMOSTR_PROFILE_MODE=full → CUDA.@profile wrap of full run"
-        return CUDA.@profile run_driven_simulation(cfg)
+        @info "ATMOSTR_PROFILE_MODE=full → CUDA activity profile of full run"
+        return _profile_full_run(CUDA, cfg)
     elseif mode == "window"
         warmup = parse(Float64, get(ENV, "ATMOSTR_PROFILE_WARMUP_SEC", "120"))
         dur    = parse(Float64, get(ENV, "ATMOSTR_PROFILE_DUR_SEC", "60"))

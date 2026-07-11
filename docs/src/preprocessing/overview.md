@@ -64,12 +64,14 @@ flowchart LR
 | **Spectral ERA5** | ✅ unified driver | ✅ unified driver | ✅ unified driver |
 | **GEOS-IT native** | — | — | ✅ unified driver (production) |
 | **GEOS-FP native** | — | — | ✅ unified driver |
-| **MERRA-2** | — | — | 📐 planned (declared but `OPeNDAPProtocol.execute!` is a stub) |
+| **MERRA-2 native LL winds** | — | — | 🟡 wind-derived CS writer; raw files staged externally |
 | **LL transport binary → CS** (regrid passthrough) | — | — | 🟡 `regrid_ll_binary_to_cs` (functional; not yet on the unified driver) |
 
-All four production combinations share `run_unified_preprocessor_day!`
-and the typed contract surface. `regrid_ll_binary_to_cs` still owns
-its own loop and is the remaining migration item.
+The source-target implementations share the typed preprocessing contract and
+canonical CLI. The MERRA-2 path uses its dedicated wind-derived CS writer;
+its unified OPeNDAP download execution is not yet wired.
+`regrid_ll_binary_to_cs` still owns its own loop and is the remaining
+migration item.
 
 ## Run from the CLI
 

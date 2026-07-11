@@ -16,9 +16,9 @@ with a clean separation between offline preprocessing and runtime stepping.
 
 - **Multi-grid**: regular lat-lon, reduced Gaussian, cubed-sphere (gnomonic
   and GEOS-native panel conventions).
-- **Multi-source**: ERA5 spectral (vorticity / divergence / log-PS GRIB)
-  and GEOS-IT C180 native NetCDF. (GEOS-FP native is a planned follow-up;
-  the source-axis abstraction is in place.)
+- **Multi-source**: ERA5 spectral (vorticity / divergence / log-PS GRIB),
+  GEOS-IT C180 native NetCDF, GEOS-FP C720 native hourly NetCDF, and a
+  preview MERRA-2 wind-derived cubed-sphere preprocessor.
 - **GPU-portable**: single codebase for CPU, NVIDIA CUDA, and Apple Silicon
   Metal via [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl).
   Metal is restricted to `Float32` runtime numerics.
@@ -46,17 +46,16 @@ AtmosTransport assumes a precomputed mass-flux time series.
 
 ## Where to start
 
-Once the rest of these docs land, the recommended reading order is:
+The recommended reading order is:
 
-1. **[Getting Started](#)** — install, run a tiny example, look at output.
-2. **[Concepts](#)** — grids, state, operators, what the binary contains.
-3. **[Tutorials](#)** — end-to-end runnable examples per grid topology.
-4. **[Theory & Verification](#)** — mass conservation derivation, advection
-   schemes, validation results.
-5. **[Preprocessing](#)** — turning raw met data into a transport binary.
-6. **[API Reference](#)** — full function/type index.
+1. [Installation](getting_started/installation.md) and
+   [Quickstart](getting_started/quickstart.md).
+2. [Concepts](concepts/grids.md) — grids, state, operators, and binaries.
+3. [Preprocessing](preprocessing/overview.md) — raw meteorology to transport binaries.
+4. [Theory and verification](theory/mass_conservation.md).
+5. [API reference](api/index.md).
 
-In the meantime, the most useful entry points in the repository are:
+The most useful repository entry points are:
 
 - `scripts/run_transport.jl` — runtime driver script.
 - `scripts/preprocessing/preprocess_transport_binary.jl` — preprocessing CLI.

@@ -1,251 +1,341 @@
 {
-  "$schema": "http://json-schema.org/draft-04/schema#",
-  "title": "AtmosTransport Run TOML",
-  "description": "Prototype schema for AtmosTransport runtime TOML files. This is intentionally scoped to config/examples while the complete config registry is still being designed.",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AtmosTransport runtime configuration",
+  "description": "Editor schema for TOML files consumed by scripts/run_transport.jl. Topology- and binary-capability checks are performed by the Julia runtime.",
   "type": "object",
+  "required": ["input"],
   "additionalProperties": true,
   "properties": {
     "input": {
-      "type": "object",
-      "description": "Transport-binary input source. Use either an explicit binary_paths list or a folder plus start/end date range.",
-      "additionalProperties": true,
-      "properties": {
-        "binary_paths": {
-          "type": "array",
-          "description": "Explicit list of transport binary files to replay, in chronological order.",
-          "items": {
-            "type": "string"
-          }
+      "description": "Transport binaries to replay. Choose an explicit list or a folder with an inclusive date range.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["binary_paths"],
+          "properties": {
+            "binary_paths": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"type": "string"}
+            }
+          },
+          "not": {"required": ["folder"]}
         },
-        "folder": {
-          "type": "string",
-          "description": "Folder containing daily transport binaries. Paths may use ~ for the user home directory."
-        },
-        "start_date": {
-          "type": "string",
-          "description": "First date to include when expanding input.folder, formatted as YYYY-MM-DD.",
-          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
-        },
-        "end_date": {
-          "type": "string",
-          "description": "Last date to include when expanding input.folder, formatted as YYYY-MM-DD.",
-          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        {
+          "type": "object",
+          "required": ["folder", "start_date", "end_date"],
+          "properties": {
+            "folder": {"type": "string"},
+            "start_date": {"$ref": "#/definitions/date"},
+            "end_date": {"$ref": "#/definitions/date"},
+            "file_pattern": {
+              "type": "string",
+              "description": "Optional filename pattern containing exactly one {YYYYMMDD} placeholder."
+            }
+          },
+          "not": {"required": ["binary_paths"]}
         }
+      ],
+      "properties": {
+        "require_adaptive_substeps": {
+          "type": "boolean",
+          "default": false,
+          "description": "Reject binaries that do not carry a per-window adaptive substep schedule."
+        },
+        "staging": {"$ref": "#/definitions/staging"}
       }
     },
     "architecture": {
       "type": "object",
-      "description": "Runtime backend selection.",
       "additionalProperties": true,
       "properties": {
         "use_gpu": {
           "type": "boolean",
-          "description": "Legacy GPU switch. When true and architecture.backend is absent or auto, the runtime auto-detects CUDA or Metal. Use false for local CPU debugging."
+          "default": false,
+          "description": "Compatibility switch: when true and backend is absent, auto-detect a GPU."
         },
         "backend": {
           "type": "string",
-          "description": "Runtime compute backend. \"auto\" selects a usable GPU backend; \"metal\" requires Float32 numerics.",
           "enum": ["cpu", "auto", "cuda", "metal"],
-          "default": "cpu",
-          "x-taplo": {
-            "docs": {
-              "enumValues": [
-                "Run on CPU arrays.",
-                "Auto-detect CUDA or Metal.",
-                "Run on NVIDIA CUDA via CUDA.jl.",
-                "Run on Apple Silicon Metal via Metal.jl; requires numerics.float_type = \"Float32\"."
-              ]
-            }
-          }
+          "description": "Compute backend. Metal requires Float32 numerics."
         }
       }
     },
     "numerics": {
       "type": "object",
-      "description": "Precision and numerical configuration.",
       "additionalProperties": true,
       "properties": {
         "float_type": {
           "type": "string",
-          "description": "Floating point type used by runtime state and heavy NetCDF output payloads.",
           "enum": ["Float32", "Float64"],
           "default": "Float64",
-          "x-taplo": {
-            "docs": {
-              "enumValues": [
-                "Use for GPU production runs and smaller NetCDF output.",
-                "Use for CPU reference runs and stricter validation."
-              ]
-            }
-          }
+          "description": "Floating-point type used by the runtime state."
         }
       }
     },
     "run": {
       "type": "object",
-      "description": "Advection/runtime recipe selection.",
+      "description": "Window bounds and state-reanchoring controls. Put advection options in [advection].",
+      "additionalProperties": true,
+      "properties": {
+        "start_window": {"type": "integer", "minimum": 1, "default": 1},
+        "stop_window": {"type": "integer", "minimum": 1},
+        "air_mass_reset_mode": {
+          "type": "string",
+          "enum": ["none", "preserve_vmr", "preserve_tracer_mass"],
+          "default": "preserve_tracer_mass"
+        },
+        "halo_padding": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Cubed-sphere halo width. Normally inferred from the advection scheme."
+        },
+        "Hp": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Legacy alias for run.halo_padding."
+        },
+        "tracer_name": {
+          "type": "string",
+          "description": "Legacy single-tracer name used only when [tracers] is absent on structured grids."
+        }
+      }
+    },
+    "advection": {
+      "type": "object",
       "additionalProperties": true,
       "properties": {
         "scheme": {
           "type": "string",
-          "description": "Horizontal advection scheme.",
           "enum": ["upwind", "slopes", "ppm", "linrood", "none"],
-          "default": "slopes",
-          "x-taplo": {
-            "docs": {
-              "enumValues": [
-                "Most diffusive but robust first-order upwind scheme.",
-                "Second-order slope-limited scheme used by current validation configs.",
-                "Piecewise parabolic method. Requires wider CS halos.",
-                "Lin-Rood style CS advection path where supported.",
-                "Identity no-op for isolating other operators (convection-only timing, regression). Requires [diffusion] kind = \"none\" and no [tracers.*.surface_flux] blocks."
-              ]
-            }
-          }
+          "default": "upwind"
+        },
+        "ppm_order": {
+          "type": "integer",
+          "enum": [5, 7],
+          "description": "Cubed-sphere Lin-Rood reconstruction order; valid only with scheme = \"linrood\"."
         }
       }
     },
     "diffusion": {
       "type": "object",
-      "description": "Vertical diffusion operator. Omit this table for no diffusion.",
       "additionalProperties": true,
       "properties": {
         "kind": {
           "type": "string",
-          "description": "Diffusion source/type.",
-          "enum": ["constant", "profile", "precomputed"],
-          "default": "constant"
+          "enum": [
+            "none",
+            "constant",
+            "tm5_beljaars_viterbo_local_kz",
+            "beljaars_viterbo_local_kz",
+            "pbl",
+            "geoschem_holtslag_boville_vdiff",
+            "precomputed_kz"
+          ],
+          "default": "none"
         },
         "value": {
           "type": "number",
-          "description": "Constant Kz value in m^2/s when kind = constant."
+          "description": "Constant Kz in m^2 s^-1 when kind = \"constant\"."
+        },
+        "surface_flux_boundary": {
+          "type": "boolean",
+          "default": false,
+          "description": "Couple the surface source directly to the diffusion boundary condition."
         }
       }
     },
     "convection": {
       "type": "object",
-      "description": "Convection operator. Omit this table or set kind = \"none\" for no convection.",
       "additionalProperties": true,
       "properties": {
         "kind": {
           "type": "string",
-          "description": "Convection parameterization. \"none\" disables the operator; \"tm5\" runs the TM5 backward-Euler LU on (entu, detu, entd, detd) fields; \"cmfmc\" runs the GCHP-audited two-pass CMFMC kernel on (cmfmc, dtrain); \"cmfmc_matrix\" derives (entu, detu, 0, 0) from (cmfmc, dtrain) per column and routes through the TM5 LU (conservative variant of the GEOS rates); \"ras\" is reserved for a future relaxed-Arakawa-Schubert path.",
-          "enum": ["none", "tm5", "cmfmc", "cmfmc_matrix", "ras"],
-          "default": "tm5"
-        }
+          "enum": ["none", "tm5", "cmfmc", "cmfmc_matrix"],
+          "default": "none"
+        },
+        "clamp": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the positivity clamp for the explicit CMFMC scheme."
+        },
+        "tile_workspace_gib": {"type": "number", "exclusiveMinimum": 0, "default": 1.0},
+        "use_collab_lu": {"type": "boolean", "default": false},
+        "lmax_conv": {"type": "integer", "minimum": 0, "default": 0},
+        "n_merge": {"type": "integer", "minimum": 1, "default": 1}
       }
     },
-    "output": {
+    "chemistry": {
       "type": "object",
-      "description": "Diagnostic NetCDF snapshot output. Current runtime supports single-file snapshot output; mode/path_template show the intended OutputPlan direction.",
       "additionalProperties": true,
       "properties": {
-        "mode": {
-          "type": "string",
-          "description": "Prototype OutputPlan mode. single_file matches current runtime behavior; daily_files/per_snapshot are planned scheduling policies.",
-          "enum": ["single_file", "daily_files", "per_snapshot"],
-          "default": "single_file",
-          "x-taplo": {
-            "docs": {
-              "enumValues": [
-                "Write all requested snapshot times into one NetCDF file.",
-                "Planned: split output into one NetCDF file per simulation day.",
-                "Planned: write one NetCDF file per captured snapshot."
-              ]
-            }
-          }
-        },
-        "snapshot_file": {
-          "type": "string",
-          "description": "NetCDF output path for current single-file runtime snapshot output."
-        },
-        "path_template": {
-          "type": "string",
-          "description": "Prototype path template for planned split output, e.g. ~/.../{date}/snapshot_{date}.nc."
-        },
-        "snapshot_hours": {
-          "type": "array",
-          "description": "Simulation-relative output times in hours. Current runtime captures exactly these times.",
-          "items": {
-            "type": "number",
-            "minimum": 0
-          }
-        },
-        "frequency": {
-          "type": "string",
-          "description": "Prototype cadence shorthand for future OutputPlan scheduling, e.g. 6h, 1d, every_step.",
-          "examples": ["6h", "1d", "every_step"]
-        },
-        "deflate_level": {
-          "type": "integer",
-          "description": "NetCDF deflate compression level for heavy payload variables. 0 disables compression; 1 is a good production default.",
-          "minimum": 0,
-          "maximum": 9,
-          "default": 0
-        },
-        "shuffle": {
-          "type": "boolean",
-          "description": "Enable the NetCDF shuffle filter when deflate_level > 0.",
-          "default": true
-        },
-        "provenance": {
-          "type": "boolean",
-          "description": "Prototype switch for planned reproducibility metadata: command line, Julia/package versions, git status, normalized config, and input hashes.",
-          "default": true
+        "kind": {"type": "string", "enum": ["none", "decay"], "default": "none"},
+        "half_lives_seconds": {
+          "type": "object",
+          "description": "Positive first-order half-life keyed by tracer name.",
+          "additionalProperties": {"type": "number", "exclusiveMinimum": 0}
         }
       }
     },
     "tracers": {
       "type": "object",
-      "description": "Tracer definitions keyed by tracer name. Each tracer can define an initial condition and optional surface flux.",
-      "additionalProperties": {
-        "type": "object",
-        "additionalProperties": true,
-        "properties": {
-          "init": {
-            "type": "object",
-            "description": "Initial condition for this tracer.",
-            "additionalProperties": true,
-            "properties": {
-              "kind": {
-                "type": "string",
-                "description": "Initial condition type.",
-                "enum": ["uniform", "catrine_co2", "file"],
-                "default": "uniform"
-              },
-              "background": {
-                "type": "number",
-                "description": "Uniform background mixing ratio in mol/mol when kind = uniform."
-              },
-              "file": {
-                "type": "string",
-                "description": "Input NetCDF or binary file when kind = file."
-              }
-            }
-          },
-          "surface_flux": {
-            "type": "object",
-            "description": "Optional live surface flux source for this tracer.",
-            "additionalProperties": true,
-            "properties": {
-              "kind": {
-                "type": "string",
-                "description": "Surface flux source type.",
-                "enum": ["gridfed_fossil_co2", "file"]
-              },
-              "file": {
-                "type": "string",
-                "description": "Surface flux source file."
-              },
-              "time_index": {
-                "type": "integer",
-                "description": "Time index to read from the source file.",
-                "minimum": 1
-              }
-            }
-          }
+      "description": "Tracer definitions keyed by the output tracer name.",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/definitions/tracer"}
+    },
+    "output": {"$ref": "#/definitions/output"}
+  },
+  "definitions": {
+    "date": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "staging": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "dir": {"type": "string", "description": "Local staging directory; required when staging is enabled."},
+        "lookahead_days": {"type": "integer", "minimum": 0, "default": 2},
+        "keep_behind_days": {"type": "integer", "minimum": 0, "default": 0},
+        "cleanup_on_exit": {"type": "boolean", "default": true}
+      }
+    },
+    "tracer": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "init": {"$ref": "#/definitions/initial_condition"},
+        "surface_flux": {"$ref": "#/definitions/surface_flux"}
+      }
+    },
+    "initial_condition": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "uniform",
+            "latitude_step",
+            "lat_step",
+            "hemisphere_step",
+            "bl_enhanced",
+            "gaussian_blob",
+            "file",
+            "netcdf",
+            "file_field",
+            "catrine_co2",
+            "pressure_layer",
+            "cs_native"
+          ],
+          "default": "uniform"
+        },
+        "background": {"type": "number"},
+        "enhancement": {"type": "number"},
+        "n_layers": {"type": "integer", "minimum": 1},
+        "south_value": {"type": "number"},
+        "north_value": {"type": "number"},
+        "split_lat_deg": {"type": "number", "minimum": -90, "maximum": 90},
+        "lon0_deg": {"type": "number"},
+        "lat0_deg": {"type": "number", "minimum": -90, "maximum": 90},
+        "sigma_lon_deg": {"type": "number", "exclusiveMinimum": 0},
+        "sigma_lat_deg": {"type": "number", "exclusiveMinimum": 0},
+        "amplitude": {"type": "number"},
+        "file": {"type": "string"},
+        "variable": {"type": "string"},
+        "time_index": {"type": "integer", "minimum": 1},
+        "vertical_order": {"type": "string", "enum": ["surface_first", "toa_first"]},
+        "lowest_layer": {"type": "boolean", "default": false},
+        "psurf_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "total_molecules": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "surface_flux": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["none", "file", "lmdz_co2", "gridfed_fossil_co2", "edgar_sf6", "zhang_rn222"]
+        },
+        "file": {"type": "string"},
+        "variable": {"type": "string"},
+        "time_index": {"type": "integer", "minimum": 1},
+        "month": {"type": "integer", "minimum": 1, "maximum": 12},
+        "scale": {"type": "number"},
+        "molar_mass_kg_mol": {"type": "number", "exclusiveMinimum": 0},
+        "time_varying": {"type": "boolean", "default": false},
+        "temporal_scheme": {
+          "type": "string",
+          "enum": ["stepwise", "linear", "conservative"]
         }
       }
+    },
+    "output": {
+      "type": "object",
+      "description": "Runtime snapshot output. Preferred keys are path, hours or cadence_hours, split, and format.",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {"type": "boolean", "default": true},
+        "format": {"type": "string", "enum": ["netcdf", "binary_mmap"], "default": "netcdf"},
+        "path": {"type": "string"},
+        "hours": {"$ref": "#/definitions/hours"},
+        "cadence_hours": {"type": "number", "exclusiveMinimum": 0},
+        "start_hour": {"type": "number", "minimum": 0, "default": 0},
+        "stop_hour": {"type": "number", "minimum": 0},
+        "split": {"type": "string", "enum": ["single", "daily"], "default": "single"},
+        "deflate_level": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0},
+        "shuffle": {"type": "boolean", "default": true},
+        "snapshot_file": {"type": "string", "description": "Legacy alias for output.path."},
+        "snapshot_hours": {"$ref": "#/definitions/hours"},
+        "snapshot_interval_hours": {"type": "number", "exclusiveMinimum": 0},
+        "fields": {"$ref": "#/definitions/output_fields"}
+      }
+    },
+    "hours": {
+      "type": "array",
+      "items": {"type": "number", "minimum": 0}
+    },
+    "output_fields": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "tracers": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "array", "items": {"type": "string"}}
+          ]
+        },
+        "layers": {"$ref": "#/definitions/layer_selection"},
+        "levels": {
+          "type": "array",
+          "items": {"type": "integer", "minimum": 1}
+        },
+        "column_mean": {"type": "boolean", "default": true},
+        "column_mass_per_area": {"type": "boolean", "default": true},
+        "air_mass_layers": {"$ref": "#/definitions/layer_selection"},
+        "air_mass": {"type": "boolean", "default": true},
+        "air_mass_per_area": {"type": "boolean", "default": true},
+        "column_air_mass_per_area": {"type": "boolean", "default": true},
+        "per_tracer": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/definitions/tracer_output_fields"}
+        }
+      }
+    },
+    "tracer_output_fields": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "layers": {"$ref": "#/definitions/layer_selection"},
+        "column_mean": {"type": "boolean"},
+        "column_mass_per_area": {"type": "boolean"}
+      }
+    },
+    "layer_selection": {
+      "type": "string",
+      "enum": ["full", "selected", "none"]
     }
   }
 }

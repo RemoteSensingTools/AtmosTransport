@@ -11,12 +11,11 @@ keeps them separate.
 
 ## Run config (`config/runs/*.toml`)
 
-Consumed by `scripts/run_transport.jl` (line 74) which parses the
-TOML and forwards the resulting Julia `Dict` to
-`run_driven_simulation(cfg)` in `src/Models/DrivenRunner.jl`.
+Consumed by `scripts/run_transport.jl`, which parses the TOML and forwards
+the resulting Julia dictionary to `run_driven_simulation(cfg)`.
 
 The runtime infers the **target topology** from the binary header's
-`grid_type` field at load time (`DrivenRunner.jl:293-298`); a
+`grid_type` field at load time; a
 `[grid]` block in the run config is therefore unnecessary and
 ignored.
 
@@ -41,7 +40,7 @@ file_pattern = "{YYYYMMDD}"   # optional; default scans for date stamp
 ```
 
 Path expansion + continuity validation lives in
-`src/Models/BinaryPathExpander.jl::expand_binary_paths` (line 62).
+`src/Models/BinaryPathExpander.jl`.
 Shape B asserts that the resolved binaries form a contiguous date
 sequence; gaps fail at expansion time, not at first window-load.
 
@@ -86,10 +85,9 @@ backend = "auto"              # default: "auto" if use_gpu else "cpu"
 | `"auto"` | Auto-detects an available GPU backend (CUDA → Metal); errors if none is available. |
 | (omitted) | If `backend` is absent, the runtime picks `CPUBackend` when `use_gpu = false` and auto-detects a GPU backend when `use_gpu = true`. |
 
-GPU preload happens at TOML-parse time
-(`scripts/run_transport.jl:37-63`) so the CUDA / Metal extension
-loads before AtmosTransport — this avoids a Julia world-age issue
-that bit early users.
+The CLI eagerly loads a requested CUDA or Metal backend before AtmosTransport.
+The package runtime can also load an optional backend on demand without
+injecting modules into `Main`.
 
 ### `[numerics]` — precision
 
@@ -109,11 +107,14 @@ casts on load).
 [run]
 start_window = 1              # default: 1 — first window to process
 stop_window  = 24             # default: nothing — uses the binary's full range
-scheme       = "slopes"       # advection scheme; one of "upwind" / "slopes" / "ppm" / "linrood"
+air_mass_reset_mode = "preserve_tracer_mass"
 ```
 
 `stop_window` is the inclusive last window; setting it lets you
-run a partial day for smoke tests.
+run a partial day for smoke tests. `air_mass_reset_mode` is one of
+`"none"`, `"preserve_vmr"`, or `"preserve_tracer_mass"`. Advection belongs
+in `[advection]`; the legacy `[run].scheme` spelling is accepted only when an
+`[advection]` table is absent.
 
 ### `[tracers.<name>]` — per-tracer setup
 
@@ -122,9 +123,6 @@ output NetCDF; `[tracers.co2_bl]` writes `co2_bl`,
 `co2_bl_column_mean`, etc.
 
 ```toml
-[tracers.co2_bl]
-species = "co2"               # optional; controls molar-mass conversions for diagnostics
-
 [tracers.co2_bl.init]
 kind        = "bl_enhanced"   # initial-condition kind; see table below
 background  = 4.0e-4          # uniform background dry VMR (mol/mol)
@@ -137,11 +135,14 @@ Initial-condition kinds (declared in `src/Models/InitialConditionIO.jl`):
 | Kind | LL | RG | CS | Required keys |
 |---|---|---|---|---|
 | `"uniform"` | yes | yes | yes | `background` |
+| `"latitude_step"` | yes | yes | yes | optional `south_value`, `north_value`, `split_lat_deg` |
 | `"bl_enhanced"` | yes | **no** | **no** | `background`, `enhancement`, `n_layers` (LL-only; RG/CS path errors at IC build) |
 | `"gaussian_blob"` | yes | yes | yes | `background`, `lon0_deg`, `lat0_deg`, `sigma_lon_deg`, `sigma_lat_deg`, `amplitude` |
 | `"file"` / `"netcdf"` | yes | yes | yes | `file`, `variable`, optional `time_index` |
 | `"file_field"` | yes | yes | yes | `file`, `variable` |
-| `"catrine_co2"` | yes | yes | yes | `file`, `variable`, optional `time_index` |
+| `"catrine_co2"` | yes | yes | yes | optional `file`, `variable`, `time_index` overrides for the built-in defaults |
+| `"pressure_layer"` | no | no | yes | `lowest_layer = true` or `psurf_fraction`; optional `total_molecules` |
+| `"cs_native"` | no | no | yes | `file`, `variable`; optional `time_index`, `vertical_order` |
 
 Surface-flux emission is configured as a nested sub-table under each
 tracer. Each tracer that emits gets one `[tracers.<name>.surface_flux]`
@@ -162,6 +163,8 @@ Registered surface-flux source kinds (full list in
 `edgar_sf6`, `zhang_rn222`, plus a generic `file` for arbitrary
 NetCDF sources. There is no `edgar_co2` kind — use
 `gridfed_fossil_co2` for the GridFED-derived fossil CO₂ inventory.
+Known tracer names carry built-in molar masses; for a custom tracer, set
+`molar_mass_kg_mol` inside its `surface_flux` table.
 
 **Time-varying emission** (cubed-sphere). A source whose inventory has
 sub-monthly time slices (e.g. the LMDZ/CAMS biospheric flux) can drive the
@@ -180,7 +183,7 @@ temporal_scheme = "stepwise"      # how slices are applied between sample times
   This matches GEOS-Chem/HEMCO's exact CAMS treatment (verified against
   `EmisCO2_Total`), so use it to reproduce GC.
 - `"linear"` — linearly interpolate between adjacent slices.
-- `"conservative_mean"` — window-mean each interval (mass-conserving over the
+- `"conservative"` — window-mean each interval (mass-conserving over the
   window, but smears the diurnal cycle).
 
 Slices are indexed by **absolute** time since the run's `start_date`, so a
@@ -190,13 +193,13 @@ replay the first day's slices — the cause of the historical co2_natural
 
 ### `[advection]`, `[diffusion]`, `[convection]`, `[chemistry]`
 
-Each operator has a `kind` selector + per-kind kwargs. See
+Each operator has a selector and per-kind options. See
 [Operators](@ref) and [Advection schemes](@ref) for what each
 selector means; relevant config keys:
 
 ```toml
 [advection]
-scheme    = "ppm"               # "upwind" | "slopes" | "ppm" | "linrood"
+scheme    = "linrood"           # "upwind" | "slopes" | "ppm" | "linrood" | "none"
 ppm_order = 7                   # cubed-sphere LinRoodPPM only; ∈ {5, 7}.
                                 # Setting ppm_order with scheme = "ppm" errors.
 
@@ -317,9 +320,8 @@ automatic; give the run `--threads=2` (or more) to enable them.
 
 ## Preprocessing config (`config/preprocessing/*.toml`)
 
-Consumed by `scripts/preprocessing/preprocess_transport_binary.jl`
-which calls `process_day(cfg::Dict)` in
-`src/Preprocessing/transport_binary/entrypoint.jl` (line 204).
+Consumed by `scripts/preprocessing/preprocess_transport_binary.jl`, which
+calls the unified `process_day` preprocessing entry point.
 
 The preprocessing config has a different shape from the run config:
 the **target topology IS specified here** because that's the act of

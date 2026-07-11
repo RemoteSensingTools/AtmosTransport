@@ -35,9 +35,11 @@ Offline atmospheric transport runtime with:
 - **Chemistry** (`ExponentialDecay`, `CompositeChemistry`): live on
   `CellState` (LatLon, RG) and `CubedSphereState` topologies
   (CS dispatch shipped in commit `bcd4fea`)
-- **Met drivers**: ERA5 spectral, GEOS-FP C720, GEOS-IT C180,
-  cubed-sphere binary
-- **Adjoint**: forward operators and selected discrete adjoints are ported.
+- **Met drivers**: ERA5 spectral, GEOS-FP C720, GEOS-IT C180, MERRA-2
+  wind-derived CS, and cubed-sphere binary
+- **Adjoint/inversion**: the cubed-sphere discrete-adjoint and surface-flux
+  4D-Var stack ship for a documented operator matrix, including checkpointing,
+  observation binding, covariance preconditioning, and optimization drivers.
   Archival templates live under
   [`resources/developer_notes/legacy_adjoint_templates/`](resources/developer_notes/legacy_adjoint_templates/)
 
@@ -48,7 +50,7 @@ Canonical operator × topology matrix:
 
 - Remaining adjoint coverage for physics operators
 - Additional user-facing tutorials and validation pages
-- Observation operators for 4D-Var
+- Additional observation operators and campaign-scale 4D-Var validation
 
 ## Current phase
 
@@ -59,4 +61,4 @@ transport-binary I/O, and selected adjoint/inversion tooling. The top-level
 
 ---
 
-*Last verified against `src/` on 2026-05-20.*
+*Last verified against `src/` on 2026-07-11.*

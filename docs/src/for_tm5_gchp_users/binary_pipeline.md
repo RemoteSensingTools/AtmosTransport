@@ -118,15 +118,6 @@ human-readable diagnostic is dumped next to it. Binaries that fail
 the gate are *never* visible to the runtime under their canonical
 name.
 
-### Load-time replay gate (opt-in)
-
-When `[run].replay_check = true`, the runtime re-runs the same
-forward-evolution check at load time before the first transport step.
-This catches a binary that was modified after the preprocessor ran
-(e.g. truncated on copy, partially overwritten, or corrupted by a
-filesystem fault). The cost is ~1–2 % of run time and we generally
-recommend it for any production campaign.
-
 ### Per-window adaptive substeps
 
 The header carries `steps_per_window_by_window :: Vector{Int}` and the
@@ -134,6 +125,9 @@ runtime reads it to set per-window substep counts. GEOS-native CS
 preprocessing chooses each window's count adaptively from the
 palindrome positivity budget — see
 [Operators on top of the binary](operators_on_binaries.md#adaptive-substeps).
+Set `[input].require_adaptive_substeps = true` to reject older binaries
+that do not carry this schedule. This is a capability gate, not a second
+load-time replay of the write-time conservation check.
 
 ## How the two preprocessing paths build the binary
 

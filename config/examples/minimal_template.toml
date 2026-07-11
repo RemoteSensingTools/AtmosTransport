@@ -33,11 +33,13 @@ float_type = "Float32"
 scheme = "slopes"
 
 [diffusion]
-# Valid values: "none", "constant", "pbl", and GCHP/TM5 named PBL modes.
+# Valid values include "none", "constant", the named TM5/GCHP PBL modes,
+# and "precomputed_kz" when the transport binary carries a Kz payload.
 kind = "none"
 
 [convection]
-# Valid values: "none", "tm5", "cmfmc" (depending on binary payloads).
+# Valid values: "none", "tm5", "cmfmc", "cmfmc_matrix" (subject to the
+# forcing payloads carried by the transport binary).
 kind = "none"
 
 [tracers.co2_bl.init]
@@ -53,7 +55,7 @@ sigma_lat_deg = 18.0
 
 [output]
 # Optional. Hours since run start to save to NetCDF.
-snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
+hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
 
 # Required if snapshots are enabled. Parent directories are created as needed.
-snapshot_file = "$ATMOSTRANSPORT_DATA_ROOT_quickstart/output/minimal_template.nc"
+path = "$ATMOSTRANSPORT_DATA_ROOT_quickstart/output/minimal_template.nc"

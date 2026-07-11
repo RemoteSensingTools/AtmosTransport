@@ -34,23 +34,38 @@ using .AtmosTransport
 using .AtmosTransport.Preprocessing
 
 function _parse_cli(args::Vector{String})
-    isempty(args) && error("Usage: preprocess_transport_binary.jl <config.toml> " *
-                            "[--day YYYY-MM-DD | --start YYYY-MM-DD --end YYYY-MM-DD]")
+    usage = "Usage: preprocess_transport_binary.jl <config.toml> " *
+            "[--day YYYY-MM-DD | --start YYYY-MM-DD --end YYYY-MM-DD]"
+    isempty(args) && throw(ArgumentError(usage))
     cfg_path = expanduser(args[1])
-    isfile(cfg_path) || error("Config not found: $cfg_path")
+    startswith(args[1], "-") && throw(ArgumentError("missing <config.toml>; $usage"))
+    isfile(cfg_path) || throw(ArgumentError("Config not found: $cfg_path"))
 
-    day_override = nothing
-    start_date   = nothing
-    end_date     = nothing
+    values = Dict{String, Union{Nothing, String}}(
+        "--day" => nothing, "--start" => nothing, "--end" => nothing)
     i = 2
     while i <= length(args)
-        if     args[i] == "--day"   && i + 1 <= length(args); day_override = args[i + 1]; i += 2
-        elseif args[i] == "--start" && i + 1 <= length(args); start_date   = args[i + 1]; i += 2
-        elseif args[i] == "--end"   && i + 1 <= length(args); end_date     = args[i + 1]; i += 2
-        else
-            i += 1
-        end
+        flag = args[i]
+        haskey(values, flag) || throw(ArgumentError("unknown option: $flag"))
+        values[flag] === nothing || throw(ArgumentError("duplicate option: $flag"))
+        i < length(args) || throw(ArgumentError("missing value after $flag"))
+        value = args[i + 1]
+        startswith(value, "--") && throw(ArgumentError("missing value after $flag"))
+        tryparse(Date, value) === nothing &&
+            throw(ArgumentError("$flag must be YYYY-MM-DD; got $(repr(value))"))
+        values[flag] = value
+        i += 2
     end
+
+    day_override = values["--day"]
+    start_date = values["--start"]
+    end_date = values["--end"]
+    day_override === nothing || (start_date === nothing && end_date === nothing) ||
+        throw(ArgumentError("--day cannot be combined with --start or --end"))
+    (start_date === nothing) == (end_date === nothing) ||
+        throw(ArgumentError("--start and --end must be provided together"))
+    start_date === nothing || Date(start_date) <= Date(end_date) ||
+        throw(ArgumentError("--start must be on or before --end"))
     return cfg_path, day_override, start_date, end_date
 end
 

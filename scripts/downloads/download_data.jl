@@ -1,59 +1,71 @@
 #!/usr/bin/env julia
 # ===========================================================================
-# Unified download entry point — THE download script.
+# Unified download entry point.
 #
 # Downloads meteorological data from any supported source using TOML configs.
-# Mirrors the preprocessing CLI pattern (preprocess_transport_binary.jl).
 #
 # Usage:
 #   julia --project=. scripts/downloads/download_data.jl config.toml \
 #       [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--dry-run] [--verify]
-#
-# The TOML config specifies source, protocol, output layout, and schedule.
-# Output paths follow the canonical Data Layout hierarchy:
-#   <data_root>/met/<source>/<grid>/<cadence>/<payload>/
-#
-# See docs/reference/DATA_LAYOUT.md for the layout convention.
 # ===========================================================================
 
 using Logging
 using TOML
 using Dates
 
-# Load the DataDownloads module (standalone — does not need the full AtmosTransport)
+# Standalone module: downloading does not require the full AtmosTransport package.
 include(joinpath(@__DIR__, "..", "..", "src", "Downloads", "Downloads.jl"))
 using .DataDownloads
 
-function main()
-    base_logger = ConsoleLogger(stderr, Logging.Info; show_limited=false)
-    global_logger(base_logger)
+const USAGE = "Usage: download_data.jl <config.toml> " *
+              "[--start YYYY-MM-DD] [--end YYYY-MM-DD] [--dry-run] [--verify]"
 
-    isempty(ARGS) && error("""
-        Usage: julia --project=. scripts/downloads/download_data.jl config.toml \\
-               [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--dry-run] [--verify]
+function _parse_cli(args::Vector{String})
+    isempty(args) && throw(ArgumentError(USAGE))
+    cfg_path = expanduser(args[1])
+    startswith(args[1], "-") && throw(ArgumentError("missing <config.toml>; $USAGE"))
+    isfile(cfg_path) || throw(ArgumentError("Config not found: $cfg_path"))
 
-        Download recipe TOMLs are in config/downloads/.
-        Met source definitions are in config/met_sources/.
-        """)
+    dates = Dict{String, Union{Nothing, Date}}("--start" => nothing, "--end" => nothing)
+    switches = Dict("--dry-run" => false, "--verify" => false)
+    i = 2
+    while i <= length(args)
+        flag = args[i]
+        if haskey(dates, flag)
+            dates[flag] === nothing || throw(ArgumentError("duplicate option: $flag"))
+            i < length(args) || throw(ArgumentError("missing value after $flag"))
+            value = args[i + 1]
+            startswith(value, "--") && throw(ArgumentError("missing value after $flag"))
+            parsed = tryparse(Date, value)
+            parsed === nothing &&
+                throw(ArgumentError("$flag must be YYYY-MM-DD; got $(repr(value))"))
+            dates[flag] = parsed
+            i += 2
+        elseif haskey(switches, flag)
+            switches[flag] && throw(ArgumentError("duplicate option: $flag"))
+            switches[flag] = true
+            i += 1
+        else
+            throw(ArgumentError("unknown option: $flag"))
+        end
+    end
 
-    cfg_path = expanduser(ARGS[1])
-    isfile(cfg_path) || error("Config not found: $cfg_path")
-    cfg = TOML.parsefile(cfg_path)
-
-    # Parse CLI flags
-    start_date = _parse_flag(ARGS, "--start", Date)
-    end_date   = _parse_flag(ARGS, "--end", Date)
-    dry_run    = "--dry-run" in ARGS
-    verify     = "--verify" in ARGS
-
-    download_data!(cfg; start_date, end_date, dry_run, verify_only=verify)
+    start_date = dates["--start"]
+    end_date = dates["--end"]
+    start_date === nothing || end_date === nothing || start_date <= end_date ||
+        throw(ArgumentError("--start must be on or before --end"))
+    return (; cfg_path, start_date, end_date,
+            dry_run = switches["--dry-run"], verify = switches["--verify"])
 end
 
-function _parse_flag(args, flag, T)
-    idx = findfirst(==(flag), args)
-    idx === nothing && return nothing
-    idx == length(args) && error("Missing value after $flag")
-    return T(args[idx + 1])
+function main()
+    global_logger(ConsoleLogger(stderr, Logging.Info; show_limited = false))
+    opts = _parse_cli(ARGS)
+    cfg = TOML.parsefile(opts.cfg_path)
+    return download_data!(cfg; start_date = opts.start_date,
+                          end_date = opts.end_date,
+                          dry_run = opts.dry_run,
+                          verify_only = opts.verify)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

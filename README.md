@@ -10,7 +10,7 @@
 ## Status tracker
 
 Single source of truth for what is production-ready, what is preview /
-experimental, and what is planned. Updated `2026-05-17`. Items move out
+experimental, and what is planned. Updated `2026-07-11`. Items move out
 of "experimental" only after a passing CPU+GPU regression suite and a
 documented validation run.
 
@@ -40,8 +40,8 @@ documented validation run.
 | --- | :---: | --- |
 | ERA5 spectral → LL / RG / CS | ✅ | CDS API; `pin_global_mean_ps!` enabled |
 | GEOS-IT native → CS (C180) | ✅ | Adaptive substep schedule per window |
-| GEOS-FP native | 📐 | Source-axis abstraction in place |
-| MERRA-2 (OPeNDAP) | ❌ | `MERRA2Source` declared; `execute!` throws |
+| GEOS-FP native → CS (C720) | 🟡 | Native hourly reader and unified preprocessor ship; production validation remains limited |
+| MERRA-2 native → CS | 🟡 | Wind-derived C180 preprocessor ships; unified OPeNDAP download execution remains unavailable |
 | LL → CS conservative regrid | 🟡 | Works; separate regrid entry point |
 | Compressed binaries at rest (zstd) | ✅ | User-side; runtime always reads uncompressed |
 
@@ -63,7 +63,7 @@ documented validation run.
 | `DerivedKzField` (Beljaars–Viterbo) | ✅ | Default for ERA5 runs |
 | `WindowPBLKzField` | ✅ | PBL-aware variant |
 | `GCHPHoltslagBovilleKzField` | 🟡 | Non-local; one direct-physics test gap (shipped 2026-05-17) |
-| `PreComputedKzField` (`:Kz` payload) | 📐 | Section reserved in binary schema |
+| `PreComputedKzField` (`:kz` payload) | 🟡 | Binary write/read and CS runtime path are covered by core tests |
 | `DiffusiveSurfaceFluxBoundary` | 🟡 | Pre-Thomas mass add; differs from GCHP Neumann |
 
 ### Convection
@@ -97,8 +97,8 @@ documented validation run.
 | CMFMC convection adjoint | 📐 | Forward only |
 | `copy_corners` reverse | 📐 | CS halo-corner adjoint gap |
 | Covariance B^{1/2} | ✅ | B1 shipped (`src/Inversion/Covariance.jl`) |
-| Preconditioning + log-normal bijection | 📐 | Prototype pieces under `src/Inversion/` |
-| End-to-end 4D-Var driver | 📐 | Prototype driver under `scripts/inversions/` |
+| Preconditioning + log-normal bijection | 🟡 | Linear/log-normal transforms and covariance inverse are gradient-tested |
+| End-to-end CS surface-flux 4D-Var | 🟡 | Cost/gradient plus gradient-descent and L-BFGS drivers ship; campaign validation remains open |
 
 ### Backends and IO
 
@@ -111,7 +111,7 @@ documented validation run.
 | mmap binary reader | ✅ | Zero-copy `reinterpret` slices |
 | NetCDF snapshot writer | ✅ | Typed `SingleOutputFile` / `DailyOutputFiles` |
 | Replay-gate (write-time) | ✅ | Always on in preprocessing |
-| Replay-gate (load-time, opt-in) | ✅ | `[run].replay_check = true` |
+| Adaptive-schedule gate (load-time, opt-in) | ✅ | `[input].require_adaptive_substeps = true` |
 
 ### Documentation
 
@@ -165,9 +165,10 @@ in Float32 arithmetic.
 - **Multi-grid:** Regular lat-lon, reduced Gaussian, and cubed-sphere
   (gnomonic and GEOS-native panel conventions). Hybrid σ-pressure vertical
   coordinate.
-- **Multi-source:** ERA5 spectral preprocessor (LL / RG / CS targets) and
-  GEOS-IT C180 native cubed-sphere preprocessor. GEOS-FP and MERRA-2 are
-  declared but not yet implemented (the source-axis abstraction is in place).
+- **Multi-source:** ERA5 spectral preprocessing (LL / RG / CS targets) and
+  native cubed-sphere preprocessing for GEOS-IT C180 and GEOS-FP C720,
+  plus a preview MERRA-2 wind-derived CS path. MERRA-2 data must currently
+  be staged outside the unified downloader.
 - **Multi-backend:** Single codebase for CPU and GPU via
   [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl).
   CUDA path is end-to-end through the runtime driver; an Apple Silicon /
@@ -188,11 +189,11 @@ in Float32 arithmetic.
   detrainment, for ERA5 sources) — different physics, identical
   `ConvectionForcing` plumbing.
 
-> **Note on adjoint maturity.** A discrete adjoint is on the roadmap but
-> **not yet shipped**. The forward operators are designed adjoint-ready
-> (Thomas-solver coefficient layout, time-pure `ConvectionForcing`
-> dispatch, Strang palindrome time symmetry) but the adjoint kernels
-> themselves are pending. See
+> **Note on adjoint maturity.** The cubed-sphere discrete-adjoint and
+> surface-flux 4D-Var stack ship for the supported advection/operator matrix,
+> with checkpointing, covariance preconditioning, and optimization drivers.
+> Coverage is not universal: CMFMC convection, halo-corner reversal, and some
+> higher-order panel-boundary cases remain open. See
 > [Adjoint status](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/theory/adjoint_status)
 > for details.
 
@@ -202,7 +203,7 @@ in Float32 arithmetic.
 flowchart TD
     subgraph IN["Input"]
         ERA5["ERA5 spectral GRIB"]
-        GEOS["GEOS-IT C180 NetCDF"]
+        GEOS["GEOS-IT C180 / GEOS-FP C720 NetCDF"]
         TOML["TOML configs"]
     end
     subgraph PRE["Preprocessing"]
@@ -317,7 +318,7 @@ this README and the reference docs under [`docs/reference/`](docs/reference/).
 
 ## Validation
 
-- **Verification (synthetic-fixture suite):** ~39 core test files run on
+- **Verification (synthetic-fixture suite):** the core test tier runs on
   every push and PR — uniform-tracer invariance, mass-budget conservation,
   cross-window replay closure, conservative-regrid mass closure, CPU/GPU
   agreement bounded by 4-16 ULP.

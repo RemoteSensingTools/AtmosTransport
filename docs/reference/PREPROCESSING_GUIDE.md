@@ -19,7 +19,7 @@ What met data source?
 ├── GEOS-IT / GEOS-FP native cubed sphere
 │   ├── Native CS target (same Nc or nested coarsening) → preprocess_transport_binary.jl
 │   └── Vertical thinning / upper-atmosphere merge → typed vertical transform
-└── MERRA-2 → not yet implemented
+└── MERRA-2 native LL winds → CS (preview; raw files staged externally)
 ```
 
 ## ERA5 LatLon (recommended starting point)

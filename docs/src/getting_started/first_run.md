@@ -77,7 +77,7 @@ use_gpu = true               # false for CPU
 [numerics]
 float_type = "Float32"       # "Float64" on CUDA / CPU debug
 
-[run]
+[advection]
 scheme = "slopes"            # "slopes" (Russell-Lerner) or "ppm" (Putman-Lin)
 
 [tracers.co2_bl]
@@ -91,8 +91,8 @@ sigma_lon_deg = 35.0
 sigma_lat_deg = 18.0
 
 [output]
-snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
-snapshot_file  = "$ATMOSTRANSPORT_DATA_ROOT_quickstart/output/ll72x37_advonly.nc"
+hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
+path  = "$ATMOSTRANSPORT_DATA_ROOT_quickstart/output/ll72x37_advonly.nc"
 ```
 
 Things to know:
@@ -109,12 +109,13 @@ Things to know:
   `LinRoodPPMScheme` is CS-only and takes `ppm_order = 5` or `7`
   (orders 5 and 7 are the only valid choices; `"ppm"` does not accept
   `ppm_order`).
-- **`[tracers.<name>.init]`** declares the initial condition. Cubed-sphere
-  supports `uniform | file | netcdf | file_field | catrine_co2`. Lat-lon
-  additionally supports `bl_enhanced | gaussian_blob`.
-- **`[output]`** writes a single NetCDF at `snapshot_file` containing per-
+- **`[tracers.<name>.init]`** declares the initial condition. All topologies
+  support `uniform | latitude_step | gaussian_blob | file | netcdf |
+  file_field | catrine_co2`; specialized kinds have additional topology
+  restrictions documented in the [TOML schema](@ref).
+- **`[output]`** writes a single NetCDF at `path` containing per-
   tracer `<name>_column_mean` and `<name>_column_mass_per_area` plus the
-  `air_mass_column` (dimensions vary with topology — see
+  `column_air_mass_per_area` diagnostic (dimensions vary with topology — see
   [Inspecting output](@ref)).
 
 ## Where the met data comes from

@@ -92,9 +92,9 @@ documented validation run.
 | --- | :---: | --- |
 | Forward tape + checkpoint (revolve) | ✅ | `:device`, `:pinned_host`, `:mmap` storage |
 | Surface-emission footprints (LinRood ORD=5) | ✅ | `cs_surface_emission_footprint` |
-| Lin-Rood ORD=7 adjoint | 🟡 | Partial; panel-boundary correction wiring open |
-| TM5 convection adjoint | 🧪 | Column solve transposed; full regression open |
-| CMFMC convection adjoint | 📐 | Forward only |
+| Lin-Rood ORD=7 adjoint | 🟡 | Panel-edge VJP and checkpoint parity tests ship; campaign validation remains open |
+| TM5 convection adjoint | 🟡 | Default full-column/unmerged footprint and 4D-Var gradients are finite-difference tested |
+| CMFMC convection adjoint | 🟡 | Default unclamped F32/F64 transpose identity and footprint gradients are tested |
 | `copy_corners` reverse | 📐 | CS halo-corner adjoint gap |
 | Covariance B^{1/2} | ✅ | B1 shipped (`src/Inversion/Covariance.jl`) |
 | Preconditioning + log-normal bijection | 🟡 | Linear/log-normal transforms and covariance inverse are gradient-tested |
@@ -192,8 +192,8 @@ in Float32 arithmetic.
 > **Note on adjoint maturity.** The cubed-sphere discrete-adjoint and
 > surface-flux 4D-Var stack ship for the supported advection/operator matrix,
 > with checkpointing, covariance preconditioning, and optimization drivers.
-> Coverage is not universal: CMFMC convection, halo-corner reversal, and some
-> higher-order panel-boundary cases remain open. See
+> Coverage is not universal: halo-corner reversal and the optimized/clamped
+> convection variants remain open. See
 > [Adjoint status](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/theory/adjoint_status)
 > for details.
 

@@ -81,15 +81,12 @@ driver and applied column-locally on the halo-free panel interior.
 
 # Adjoint path
 
-The forward operator is linear in tracer mixing ratio (verified by
-the adjoint-identity test in `test/test_cmfmc_convection.jl`). NO
-positivity clamp is applied inside the kernel: the two-term tendency
-`cmfmc · (q_above - q_env) + dtrain · (qc - q_env)` stays linear,
-and tiny negativities that arise from inconsistent met data are
-absorbed by the global mass fixer. A future adjoint kernel reverses
-the two-pass order (tendency first, then updraft accumulation) with
-transposed coefficients; the four-term scavenging-restoring form is a
-wet-deposition follow-up.
+With `clamp = false`, the forward operator is linear in tracer mixing ratio
+and its transposed two-pass kernel ships in `Adjoints/ConvectionAdjoint.jl`.
+Adjoint-identity and end-to-end footprint finite-difference tests cover this
+default path. `clamp = true` is nonlinear; the footprint API rejects that
+variant until its branch decisions are taped and transposed. The four-term
+scavenging-restoring form remains a wet-deposition follow-up.
 """
 # `clamp = true` opts into the GCHP positivity clamp (Q+DELQ<0 → DELQ=−Q) made
 # conservative by a post-update per-column rescale. The clamp absorbs the CFL

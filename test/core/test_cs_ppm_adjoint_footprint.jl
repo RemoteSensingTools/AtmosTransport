@@ -228,6 +228,33 @@ function _to_gpu_steps(steps)
 end
 
 @testset "CS split-sweep surface-emission footprint prototype" begin
+    @testset "unsupported convection variants fail before footprint recording" begin
+        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
+            _constant_cs_problem(Nc=3, Nz=4, nsteps=1)
+        objective = AT.CSLayerMeanObjective(1, 2, 2, 3)
+
+        variants = (
+            (AT.CMFMCConvection(clamp=true), "clamp = false"),
+            (AT.TM5Convection(use_collab_lu=true), "full-column, unmerged"),
+            (AT.TM5Convection(lmax_conv=3), "full-column, unmerged"),
+            (AT.TM5Convection(n_merge=2), "full-column, unmerged"),
+            (AT.CMFMCMatrixConvection(use_collab_lu=true), "full-column, unmerged"),
+        )
+
+        for (op, expected) in variants
+            message = try
+                AT.cs_surface_emission_footprint(
+                    panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+                    mesh, objective; convection_op=op)
+                nothing
+            catch err
+                sprint(showerror, err)
+            end
+            @test message isa String
+            @test occursin(expected, something(message, ""))
+        end
+    end
+
     @testset "No-transport analytic footprint" begin
         mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
             _constant_cs_problem(Nc=3, Nz=3, nsteps=2)

@@ -85,7 +85,7 @@ The following work is on the roadmap but **not yet done**:
 | **CATRINE D7.1 intercomparison** | The European CATRINE protocol is the natural validation target (4 tracers: CO2, fossil CO2, SF6, 222Rn; full-physics; multi-month). The configs (`config/runs/catrine_*.toml`) exist; the runtime can produce the output. The **gated 1-day smoke test** `test/test_tm5_catrine_1day.jl` (in the `--all` suite) exercises the Catrine TM5-physics setup over a single day, but **no full multi-month CATRINE-protocol regression test** is committed and no protocol-vs-reference comparison memo has been published. | gated 1-day smoke test in place; output runs successfully (see `docs/validation/geosit_c180_unified_chain_2026_04_25.md` — internal memo); full protocol regression not yet wired |
 | **Observational closure** | Comparison of model output (column CO2, surface SF6 etc.) against an observational network (NOAA in-situ + TCCON / OCO satellite) | not started |
 | **Multi-month GPU production runs** | The longest GPU validation run committed is 7 days. Multi-week stability has been spot-checked but not regression-tested. | committed test ceiling: 7-day; production target: ~30-day |
-| **Adjoint kernels** | See [Adjoint status](@ref). Tape + checkpoint + revolve (bisection variant) + four-scheme reverse pass + 4D-Var driver are on CI. Gaps: CMFMC convection adjoint, `copy_corners` reverse, optimal binomial Revolve, TM5-4DVAR cross-validation. | partial (shipped) |
+| **Adjoint kernels** | See [Adjoint status](@ref). Tape + checkpoint + revolve (bisection variant), the supported advection/convection reverse paths, and the 4D-Var driver are on CI. Gaps: optimized/clamped convection variants, `copy_corners` reverse, optimal binomial Revolve, TM5-4DVAR cross-validation. | partial (shipped) |
 
 ## Floating-point tolerance practice
 
@@ -119,8 +119,8 @@ If you are doing:
   `scripts/diagnostics/compare_*` are the starting point.
 - **Inverse modelling that needs an adjoint** → the adjoint and
   4D-Var stack ship on CS. See [Adjoint status](@ref) for the supported
-  scheme matrix and the remaining gaps (CMFMC adjoint kernel,
-  `copy_corners` reverse, TM5-4DVAR cross-validation).
+  scheme matrix and the remaining gaps (optimized/clamped convection
+  variants, `copy_corners` reverse, and TM5-4DVAR cross-validation).
 - **Validation against observations** → not in scope today; the
   forward model has the fidelity, but the observation-comparison
   diagnostics are external.

@@ -51,6 +51,12 @@ transposition-tested (`test/test_linrood_kernel_adjoints.jl`) and
 finite-difference VJP-tested via single-panel and cross-panel halo
 compositions.
 
+The CS reverse pass also supports the default, unclamped/full-column/unmerged
+forms of `TM5Convection`, `CMFMCConvection`, and `CMFMCMatrixConvection`.
+CMFMC and CMFMC-matrix have column adjoint-identity tests; the TM5/CMFMC
+footprint paths are checked against finite-difference emission gradients in
+`test_cs_ppm_adjoint_footprint.jl`.
+
 ### Checkpoint schedules
 
 `src/Tape/CheckpointSchedule.jl` ships three checkpoint policies,
@@ -102,11 +108,10 @@ These are all on CI. Full inversion tests:
 | Item | Notes |
 | --- | --- |
 | **Optimal binomial Revolve** | `RevolveCheckpoint` ships as the bisection variant — logarithmic memory but not the Griewank–Walther optimal recompute count. Optimal binomial Revolve is the next refinement. |
-| **CMFMC convection adjoint** | The four-field TM5 convection has a transposed column solve; CMFMC does not have an adjoint kernel yet, so `cs_surface_emission_footprint` with `CMFMCConvection` is forward-only. |
 | **`copy_corners` reverse** | Cubed-sphere halo-corner exchange in the reverse pass is the remaining CS-side gap. |
+| **Optimized/clamped convection adjoints** | CMFMC `clamp = true` and TM5/CMFMC-matrix collaborative, truncated, or merged solves are rejected by the footprint API until their exact branches are taped and transposed. |
 | **TM5-4DVAR cross-validation** | Synthetic truth-recovery via `test_cs_inversion_truth_recovery.jl` is on CI; a side-by-side parity run against TM5-4DVAR on real data has not been published. |
 | **Tangent-linear model** | Forward TL is not exposed as a separate driver. If you need it, use the reverse pass plus identity seeding. |
-| **LinRood ORD=7 panel-boundary adjoint records** | ORD=7 kernel adjoints ship, but the panel-boundary correction is folded into the ORD=5 record type; a dedicated ORD=7 record family is a roadmap item. |
 
 ## Adjoint-readiness in the forward design
 

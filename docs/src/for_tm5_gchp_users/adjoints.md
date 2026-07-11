@@ -198,21 +198,22 @@ the [Validation status](../theory/validation_status.md) for the
 specific scheme/topology combinations that have a passing
 adjoint-identity test.
 
-## What's not yet adjointed
+## Remaining adjoint limitations
 
-The forward operators that lack a fully-wired adjoint kernel today:
+The remaining limitations in the reverse path are:
 
-- **Lin-Rood ORD=7 panel-boundary correction** has a partial adjoint
-  (kernel exists, but the panel-edge stencil is not yet a separate
-  record family); the production CS adjoint path uses
-  `LinRoodPPMScheme(ORD=5)`.
 - **`copy_corners` reverse** is the named gap for the cubed-sphere
   halo-corner exchange.
-- **TM5 convection adjoint** — the four-field column solve has a
-  partial transpose; full adjoint regression is open.
-- **CMFMC convection adjoint** — the upwind convection scheme has no
-  adjoint kernel yet; CS runs with `CMFMCConvection` cannot be
-  differentiated.
+- **Optimized/clamped convection variants** are not adjointed: CMFMC requires
+  `clamp = false`, while TM5 and CMFMC-matrix require
+  `use_collab_lu = false`, `lmax_conv = 0`, and `n_merge = 1`. The public
+  footprint API rejects other variants instead of silently using a mismatched
+  transpose.
+
+The CS footprint reverse pass supports the TM5, CMFMC, and CMFMC-matrix
+convection operators under those default settings. CMFMC and CMFMC-matrix
+have direct column adjoint-identity coverage; TM5 and CMFMC end-to-end
+emission gradients are finite-difference tested.
 
 If you need a feature on this list for a campaign, open an issue;
 priority follows campaign demand.

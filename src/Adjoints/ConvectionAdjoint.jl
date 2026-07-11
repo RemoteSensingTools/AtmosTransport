@@ -555,12 +555,40 @@ function _assert_tm5_adjoint_forcing(forcing)
     return forcing.tm5_fields
 end
 
+_require_supported_cs_convection_variant(::NoConvection) = nothing
+
+function _require_supported_cs_convection_variant(op::CMFMCConvection)
+    op.clamp && throw(ArgumentError(
+        "CS adjoint footprints currently require `CMFMCConvection(clamp = false)`: " *
+        "the positivity clamp is nonlinear and its branch decisions are not taped."))
+    return nothing
+end
+
+function _require_supported_cs_convection_variant(op::TM5Convection)
+    if op.use_collab_lu || op.lmax_conv != 0 || op.n_merge != 1
+        throw(ArgumentError(
+            "CS adjoint footprints currently support only the full-column, unmerged " *
+            "TM5 solve (`use_collab_lu = false`, `lmax_conv = 0`, `n_merge = 1`); " *
+            "got use_collab_lu=$(op.use_collab_lu), lmax_conv=$(op.lmax_conv), " *
+            "n_merge=$(op.n_merge)."))
+    end
+    return nothing
+end
+
+_require_supported_cs_convection_variant(op::CMFMCMatrixConvection) =
+    _require_supported_cs_convection_variant(op.inner)
+
 _require_cs_convection_workspace(::NoConvection, workspace) = nothing
-_require_cs_convection_workspace(::CMFMCConvection, workspace) =
-    _require_cmfmc_convection_workspace(workspace)
-_require_cs_convection_workspace(::TM5Convection, workspace) =
-    _require_tm5_convection_workspace(workspace)
-function _require_cs_convection_workspace(::CMFMCMatrixConvection, workspace)
+function _require_cs_convection_workspace(op::CMFMCConvection, workspace)
+    _require_supported_cs_convection_variant(op)
+    return _require_cmfmc_convection_workspace(workspace)
+end
+function _require_cs_convection_workspace(op::TM5Convection, workspace)
+    _require_supported_cs_convection_variant(op)
+    return _require_tm5_convection_workspace(workspace)
+end
+function _require_cs_convection_workspace(op::CMFMCMatrixConvection, workspace)
+    _require_supported_cs_convection_variant(op)
     workspace isa CMFMCMatrixWorkspace || throw(ArgumentError(
         "CS CMFMCMatrix adjoint convection requires a `CMFMCMatrixWorkspace`; got $(typeof(workspace))"))
     return _require_tm5_convection_workspace(workspace.tm5_workspace)
@@ -613,9 +641,10 @@ function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
 end
 
 function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
-                                       ::CMFMCConvection, dt,
+                                       op::CMFMCConvection, dt,
                                        workspace::CMFMCWorkspace,
                                        mesh::CubedSphereMesh)
+    _require_supported_cs_convection_variant(op)
     cmfmc, dtrain = _assert_cmfmc_adjoint_forcing(forcing)
     _require_cmfmc_convection_workspace(workspace)
     cell_areas = workspace.cell_metrics
@@ -643,9 +672,10 @@ function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
 end
 
 function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
-                                       ::TM5Convection, dt,
+                                       op::TM5Convection, dt,
                                        workspace::TM5Workspace,
                                        mesh::CubedSphereMesh)
+    _require_supported_cs_convection_variant(op)
     tm5 = _assert_tm5_adjoint_forcing(forcing)
     _require_tm5_convection_workspace(workspace)
     cell_areas = workspace.cell_metrics
@@ -679,6 +709,7 @@ function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
                                        op::CMFMCMatrixConvection, dt,
                                        workspace::CMFMCMatrixWorkspace,
                                        mesh::CubedSphereMesh)
+    _require_supported_cs_convection_variant(op)
     synth = _refresh_and_synthesize_cmfmc_matrix_forcing!(workspace, forcing)
     return _apply_cs_convection_forward!(panels_rm, panels_m, synth,
                                           op.inner, dt, workspace.tm5_workspace, mesh)
@@ -699,9 +730,10 @@ function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
 end
 
 function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
-                                       ::CMFMCConvection, dt,
+                                       op::CMFMCConvection, dt,
                                        workspace::CMFMCWorkspace,
                                        mesh::CubedSphereMesh)
+    _require_supported_cs_convection_variant(op)
     cmfmc, dtrain = _assert_cmfmc_adjoint_forcing(forcing)
     _require_cmfmc_convection_workspace(workspace)
     cell_areas = workspace.cell_metrics
@@ -729,9 +761,10 @@ function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
 end
 
 function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
-                                       ::TM5Convection, dt,
+                                       op::TM5Convection, dt,
                                        workspace::TM5Workspace,
                                        mesh::CubedSphereMesh)
+    _require_supported_cs_convection_variant(op)
     tm5 = _assert_tm5_adjoint_forcing(forcing)
     _require_tm5_convection_workspace(workspace)
     cell_areas = workspace.cell_metrics
@@ -768,6 +801,7 @@ function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
                                        op::CMFMCMatrixConvection, dt,
                                        workspace::CMFMCMatrixWorkspace,
                                        mesh::CubedSphereMesh)
+    _require_supported_cs_convection_variant(op)
     synth = _refresh_and_synthesize_cmfmc_matrix_forcing!(workspace, forcing)
     return _apply_cs_convection_adjoint!(lambda_panels, panels_m, synth,
                                           op.inner, dt, workspace.tm5_workspace, mesh)

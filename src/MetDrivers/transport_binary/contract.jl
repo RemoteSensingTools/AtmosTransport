@@ -6,6 +6,38 @@
 # shared `using`s). Split out of the former 2658-line monolith — pure code
 # move, no behavior change.
 
+# Header JSON is null-terminated inside the fixed-width header region. Read it
+# incrementally so metadata may exceed the historical 256 KiB probe without
+# scanning an unbounded payload when a file is corrupt.
+const _TRANSPORT_HEADER_READ_CHUNK_BYTES = 262_144
+const _TRANSPORT_MAX_HEADER_JSON_BYTES = 16 * 1024 * 1024
+
+function _read_transport_header_json(io::IO; source::AbstractString = "transport binary")
+    seekstart(io)
+    json_bytes = UInt8[]
+    sizehint!(json_bytes, _TRANSPORT_HEADER_READ_CHUNK_BYTES)
+
+    while length(json_bytes) < _TRANSPORT_MAX_HEADER_JSON_BYTES
+        remaining = _TRANSPORT_MAX_HEADER_JSON_BYTES - length(json_bytes)
+        chunk = read(io, min(_TRANSPORT_HEADER_READ_CHUNK_BYTES, remaining))
+        isempty(chunk) && throw(ArgumentError(
+            "$(source) JSON header is not null-terminated before end of file"))
+
+        null_index = findfirst(==(0x00), chunk)
+        if null_index !== nothing
+            append!(json_bytes, @view chunk[1:(null_index - 1)])
+            isempty(json_bytes) && throw(ArgumentError(
+                "$(source) JSON header is empty"))
+            return json_bytes
+        end
+        append!(json_bytes, chunk)
+    end
+
+    throw(ArgumentError(
+        "$(source) JSON header is not null-terminated within " *
+        "$(_TRANSPORT_MAX_HEADER_JSON_BYTES) bytes"))
+end
+
 """
     TransportBinaryContract(; source_flux_sampling, air_mass_sampling,
                               flux_sampling, flux_kind, delta_semantics,
@@ -196,6 +228,9 @@ function _validate_transport_layout!(header::AbstractDict)
         throw(ArgumentError(
             "Transport-binary contract violation — header contains values that cannot be encoded as JSON"))
     end
+    encoded_header_bytes < _TRANSPORT_MAX_HEADER_JSON_BYTES || throw(ArgumentError(
+        "Transport-binary contract violation — encoded JSON header must be smaller than " *
+        "$(_TRANSPORT_MAX_HEADER_JSON_BYTES) bytes"))
     header_bytes > encoded_header_bytes || throw(ArgumentError(
         "Transport-binary contract violation — header_bytes leaves no room for a null terminator"))
 

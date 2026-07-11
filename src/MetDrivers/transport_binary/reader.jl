@@ -103,15 +103,15 @@ has_vdiff_fields(r::TransportBinaryReader) =
 function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Float32)
     io = open(bin_path, "r")
     try
-        read_sz = min(262144, filesize(bin_path))
-        raw = read(io, read_sz)
+        raw = _read_transport_header_json(io; source = "transport binary $(bin_path)")
 
         # Validate the self-describing transport-binary contract before mmap.
-        json_end = something(findfirst(==(0x00), raw), length(raw) + 1) - 1
-        hdr_obj = JSON3.read(String(raw[1:json_end]))
+        # `String(::Vector{UInt8})` may take ownership of and empty the vector;
+        # keep `raw` intact for the typed header parser below.
+        hdr_obj = JSON3.read(String(copy(raw)))
         hdr_dict = Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr_obj))
         validate_transport_contract!(hdr_dict)
-        json_end < Int(hdr_dict["header_bytes"]) || throw(ArgumentError(
+        length(raw) < Int(hdr_dict["header_bytes"]) || throw(ArgumentError(
             "transport binary JSON header is not null-terminated before header_bytes"))
 
         header = _parse_transport_header(raw)

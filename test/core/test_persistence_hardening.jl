@@ -212,6 +212,64 @@ end
     end
 end
 
+@testset "binary readers support headers larger than the legacy probe" begin
+    mktempdir() do dir
+        metadata = Dict{String,Any}("oversized_metadata" => "x"^300_000)
+
+        rg_path = joinpath(dir, "large-header-rg.bin")
+        grid, window = _rg_fixture()
+        rg_writer = MD.open_streaming_transport_binary(
+            rg_path, grid, 1, window;
+            FT=Float32, header_bytes=400_000, steps_per_window=1,
+            source_flux_sampling=:window_start_endpoint,
+            humidity_sampling=:none, delta_semantics=:none, mass_basis=:dry,
+            extra_header=metadata,
+        )
+        MD.write_streaming_window!(rg_writer, window)
+        MD.close_streaming_transport_binary!(rg_writer)
+        rg_reader = MD.TransportBinaryReader(rg_path)
+        close(rg_reader)
+        @test MD.inspect_binary(rg_path; io=IOBuffer()).grid_type == :reduced_gaussian
+
+        cs_path = joinpath(dir, "large-header-cs.bin")
+        Nc, npanel, Nz = 1, 6, 1
+        vc = HybridSigmaPressure(Float32[0, 1000], Float32[0, 1])
+        cs_writer = MD.open_streaming_cs_transport_binary(
+            cs_path, Nc, npanel, Nz, 1, vc;
+            FT=Float32, header_bytes=400_000, steps_per_window=1,
+            mass_basis=:dry, extra_header=metadata,
+        )
+        cs_window = (
+            m=ntuple(_ -> ones(Float32, Nc, Nc, Nz), npanel),
+            am=ntuple(_ -> zeros(Float32, Nc + 1, Nc, Nz), npanel),
+            bm=ntuple(_ -> zeros(Float32, Nc, Nc + 1, Nz), npanel),
+            cm=ntuple(_ -> zeros(Float32, Nc, Nc, Nz + 1), npanel),
+            ps=ntuple(_ -> fill(90_000f0, Nc, Nc), npanel),
+        )
+        MD.write_streaming_cs_window!(cs_writer, cs_window, Nc, npanel)
+        MD.close_streaming_transport_binary!(cs_writer)
+        cs_reader = MD.CubedSphereBinaryReader(cs_path)
+        close(cs_reader)
+        @test MD.inspect_binary(cs_path; io=IOBuffer()).grid_type == :cubed_sphere
+
+        # JSON permits trailing whitespace, but its NUL terminator must still
+        # occur inside the declared header region rather than in the payload.
+        open(cs_path, "r+") do io
+            prefix = read(io, 400_001)
+            null_index = something(findfirst(==(0x00), prefix))
+            seek(io, null_index - 1)
+            write(io, fill(UInt8(' '), 400_001 - null_index))
+            write(io, UInt8(0))
+        end
+        @test_throws ArgumentError MD.CubedSphereBinaryReader(cs_path)
+    end
+
+    @test_throws ArgumentError MD._read_transport_header_json(
+        IOBuffer(Vector{UInt8}(codeunits("{\"unterminated\":true}")));
+        source="test binary",
+    )
+end
+
 @testset "mmap tape manifest is atomic and cannot outlive its records" begin
     mktempdir() do dir
         panels = ntuple(_ -> ones(Float32, 2, 2, 1), 6)

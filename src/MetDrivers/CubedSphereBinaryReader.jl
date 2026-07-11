@@ -68,9 +68,8 @@ end
 
 function _cs_on_disk_float_type(path::AbstractString)
     open(path, "r") do io
-        raw = read(io, min(filesize(path), 262144))
-        json_end = something(findfirst(==(0x00), raw), length(raw) + 1) - 1
-        hdr = JSON3.read(String(raw[1:json_end]))
+        raw = _read_transport_header_json(io; source = "cubed-sphere binary $(path)")
+        hdr = JSON3.read(String(raw))
         float_bytes = Int(get(hdr, :float_bytes, 4))
         float_bytes in (4, 8) || throw(ArgumentError(
             "unsupported cubed-sphere binary float_bytes=$(float_bytes)"))
@@ -89,13 +88,13 @@ _open_cubed_sphere_binary_reader(path::AbstractString) =
 function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Float64)
     io = open(bin_path, "r")
     try
-        # Detect header size from JSON.
-        raw = read(io, min(filesize(bin_path), 262144))
-        json_end = something(findfirst(==(0x00), raw), length(raw) + 1) - 1
-        hdr = JSON3.read(String(raw[1:json_end]))
+        raw = _read_transport_header_json(io; source = "cubed-sphere binary $(bin_path)")
+        # `String(::Vector{UInt8})` may take ownership of and empty the vector;
+        # preserve it for the terminator-vs-header-region check below.
+        hdr = JSON3.read(String(copy(raw)))
         hdr_dict = Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
         validate_transport_contract!(hdr_dict)
-        json_end < Int(hdr_dict["header_bytes"]) || throw(ArgumentError(
+        length(raw) < Int(hdr_dict["header_bytes"]) || throw(ArgumentError(
             "cubed-sphere binary JSON header is not null-terminated before header_bytes"))
 
         format_version = Int(hdr.format_version)

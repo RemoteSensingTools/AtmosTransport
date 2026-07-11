@@ -95,11 +95,9 @@ end
 function _peek_grid_type(path::AbstractString)
     try
         open(path, "r") do io
-            chunk = read(io, min(filesize(path), 262144))
-            null_idx = findfirst(==(0x00), chunk)
-            json_end = null_idx === nothing ? length(chunk) : null_idx - 1
-            json_end < 1 && return :latlon
-            hdr = _peek_parse_header(@view chunk[1:json_end])
+            header_json = _read_transport_header_json(
+                io; source = "transport binary $(path)")
+            hdr = _peek_parse_header(header_json)
             raw = get(hdr, :grid_type, get(hdr, "grid_type", "latlon"))
             return Symbol(lowercase(String(raw)))
         end

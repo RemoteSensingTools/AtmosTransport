@@ -102,3 +102,27 @@ end
         cfg, "--start", "2021-12-03", "--end", "2021-12-01",
     ])
 end
+
+@testset "runtime preload rejects non-boolean GPU flags" begin
+    mktempdir() do dir
+        cfg = joinpath(dir, "invalid-gpu-flag.toml")
+        write(cfg, "[architecture]\nuse_gpu = 1\nbackend = \"cpu\"\n")
+
+        script = joinpath(REPO_ROOT, "scripts", "run_transport.jl")
+        cmd = addenv(
+            `$(Base.julia_cmd()) --project=$(joinpath(REPO_ROOT, "test")) $script $cfg`,
+            "ATMOSTR_NO_AUTO_THREADS" => "1",
+        )
+        stdout_buffer = IOBuffer()
+        stderr_buffer = IOBuffer()
+        process = run(pipeline(ignorestatus(cmd);
+                               stdout=stdout_buffer, stderr=stderr_buffer))
+
+        @test !success(process)
+        @test occursin(
+            "[architecture].use_gpu must be true or false; got 1",
+            String(take!(stderr_buffer)),
+        )
+        @test isempty(take!(stdout_buffer))
+    end
+end

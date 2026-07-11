@@ -63,7 +63,10 @@ if !isempty(ARGS)
         _cfg = try TOML.parsefile(_cfg_path) catch; nothing end
         if _cfg !== nothing
             _arch = get(_cfg, "architecture", Dict{String, Any}())
-            _use_gpu = Bool(get(_arch, "use_gpu", false))
+            _use_gpu_raw = get(_arch, "use_gpu", false)
+            _use_gpu_raw isa Bool || throw(ArgumentError(
+                "[architecture].use_gpu must be true or false; got $(repr(_use_gpu_raw))"))
+            _use_gpu = _use_gpu_raw
             _backend = lowercase(String(get(_arch, "backend",
                                             _use_gpu ? "auto" : "cpu")))
             _backend = replace(_backend, '-' => '_', ' ' => '_')

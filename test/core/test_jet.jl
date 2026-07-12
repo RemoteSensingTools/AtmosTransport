@@ -19,7 +19,10 @@ Two patterns dominate the current report count and are NOT bugs:
    parameter. Every KA-using package hits this. Documented at
    https://github.com/aviatesk/JET.jl/issues/?q=KernelAbstractions.
    JET/Julia 1.12 reports more of these known-tolerated paths than
-   the Julia 1.10 JET stack, so the baseline is version-aware.
+   the Julia 1.10 JET stack, so the baseline is version-aware. The
+   exact-TM5 `dkg` diffusion path adds two kernels and four reports
+   (the failed GPU union-split branch and its propagated return type
+   for each kernel), without introducing runtime type instability.
 
 2. **Parametric `@kwdef` zero-arg constructors** — `Base.@kwdef`
    auto-generates a zero-arg constructor for
@@ -64,10 +67,11 @@ const HOT_PATH_MODULES = (
 # Snapshot baselines captured during CI runs. Dominant sources are the
 # known-tolerated patterns documented above.
 # The 1.12 baseline was re-measured with JET 0.11.5 after the runtime-contract
-# cleanup. The 1.10 count retains its CI-measured allowance for the older JET
-# stack. Keep these at the observed counts so the snapshot remains a real gate.
+# cleanup. The 1.10 baseline retains its prior CI-measured allowance; the
+# compatible JET stack does not surface the two new kernel call sites.
+# Keep these at the expected counts so the snapshot remains a real gate.
 const JET_HOT_PATH_BASELINE_1_10 = 130
-const JET_HOT_PATH_BASELINE_1_12 = 177
+const JET_HOT_PATH_BASELINE_1_12 = 181
 const JET_HOT_PATH_BASELINE =
     VERSION >= v"1.12" ? JET_HOT_PATH_BASELINE_1_12 :
                          JET_HOT_PATH_BASELINE_1_10

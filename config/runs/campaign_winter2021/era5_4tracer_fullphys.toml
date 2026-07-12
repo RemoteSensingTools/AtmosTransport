@@ -2,7 +2,7 @@
 # CAMPAIGN — ERA5 N320->C180 + full physics, 4 tracers, December 2021.
 # The wind-derived (spectral, M=0) reference alongside the GEOS-IT omega run,
 # both vs GEOS-Chem. Same 4-tracer + emission setup (verified GO vs GC); ERA5
-# uses its own precomputed TM5 convection (entu/detu/entd/detd) + :kz diffusion.
+# uses its own precomputed TM5 convection (entu/detu/entd/detd) + :dkg diffusion.
 #
 # REQUIRES: ERA5 N320->C180 binaries for the period (only Dec 2021 + partial
 # 2022 generated so far; the C180 gen needs to catch up to the downloaded raw).
@@ -61,7 +61,7 @@ scheme = "ppm"
   time_index = 12
 
 [diffusion]
-kind = "precomputed_kz"             # ERA5 carries the TM5 bldiff :kz section
+kind = "precomputed_kz"             # ERA5 carries the exact TM5 bldiff :dkg section
 surface_flux_boundary = true
 
 [convection]

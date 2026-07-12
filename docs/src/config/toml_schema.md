@@ -209,10 +209,10 @@ kind  = "constant"              # "none" | "constant" |
                                 # "pbl" (legacy alias for the above; CS-only) |
                                 # "geoschem_holtslag_boville_vdiff" (CS-only;
                                 #   requires include_gchp_vdiff=true binary) |
-                                # "precomputed_kz" (CS-only; uses the binary's
-                                #   :kz payload, the TM5 bldiff eddy diffusivity
-                                #   baked at preprocess time — requires a binary
-                                #   built with include_tm5_diffusion=true)
+                                # "precomputed_kz" (CS-only; prefers the exact
+                                #   TM5 :dkg interface-exchange payload; legacy
+                                #   :kz binaries remain readable — requires a
+                                #   binary built with include_tm5_diffusion=true)
 value = 1.0                     # m²/s — broadcast Kz when kind="constant"
 surface_flux_boundary = false   # true: S(dt)->V(dt); false: V/2->S->V/2
 

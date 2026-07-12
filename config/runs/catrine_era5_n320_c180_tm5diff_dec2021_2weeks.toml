@@ -1,6 +1,6 @@
 # ===========================================================================
 # Two-week CATRINE 4-tracer ERA5-N320 → C180 run with the TM5 boundary-layer
-# diffusion (precomputed `:kz` from bldiff) + TM5 four-field convection, driving
+# diffusion (precomputed exact `:dkg` from bldiff) + TM5 four-field convection, driving
 # fossil + natural CO2 + SF6 + Rn222 from the adaptive-substep, dry-mass-pinned
 # Dec 1-14 2021 ERA5 N320 transport binaries.
 #
@@ -9,7 +9,7 @@
 # directly comparable; the differences are the MET SOURCE (ERA5 N320 vs GEOS-IT)
 # and the PHYSICS the binary carries:
 #   - diffusion: `precomputed_kz` (TM5 Holtslag-Boville non-local PBL, baked into
-#     the `:kz` payload) instead of GCHP `geoschem_holtslag_boville_vdiff`.
+#     the `:dkg` payload) instead of GCHP `geoschem_holtslag_boville_vdiff`.
 #   - convection: TM5 four-field (entu/detu/entd/detd) instead of CMFMC-matrix.
 #
 # Runner:
@@ -67,7 +67,7 @@ scheme = "ppm"
   time_index = 12
 
 # TM5 boundary-layer diffusion — the non-local Holtslag-Boville Kz the
-# preprocessor baked into the binary's `:kz` payload (this run's headline).
+# preprocessor baked into the binary's `:dkg` payload (this run's headline).
 [diffusion]
 kind = "precomputed_kz"
 surface_flux_boundary = true

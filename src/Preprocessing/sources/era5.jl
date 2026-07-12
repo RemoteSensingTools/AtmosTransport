@@ -47,9 +47,9 @@ Base.@kwdef struct ERA5GRIBSettings{flavor} <: AbstractERA5GRIBSettings
     include_surface       :: Bool   = false
     include_convection    :: Bool   = false
     include_vdiff_fields  :: Bool   = false
-    # Precompute the TM5 boundary-layer diffusion (`bldiff`, Holtslag-Boville
-    # non-local PBL) eddy diffusivity into the binary `:kz` payload. Requires
-    # the surface stream (sshf + slhf + ustar) and the synthesised 3D fields.
+    # Precompute exact TM5 boundary-layer diffusion interface exchange (`dkg`)
+    # into the binary. Requires the surface stream (sshf + slhf + ustar),
+    # target dry mass, and the synthesised 3D fields.
     include_tm5_diffusion :: Bool   = false
     # Source surface pressure from the ARCO single_level netCDF (0.25° `sp`,
     # bilinear-interpolated to N320) instead of synthesising spectral `lnsp`.
@@ -1128,13 +1128,14 @@ function read_era5_n320_convection_window!(fields::ERA5N320ConvectionFields{FT},
 end
 
 # ===========================================================================
-# TM5 convection conversion on N320 source mesh.
+# Legacy TM5 convection conversion helper on the N320 source mesh.
 #
 # `ec2tm_from_rates!` (from `Preprocessing/tm5_convection_conversion.jl`)
 # converts ECMWF's (UDMF, DDMF, UDRF, DDRF) at one column into TM5's
 # (entu, detu, entd, detd) at layer centers. This block adapts that
 # column-level call to the (n_cells, Nz) reduced-Gaussian layout used by
-# the rest of the ERA5 N320 pipeline.
+# the rest of the ERA5 N320 pipeline. The production C180 path below does not
+# use this ordering: it maps raw diagnostics first and converts on C180.
 # ===========================================================================
 
 """
@@ -1318,16 +1319,33 @@ end
 """
     ERA5C180TM5ConvectionFields{FT}
 
-TM5 convection fields regridded onto the C180 cubed-sphere target.
+TM5 convection fields derived on the C180 cubed-sphere target after the raw
+ECMWF diagnostics have been conservatively mapped there.
 Each field is a 6-tuple of `(Nc, Nc, Nz)` panel arrays, layer-centered,
-kg / m² / s. Conservative regrid is fine for entrainment/detrainment
-fluxes since they're intensive scalars from the writer's perspective.
+kg / m² / s.
 """
 struct ERA5C180TM5ConvectionFields{FT <: AbstractFloat}
     entu :: NTuple{6, Array{FT, 3}}
     detu :: NTuple{6, Array{FT, 3}}
     entd :: NTuple{6, Array{FT, 3}}
     detd :: NTuple{6, Array{FT, 3}}
+end
+
+"""Raw ECMWF convection diagnostics after conservative N320 → C180 mapping.
+Conversion to TM5 entrainment/detrainment deliberately happens only after this
+step, matching `tmm_Read_Convec_EC` in the vendored TM5 procedure."""
+struct ERA5C180RawConvectionFields{FT <: AbstractFloat}
+    udmf :: NTuple{6, Array{FT, 3}}
+    ddmf :: NTuple{6, Array{FT, 3}}
+    udrf :: NTuple{6, Array{FT, 3}}
+    ddrf :: NTuple{6, Array{FT, 3}}
+end
+
+function allocate_era5_c180_raw_convection_fields(
+        target_grid::CubedSphereTargetGeometry{FT}, Nz::Integer) where FT
+    Nc, Nz_int = target_grid.mesh.Nc, Int(Nz)
+    panels() = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
+    return ERA5C180RawConvectionFields{FT}(panels(), panels(), panels(), panels())
 end
 
 function allocate_era5_c180_tm5_convection_fields(target_grid::CubedSphereTargetGeometry{FT},
@@ -1460,6 +1478,74 @@ function regrid_n320_tm5_convection_to_c180!(
         _unpack_flat_to_cs_panels_3d!(dst_panels, workspace.dst_flat_3d, Nc, Nz)
     end
     return tm5_c180
+end
+
+function regrid_n320_raw_convection_to_c180!(
+        conv_c180::ERA5C180RawConvectionFields{FT},
+        conv_n320::ERA5N320ConvectionFields{FT},
+        workspace::ERA5C180RegridWorkspace{FT},
+        target_grid::CubedSphereTargetGeometry{FT}) where FT
+    Nc = target_grid.mesh.Nc
+    Nz = size(conv_n320.udmf, 2)
+    for (src_field, dst_panels) in (
+            (conv_n320.udmf, conv_c180.udmf),
+            (conv_n320.ddmf, conv_c180.ddmf),
+            (conv_n320.udrf, conv_c180.udrf),
+            (conv_n320.ddrf, conv_c180.ddrf))
+        _regrid_3d_intensive!(workspace.dst_flat_3d, workspace.src_flat_3d,
+                              workspace.regridder, src_field)
+        _unpack_flat_to_cs_panels_3d!(dst_panels, workspace.dst_flat_3d, Nc, Nz)
+    end
+    return conv_c180
+end
+
+function derive_c180_tm5_convection!(
+        tm5_fields::ERA5C180TM5ConvectionFields{FT},
+        conv_fields::ERA5C180RawConvectionFields{FT},
+        window_fields::ERA5C180RegridFields{FT},
+        vc::HybridSigmaPressure,
+        scratches::Vector{ERA5N320TM5DeriveScratch{FT}};
+        stats = nothing) where FT
+    thread_stats = stats === nothing ? nothing :
+        [TM5CleanupStats() for _ in 1:Threads.maxthreadid()]
+    Threads.@threads :static for p in 1:6
+        tid = Threads.threadid()
+        scratch = scratches[tid]
+        local_stats = thread_stats === nothing ? nothing : thread_stats[tid]
+        Nz = size(window_fields.t[p], 3)
+        @inbounds for j in axes(window_fields.t[p], 2), i in axes(window_fields.t[p], 1)
+            scratch.udmf_col[1] = zero(FT)
+            scratch.ddmf_col[1] = zero(FT)
+            for k in 1:Nz
+                scratch.udmf_col[k + 1] = conv_fields.udmf[p][i, j, k]
+                scratch.ddmf_col[k + 1] = conv_fields.ddmf[p][i, j, k]
+                scratch.udrf_col[k] = conv_fields.udrf[p][i, j, k]
+                scratch.ddrf_col[k] = conv_fields.ddrf[p][i, j, k]
+                scratch.t_col[k] = window_fields.t[p][i, j, k]
+                scratch.q_col[k] = window_fields.qv[p][i, j, k]
+            end
+            dz_hydrostatic_virtual!(scratch.dz_col, scratch.t_col, scratch.q_col,
+                                     window_fields.ps[p][i, j], vc.A, vc.B, Nz)
+            ec2tm_from_rates!(scratch.entu_col, scratch.detu_col,
+                              scratch.entd_col, scratch.detd_col,
+                              scratch.udmf_col, scratch.ddmf_col,
+                              scratch.udrf_col, scratch.ddrf_col,
+                              scratch.dz_col, Nz; stats = local_stats)
+            for k in 1:Nz
+                tm5_fields.entu[p][i, j, k] = scratch.entu_col[k]
+                tm5_fields.detu[p][i, j, k] = scratch.detu_col[k]
+                tm5_fields.entd[p][i, j, k] = scratch.entd_col[k]
+                tm5_fields.detd[p][i, j, k] = scratch.detd_col[k]
+            end
+        end
+    end
+    if stats !== nothing
+        for name in propertynames(stats)
+            getproperty(stats, name)[] +=
+                sum(getproperty(s, name)[] for s in thread_stats)
+        end
+    end
+    return tm5_fields
 end
 
 # ---------------------------------------------------------------------------
@@ -1600,10 +1686,10 @@ struct ERA5N320ToC180Pipeline{FT <: AbstractFloat,
     window_fields      :: ERA5N320WindowFields{FT}
     dry_fields         :: ERA5N320DryMassFields{FT}
     convection_fields  :: Union{Nothing, ERA5N320ConvectionFields{FT}}
-    # TM5 entrainment/detrainment derived from (UDMF/DDMF/UDRF/DDRF). Nothing
-    # when the pipeline was built with `include_convection = false`.
-    tm5_n320_fields    :: Union{Nothing, ERA5N320TM5ConvectionFields{FT}}
-    tm5_derive_scratch :: Union{Nothing, ERA5N320TM5DeriveScratch{FT}}
+    # Raw diagnostics are mapped first; nonlinear ec2tm conversion and closure
+    # are then evaluated independently on every target column.
+    convection_c180_fields :: Union{Nothing, ERA5C180RawConvectionFields{FT}}
+    tm5_derive_scratches :: Union{Nothing, Vector{ERA5N320TM5DeriveScratch{FT}}}
     tm5_c180_fields    :: Union{Nothing, ERA5C180TM5ConvectionFields{FT}}
     c180_fields        :: ERA5C180RegridFields{FT}
 end
@@ -1647,10 +1733,11 @@ function allocate_era5_n320_to_c180_pipeline(handles::ERA5GRIBDayHandles,
     dry_fields    = allocate_era5_n320_dry_mass_fields(source_grid, Nz_int)
     convection_fields = include_convection ?
         allocate_era5_n320_convection_fields(source_grid, Nz_int) : nothing
-    tm5_n320_fields = include_convection ?
-        allocate_era5_n320_tm5_convection_fields(source_grid, Nz_int) : nothing
-    tm5_derive_scratch = include_convection ?
-        allocate_era5_n320_tm5_derive_scratch(FT, Nz_int) : nothing
+    convection_c180_fields = include_convection ?
+        allocate_era5_c180_raw_convection_fields(target_grid, Nz_int) : nothing
+    tm5_derive_scratches = include_convection ?
+        [allocate_era5_n320_tm5_derive_scratch(FT, Nz_int)
+         for _ in 1:Threads.maxthreadid()] : nothing
     tm5_c180_fields = include_convection ?
         allocate_era5_c180_tm5_convection_fields(target_grid, Nz_int) : nothing
     c180_fields   = allocate_era5_c180_regrid_fields(target_grid, Nz_int)
@@ -1659,7 +1746,7 @@ function allocate_era5_n320_to_c180_pipeline(handles::ERA5GRIBDayHandles,
         source_grid, target_grid, vc, cell_areas,
         spectral_ws, regrid_ws,
         window_fields, dry_fields, convection_fields,
-        tm5_n320_fields, tm5_derive_scratch, tm5_c180_fields,
+        convection_c180_fields, tm5_derive_scratches, tm5_c180_fields,
         c180_fields)
 end
 
@@ -1670,11 +1757,9 @@ Drive the per-window pipeline for `(date, hour)`:
 
   1. Synthesise PS / U / V / T / Q on the N320 source mesh (breakpoint B).
   2. Derive dry-air mass + DELP_dry + PS_dry on the source mesh (breakpoint C).
-  3. Optionally read UDMF / DDMF / UDRF / DDRF for the matching forecast
-     sample (breakpoint E), if the pipeline was built with
-     `include_convection = true`.
-  4. Conservatively regrid PS / U / V / T / Q to the C-tier target
-     (breakpoint D).
+  3. Conservatively regrid PS / U / V / T / Q to the C-tier target.
+  4. Optionally read and regrid raw UDMF / DDMF / UDRF / DDRF, then perform
+     the nonlinear TM5 conversion and closure on the target columns.
 
 After the call, `pipeline.window_fields`, `pipeline.dry_fields`,
 `pipeline.convection_fields`, and `pipeline.c180_fields` carry the
@@ -1696,26 +1781,28 @@ function process_era5_n320_window!(pipeline::ERA5N320ToC180Pipeline,
         _t = time()
         read_era5_n320_convection_window!(pipeline.convection_fields, handles,
                                             pipeline.source_grid.mesh, date, hour)
-        # ec2tm conversion on N320 (per-column) + regrid to C180. Gated on
-        # the same `include_convection` toggle so the scalar-only smoke path
-        # remains exact-CPU-fast.
-        derive_n320_tm5_convection!(pipeline.tm5_n320_fields,
-                                     pipeline.convection_fields,
-                                     pipeline.window_fields,
-                                     pipeline.vc,
-                                     pipeline.tm5_derive_scratch)
-        regrid_n320_tm5_convection_to_c180!(pipeline.tm5_c180_fields,
-                                              pipeline.tm5_n320_fields,
-                                              pipeline.regrid_ws,
-                                              pipeline.target_grid)
-        _t_conv = time() - _t
+        _t_conv += time() - _t
     end
     _t = time()
     regrid_n320_to_c180!(pipeline.c180_fields, pipeline.window_fields,
                            pipeline.regrid_ws, pipeline.target_grid)
+    _t_regrid = time() - _t
+    if pipeline.convection_fields !== nothing
+        _t = time()
+        regrid_n320_raw_convection_to_c180!(pipeline.convection_c180_fields,
+                                             pipeline.convection_fields,
+                                             pipeline.regrid_ws,
+                                             pipeline.target_grid)
+        derive_c180_tm5_convection!(pipeline.tm5_c180_fields,
+                                     pipeline.convection_c180_fields,
+                                     pipeline.c180_fields,
+                                     pipeline.vc,
+                                     pipeline.tm5_derive_scratches)
+        _t_conv += time() - _t
+    end
     if _prof
         @info @sprintf("    [prof] window phases: read+synth %.1fs  drymass %.1fs  conv %.1fs  regrid→c180 %.1fs",
-                       _t_read, _t_drymass, _t_conv, time() - _t)
+                       _t_read, _t_drymass, _t_conv, _t_regrid)
     end
     return pipeline
 end

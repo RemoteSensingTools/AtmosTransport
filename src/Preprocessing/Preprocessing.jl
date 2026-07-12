@@ -306,6 +306,9 @@ export ERA5C180RegridFields, ERA5C180RegridWorkspace,
        regrid_n320_to_c180!
 export ERA5N320ConvectionFields, allocate_era5_n320_convection_fields,
        read_era5_n320_convection_window!, era5_convection_hour_address
+export ERA5C180RawConvectionFields, ERA5C180TM5ConvectionFields,
+       allocate_era5_c180_raw_convection_fields,
+       regrid_n320_raw_convection_to_c180!, derive_c180_tm5_convection!
 export ERA5N320ToC180Pipeline, allocate_era5_n320_to_c180_pipeline,
        process_era5_n320_window!
 export process_era5_n320_to_cs_day

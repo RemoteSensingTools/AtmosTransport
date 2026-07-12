@@ -41,7 +41,8 @@ Adapt.adapt_structure(_to, op::NoDiffusion) = op
 """
     ImplicitVerticalDiffusion(; kz_field)
 
-Backward-Euler vertical diffusion driven by a cell-centered Kz field.
+Backward-Euler vertical diffusion driven by either a cell-centered Kz field or
+an exact precomputed TM5 interface `dkg` field.
 Two spatial layouts are supported:
 
 - structured: `AbstractTimeVaryingField{FT, 3}` over `(Nx, Ny, Nz)`
@@ -64,10 +65,12 @@ Concrete examples:
   `t` drawn from the meteorology where available; currently
   passes `zero(FT)` as a placeholder (chemistry-style, mirroring the
   deferred `current_time(meteo)` accessor).
-- Reads `workspace.dz_scratch` as the current layer thicknesses [m].
+- For Kz fields, reads `workspace.dz_scratch` as the current layer thicknesses [m].
   The caller is responsible for filling this array before calling
   `apply!` — typically from a hydrostatic integration of the current
   `delp` and surface temperature.
+- `PrecomputedCSDkgField` bypasses Kz/geometry reconstruction and does not read
+  `dz_scratch`; its interface exchange [kg s⁻¹] is already complete.
 - Uses `workspace.w_scratch` as Thomas-forward-elimination storage.
 - Launches a layout-specific diffusion kernel:
   - structured: `_vertical_diffusion_kernel!` over `(Nx, Ny, Nt)`
@@ -80,7 +83,8 @@ half-steps.
 # Fields
 - `kz_field::KzF` — any `AbstractTimeVaryingField{FT, 2}` or
   `AbstractTimeVaryingField{FT, 3}` providing cell-centered Kz values
-  [m²/s geometric].
+  [m²/s geometric], or a `PrecomputedCSDkgField`. The field name is retained
+  for source compatibility with existing operator construction.
 """
 struct ImplicitVerticalDiffusion{FT, KzF, SFC <: AbstractSurfaceFluxCoupling} <: AbstractDiffusion
     kz_field              :: KzF
@@ -359,6 +363,63 @@ function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 2},
     kernel(q_raw, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz;
            ndrange = ncells)
     synchronize(backend)
+    return nothing
+end
+
+function apply_vertical_diffusion!(q_raw::NTuple{6, A},
+                                   air_mass::NTuple{6, <:AbstractArray{FT, 3}},
+                                   op::ImplicitVerticalDiffusion{FT, KzF},
+                                   workspace, dt,
+                                   meteo = nothing;
+                                   halo_width::Integer) where {FT, A <: AbstractArray{FT, 3},
+                                                                KzF <: PrecomputedCSDkgField{FT}}
+    w_scratch = getproperty(workspace, :w_scratch)
+    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+    Hp = Int(halo_width)
+    @inbounds for p in 1:6
+        panel_q = q_raw[p]
+        panel_m = air_mass[p]
+        Nc = size(panel_q, 1) - 2 * Hp
+        Ny = size(panel_q, 2) - 2 * Hp
+        Nz = size(panel_q, 3)
+        size(w_scratch[p]) == (Nc, Ny, Nz) || throw(DimensionMismatch(
+            "cubed-sphere dkg workspace panel $p has shape $(size(w_scratch[p])); expected $((Nc, Ny, Nz))"))
+        panel_dkg = panel_field(op.kz_field, p)
+        backend = get_backend(panel_q)
+        kernel = _vertical_diffusion_cs_single_dkg_kernel!(backend, (8, 8))
+        kernel(panel_q, panel_m, panel_dkg, w_scratch[p], FT(dt), Nz, Hp;
+               ndrange = (Nc, Ny))
+        synchronize(backend)
+    end
+    return nothing
+end
+
+function apply_vertical_diffusion!(q_raw::NTuple{6, A},
+                                   air_mass::NTuple{6, <:AbstractArray{FT, 3}},
+                                   op::ImplicitVerticalDiffusion{FT, KzF},
+                                   workspace, dt,
+                                   meteo = nothing;
+                                   halo_width::Integer) where {FT, A <: AbstractArray{FT, 4},
+                                                                KzF <: PrecomputedCSDkgField{FT}}
+    w_scratch = getproperty(workspace, :w_scratch)
+    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+    Hp = Int(halo_width)
+    @inbounds for p in 1:6
+        panel_q = q_raw[p]
+        panel_m = air_mass[p]
+        Nc = size(panel_q, 1) - 2 * Hp
+        Ny = size(panel_q, 2) - 2 * Hp
+        Nz = size(panel_q, 3)
+        Nt = size(panel_q, 4)
+        size(w_scratch[p]) == (Nc, Ny, Nz) || throw(DimensionMismatch(
+            "cubed-sphere dkg workspace panel $p has shape $(size(w_scratch[p])); expected $((Nc, Ny, Nz))"))
+        panel_dkg = panel_field(op.kz_field, p)
+        backend = get_backend(panel_q)
+        kernel = _vertical_diffusion_cs_dkg_kernel!(backend, (8, 8, 1))
+        kernel(panel_q, panel_m, panel_dkg, w_scratch[p], FT(dt), Nz, Hp;
+               ndrange = (Nc, Ny, Nt))
+        synchronize(backend)
+    end
     return nothing
 end
 

@@ -145,6 +145,41 @@ function fill_tm5_kz_payload!(kz_c180, c180_fields, hflux, lhflux, ustar,
 end
 
 """
+    fill_tm5_dkg_payload!(dkg_c180, c180_fields, air_mass, hflux, lhflux,
+                          ustar, A, B, Nc, constants, scratches)
+
+Compute the exact TM5 interface exchange payload on C180. Unlike the legacy
+centre-Kz payload, `dkg` already contains Kvh, target dry mass, and the
+virtual-temperature geometry used during bldiff preprocessing.
+"""
+function fill_tm5_dkg_payload!(dkg_c180, c180_fields, air_mass,
+                               hflux, lhflux, ustar, A, B, Nc::Int,
+                               c::BLDiffConstants{FT},
+                               scratches::Vector{BLDiffColumnScratch{FT}}) where FT
+    for s in scratches
+        _reset!(s.diag)
+    end
+    Threads.@threads :static for p in 1:6
+        scratch = scratches[Threads.threadid()]
+        dp, mp = dkg_c180[p], air_mass[p]
+        tp, qp = c180_fields.t[p], c180_fields.qv[p]
+        up, vp, psp = c180_fields.u[p], c180_fields.v[p], c180_fields.ps[p]
+        hf, lf, us = hflux[p], lhflux[p], ustar[p]
+        @inbounds for j in 1:Nc, i in 1:Nc
+            tm5_bldiff_dkg_column!(
+                view(dp, i, j, :), view(tp, i, j, :), view(qp, i, j, :),
+                view(up, i, j, :), view(vp, i, j, :), view(mp, i, j, :),
+                psp[i, j], hf[i, j], lf[i, j], us[i, j], A, B, c, scratch)
+        end
+    end
+    entr = sum(s.diag.entr_fallback for s in scratches)
+    floored = sum(s.diag.kvh_floored for s in scratches)
+    max_kz = maximum(s.diag.max_kz for s in scratches; init = zero(FT))
+    return (; entr_fallback = entr, kvh_floored = floored, max_kz,
+            total_columns = 6 * Nc * Nc)
+end
+
+"""
     process_era5_n320_to_cs_day(date, settings, target_grid;
                                  out_path,
                                  FT = Float32,
@@ -306,13 +341,13 @@ function process_era5_n320_to_cs_day(date::Date,
             do_vdiff && @info "  VDIFF (u/v/t/qv) payload ENABLED"
             if do_tm5_diffusion
                 surf_lhflux = ntuple(_ -> zeros(FT, Nc, Nc), 6)   # latent flux on C180
-                kz_c180     = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
+                dkg_c180    = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
                 # One scratch per thread; the panel loop threads over the 6
                 # panels. Size by maxthreadid() (see synthesis-threading note).
                 kz_scratch  = [BLDiffColumnScratch{FT}(Nz_int)
                                for _ in 1:Threads.maxthreadid()]
                 kz_const    = BLDiffConstants{FT}()
-                @info "  TM5 diffusion (bldiff) :kz payload ENABLED"
+                @info "  TM5 diffusion (bldiff) exact :dkg payload ENABLED"
             end
         end
 
@@ -335,7 +370,7 @@ function process_era5_n320_to_cs_day(date::Date,
         # Build the surface/vdiff payload addition for the window whose pipeline
         # is `pipe` (the written window). VDIFF comes from the pipe's already-
         # regridded c180 winds/T/Q.
-        surface_vdiff_payload = function (pipe, win_idx)
+        surface_vdiff_payload = function (pipe, air_mass, win_idx)
             extra = NamedTuple()
             if do_surface
                 extra = merge(extra, (surface = (pblh = surf_pblh, ustar = surf_ustar,
@@ -346,21 +381,21 @@ function process_era5_n320_to_cs_day(date::Date,
                                                t = pipe.c180_fields.t, qv = pipe.c180_fields.qv),))
             end
             if do_tm5_diffusion
-                kzdiag = fill_tm5_kz_payload!(kz_c180, pipe.c180_fields,
-                                              surf_hflux, surf_lhflux, surf_ustar,
-                                              vc.A, vc.B, Nc, kz_const, kz_scratch)
+                kzdiag = fill_tm5_dkg_payload!(dkg_c180, pipe.c180_fields, air_mass,
+                                               surf_hflux, surf_lhflux, surf_ustar,
+                                               vc.A, vc.B, Nc, kz_const, kz_scratch)
                 # Entrainment fallbacks are expected on a handful of cells; a
                 # non-zero `kvh_floored` (the finite-payload guard) or a large
                 # `entr_fallback` fraction flags a met problem to investigate.
                 if kzdiag.kvh_floored > 0
-                    @warn @sprintf("  Window %2d/%d: :kz output guard floored %d non-finite cell(s) — investigate met input",
+                    @warn @sprintf("  Window %2d/%d: :dkg source-Kvh guard floored %d non-finite cell(s) — investigate met input",
                                    win_idx, nwindow, kzdiag.kvh_floored)
                 elseif kzdiag.entr_fallback > 0
-                    @info @sprintf("  Window %2d/%d: :kz entrainment fallback on %d/%d cell(s) (%.4f%%), max kz=%.1f m²/s",
+                    @info @sprintf("  Window %2d/%d: :dkg entrainment fallback on %d/%d cell(s) (%.4f%%), max Kvh=%.1f m²/s",
                                    win_idx, nwindow, kzdiag.entr_fallback, kzdiag.total_columns,
                                    100 * kzdiag.entr_fallback / kzdiag.total_columns, kzdiag.max_kz)
                 end
-                extra = merge(extra, (kz = kz_c180,))
+                extra = merge(extra, (dkg = dkg_c180,))
             end
             return extra
         end
@@ -410,7 +445,7 @@ function process_era5_n320_to_cs_day(date::Date,
             include_tm5conv = include_convection,
             include_surface = settings.include_surface,
             include_gchp_vdiff = settings.include_vdiff_fields,
-            include_precomputed_kz = settings.include_tm5_diffusion,
+            include_precomputed_dkg = settings.include_tm5_diffusion,
             mass_basis = mass_basis,
             panel_convention = _cs_panel_convention_tag(target_grid),
             cs_definition = _cs_definition_tag(target_grid),
@@ -640,7 +675,7 @@ function process_era5_n320_to_cs_day(date::Date,
                     entd = cur_pipe.tm5_c180_fields.entd,
                     detd = cur_pipe.tm5_c180_fields.detd))) :
                 base_payload
-            payload = merge(payload, surface_vdiff_payload(cur_pipe, win - 1))
+            payload = merge(payload, surface_vdiff_payload(cur_pipe, cur_m_dry, win - 1))
             write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1, payload))
 
             @info @sprintf("    Window %2d/%d: wrote (steps=%d bal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
@@ -732,7 +767,7 @@ function process_era5_n320_to_cs_day(date::Date,
                 entd = cur_pipe.tm5_c180_fields.entd,
                 detd = cur_pipe.tm5_c180_fields.detd))) :
             final_base_payload
-        final_payload = merge(final_payload, surface_vdiff_payload(cur_pipe, nwindow))
+        final_payload = merge(final_payload, surface_vdiff_payload(cur_pipe, cur_m_dry, nwindow))
         write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(nwindow, final_payload))
 
         worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)

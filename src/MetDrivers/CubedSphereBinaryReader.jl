@@ -228,8 +228,9 @@ function _cs_section_elements(h::CubedSphereBinaryHeader, section::Symbol)
         return np * Nc * Nc
     elseif _is_gchp_vdiff_payload_section(section)
         return np * Nc * Nc * Nz
-    elseif section === :kz
-        # Precomputed layer-centre eddy diffusivity (TM5 bldiff), m² s⁻¹.
+    elseif section === :kz || section === :dkg
+        # :kz is legacy layer-centre diffusivity [m² s⁻¹]; :dkg is exact
+        # top-down interface exchange [kg s⁻¹]. Both use one value per layer.
         return np * Nc * Nc * Nz
     elseif section === :cmfmc
         return np * Nc * Nc * (Nz + 1)
@@ -297,9 +298,11 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
     panels_vdiff_t  = vdiff_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
     panels_vdiff_qv = vdiff_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
 
-    # Precomputed TM5 bldiff eddy diffusivity (layer-centre Kz, m² s⁻¹).
+    # Legacy centre Kz and exact TM5 interface dkg are mutually exclusive.
     kz_present = :kz in h.payload_sections
     panels_kz  = kz_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
+    dkg_present = :dkg in h.payload_sections
+    panels_dkg = dkg_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
 
     # TM5 convection fields — all four must be present together or
     # all four absent. The runtime `_validate_convection_window!`
@@ -432,6 +435,12 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
                 copyto!(panels_kz[p], 1, reader.data, o + 1, n)
                 o += n
             end
+        elseif section === :dkg
+            for p in 1:np
+                n = Nc * Nc * Nz
+                copyto!(panels_dkg[p], 1, reader.data, o + 1, n)
+                o += n
+            end
         else
             # Skip unknown sections
             n = _cs_section_elements(h, section)
@@ -466,6 +475,7 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
         tm5_fields = tm5_fields,
         vdiff = vdiff,
         kz = kz_present ? panels_kz : nothing,
+        dkg = dkg_present ? panels_dkg : nothing,
     )
 end
 

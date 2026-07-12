@@ -514,3 +514,36 @@ function tm5_bldiff_center_kz_column!(kz::AbstractVector{FT},
     end
     return pblh
 end
+
+"""
+    tm5_bldiff_dkg_column!(dkg, T, q, u, v, air_mass, ps, hflux, lhflux,
+                           ustar, A, B, c, scratch) -> pblh
+
+Compute TM5's interface diffusion air-mass exchange directly on the target
+column. Output uses top-down storage: `dkg[k]` exchanges layers `k` and `k+1`
+in kg s⁻¹ and `dkg[end] == 0` is the surface no-flux boundary.
+"""
+function tm5_bldiff_dkg_column!(dkg::AbstractVector{FT},
+                                 T::AbstractVector{FT}, q::AbstractVector{FT},
+                                 u::AbstractVector{FT}, v::AbstractVector{FT},
+                                 air_mass::AbstractVector{FT},
+                                 ps::FT, hflux::FT, lhflux::FT, ustar::FT,
+                                 A::AbstractVector, B::AbstractVector,
+                                 c::BLDiffConstants{FT},
+                                 scratch::BLDiffColumnScratch{FT}) where {FT}
+    Nz = length(T)
+    length(dkg) == length(air_mass) == Nz || throw(DimensionMismatch(
+        "dkg, air_mass, and thermodynamic profiles must have the same length"))
+    # Populate the exact interface Kvh and virtual-temperature dz. The temporary
+    # centre-Kz output is immediately overwritten, avoiding another column buffer.
+    pblh = tm5_bldiff_center_kz_column!(dkg, T, q, u, v, ps, hflux, lhflux,
+                                        ustar, A, B, c, scratch)
+    @inbounds for k in 1:Nz-1
+        l_bottom_up = Nz - k
+        sum_dz = scratch.dz[k] + scratch.dz[k + 1]
+        dkg[k] = max(scratch.kvh[l_bottom_up], zero(FT)) * FT(2) *
+                 (air_mass[k] + air_mass[k + 1]) / (sum_dz * sum_dz)
+    end
+    dkg[Nz] = zero(FT)
+    return pblh
+end

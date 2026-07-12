@@ -5,7 +5,7 @@
 # the flat structured transport-binary contract.
 # ---------------------------------------------------------------------------
 
-struct CubedSphereTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C, S, V, K} <: AbstractTransportWindow{Basis}
+struct CubedSphereTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C, S, V, K, DK} <: AbstractTransportWindow{Basis}
     air_mass         :: M
     surface_pressure :: PS
     fluxes           :: F
@@ -16,6 +16,7 @@ struct CubedSphereTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C,
     surface          :: S
     vdiff            :: V
     kz               :: K   # precomputed layer-centre Kz panels, or nothing
+    dkg              :: DK  # exact TM5 interface exchange [kg s⁻¹], or nothing
 end
 
 struct CubedSphereFluxDeltas{AM}
@@ -27,11 +28,11 @@ function CubedSphereTransportWindow(air_mass, surface_pressure,
                                     qv_start = nothing, qv_end = nothing,
                                     deltas = nothing, convection = nothing,
                                     surface = nothing, vdiff = nothing,
-                                    kz = nothing) where {B <: AbstractMassBasis}
+                                    kz = nothing, dkg = nothing) where {B <: AbstractMassBasis}
     return CubedSphereTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes),
                                       typeof(qv_start), typeof(deltas), typeof(convection), typeof(surface),
-                                      typeof(vdiff), typeof(kz)}(
-        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection, surface, vdiff, kz)
+                                      typeof(vdiff), typeof(kz), typeof(dkg)}(
+        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection, surface, vdiff, kz, dkg)
 end
 
 function Adapt.adapt_structure(to, window::CubedSphereTransportWindow{B}) where {B <: AbstractMassBasis}
@@ -45,10 +46,11 @@ function Adapt.adapt_structure(to, window::CubedSphereTransportWindow{B}) where 
     surface = Adapt.adapt(to, window.surface)
     vdiff = Adapt.adapt(to, window.vdiff)
     kz = Adapt.adapt(to, window.kz)
+    dkg = Adapt.adapt(to, window.dkg)
     return CubedSphereTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes),
                                       typeof(qv_start), typeof(deltas), typeof(convection), typeof(surface),
-                                      typeof(vdiff), typeof(kz)}(
-        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection, surface, vdiff, kz)
+                                      typeof(vdiff), typeof(kz), typeof(dkg)}(
+        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection, surface, vdiff, kz, dkg)
 end
 
 function Adapt.adapt_structure(to, deltas::CubedSphereFluxDeltas)
@@ -250,7 +252,8 @@ supports_moisture(::CubedSphereTransportDriver) = false
 supports_convection(driver::CubedSphereTransportDriver) =
     has_cmfmc(driver.reader) || has_tm5conv(driver.reader)
 supports_diffusion(driver::CubedSphereTransportDriver) =
-    has_surface(driver.reader) || (:kz in driver.reader.header.payload_sections)
+    has_surface(driver.reader) ||
+    any(s in driver.reader.header.payload_sections for s in (:dkg, :kz))
 driver_grid(driver::CubedSphereTransportDriver) = driver.grid
 flux_interpolation_mode(::CubedSphereTransportDriver) = :constant
 flux_kind(driver::CubedSphereTransportDriver) = flux_kind(driver.reader)
@@ -361,7 +364,8 @@ function load_transport_window(driver::CubedSphereTransportDriver, win::Int)
                                       convection = convection,
                                       surface = raw.surface,
                                       vdiff = raw.vdiff,
-                                      kz = raw.kz)
+                                      kz = raw.kz,
+                                      dkg = raw.dkg)
 end
 
 export CubedSphereTransportWindow, CubedSphereTransportDriver

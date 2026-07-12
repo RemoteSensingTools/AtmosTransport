@@ -261,6 +261,10 @@ function _validate_transport_layout!(header::AbstractDict)
     vdiff = map(s -> s in sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
     all(vdiff) || !any(vdiff) || throw(ArgumentError(
         "Transport-binary contract violation — GCHP VDIFF payload sections must be complete"))
+    (:kz in sections && :dkg in sections) && throw(ArgumentError(
+        "Transport-binary contract violation — legacy :kz and exact :dkg TM5 diffusion payloads are mutually exclusive"))
+    (:dkg in sections && basis != "dry") && throw(ArgumentError(
+        "Transport-binary contract violation — exact :dkg requires mass_basis=dry"))
 
     grid_type = lowercase(String(get(header, "grid_type", "")))
     topology = lowercase(String(get(header, "horizontal_topology", "")))

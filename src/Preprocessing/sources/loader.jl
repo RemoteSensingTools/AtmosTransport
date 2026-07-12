@@ -98,17 +98,17 @@ function _build_met_settings(ctor::Type{<:ERA5GRIBSettings}, cfg::AbstractDict,
     level_orientation     = Symbol(get(pre_cfg, "level_orientation", "top_down"))
     include_surface       = _config_bool(pre_cfg, "include_surface", false, "[preprocessing].include_surface")
     include_convection    = _config_bool(pre_cfg, "include_convection", false, "[preprocessing].include_convection")
-    haskey(pre_cfg, "include_vdiff_fields") && throw(ArgumentError(
-        "ERA5-N320 does not implement include_vdiff_fields; remove the setting"))
+    include_vdiff_fields  = _config_bool(pre_cfg, "include_vdiff_fields", false, "[preprocessing].include_vdiff_fields")
     include_tm5_diffusion = _config_bool(pre_cfg, "include_tm5_diffusion", false, "[preprocessing].include_tm5_diffusion")
+    arco_surface_pressure = _config_bool(pre_cfg, "arco_surface_pressure", false, "[preprocessing].arco_surface_pressure")
 
     include_tm5_diffusion && !include_surface &&
         throw(ArgumentError("[preprocessing] include_tm5_diffusion=true requires \
                              include_surface=true (needs sshf/slhf/ustar)."))
 
     return ctor(; root_dir,
-                  include_surface, include_convection,
-                  include_tm5_diffusion, level_orientation,
+                  include_surface, include_convection, include_vdiff_fields,
+                  include_tm5_diffusion, arco_surface_pressure, level_orientation,
                   coefficients_file = coefs, kwargs...)
 end
 
@@ -128,11 +128,13 @@ function _build_met_settings(ctor::Type{MERRA2Settings}, cfg::AbstractDict,
     coefs = String(get(vertical_cfg, "coefficients_file",
                        "config/geos_L72_coefficients.toml"))
     winds_collection      = Symbol(get(pre_cfg, "winds_collection", "tavg3"))
-    for key in ("include_surface", "include_convection", "include_vdiff_fields",
-                "include_tm5_diffusion")
-        haskey(pre_cfg, key) && throw(ArgumentError(
-            "MERRA-2 does not implement [preprocessing].$(key); remove the setting"))
-    end
+    include_surface       = _config_bool(pre_cfg, "include_surface", false, "[preprocessing].include_surface")
+    include_convection    = _config_bool(pre_cfg, "include_convection", false, "[preprocessing].include_convection")
+    include_vdiff_fields  = _config_bool(pre_cfg, "include_vdiff_fields", false, "[preprocessing].include_vdiff_fields")
+    include_tm5_diffusion = _config_bool(pre_cfg, "include_tm5_diffusion", false, "[preprocessing].include_tm5_diffusion")
+
     return ctor(; root_dir,
-                  coefficients_file = coefs, winds_collection, kwargs...)
+                  coefficients_file = coefs, winds_collection,
+                  include_surface, include_convection, include_vdiff_fields,
+                  include_tm5_diffusion, kwargs...)
 end

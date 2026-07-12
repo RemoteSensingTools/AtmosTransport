@@ -23,6 +23,17 @@ struct ERA5Source <: AbstractDownloadSource
 end
 
 """
+    ERA5ARCOSource
+
+ERA5 from Google's ARCO-ERA5 public GCS mirror (queue-free). Native spectral
+model-level GRIB (core) + single_level netCDF (surface). Same underlying ERA5
+data as `ERA5Source`, but served pre-staged over HTTPS instead of via CDS/MARS.
+"""
+struct ERA5ARCOSource <: AbstractDownloadSource
+    met_config::Dict{String, Any}
+end
+
+"""
     GEOSFPSource
 
 GEOS-FP forward processing from NASA GMAO. Native cubed-sphere (C720) or
@@ -53,6 +64,7 @@ struct MERRA2Source <: AbstractDownloadSource
 end
 
 source_name(::ERA5Source)    = "ERA5"
+source_name(::ERA5ARCOSource) = "ERA5-ARCO"
 source_name(::GEOSFPSource) = "GEOS-FP"
 source_name(::GEOSITSource) = "GEOS-IT"
 source_name(::MERRA2Source)  = "MERRA-2"
@@ -132,6 +144,18 @@ struct S3Protocol <: AbstractDownloadProtocol
     bucket::String
     prefix::String
     no_sign_request::Bool
+end
+
+"""
+    GCSProtocol
+
+Google Cloud Storage public-bucket download over HTTPS (no auth, no queue).
+`execute!` supports `assemble="single"` (one object) and `assemble="concat"`
+(fetch component objects and concatenate — used to reassemble the ARCO core
+GRIB from its per-variable-group files).
+"""
+struct GCSProtocol <: AbstractDownloadProtocol
+    bucket_base::String    # e.g. "https://storage.googleapis.com/gcp-public-data-arco-era5"
 end
 
 # ---------------------------------------------------------------------------

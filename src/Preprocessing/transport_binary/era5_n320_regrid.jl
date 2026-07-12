@@ -74,14 +74,25 @@ boundary day).
 """
 function _next_day_core_only_handle(handles::ERA5GRIBDayHandles)
     handles.next_core_path === nothing && return nothing
+    next_date = handles.date + Day(1)
+    # In ARCO PS mode the endpoint PS comes from next_date's ARCO sp netCDF.
+    arco_sp = nothing
+    if handles.settings.arco_surface_pressure
+        candidate = era5_arco_sp_path(handles.settings, next_date)
+        isfile(candidate) ||
+            error("ERA5 ARCO surface-pressure netCDF not found for endpoint " *
+                  "$(next_date): $candidate")
+        arco_sp = candidate
+    end
     return ERA5GRIBDayHandles{typeof(handles.settings)}(
         handles.settings,
-        handles.date + Day(1),
+        next_date,
         handles.next_core_path,
         nothing,  # convection_path — not needed for mass endpoint
         nothing,  # surface_path
         nothing,  # next_core_path (chain stops here)
         nothing,  # prev_convection_path
+        arco_sp,  # arco_sp_path (next_date)
     )
 end
 

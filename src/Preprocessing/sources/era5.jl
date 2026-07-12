@@ -48,6 +48,11 @@ Base.@kwdef struct ERA5GRIBSettings{flavor} <: AbstractERA5GRIBSettings
     # into the binary. Requires the surface stream (sshf + slhf + ustar),
     # target dry mass, and the synthesised 3D fields.
     include_tm5_diffusion :: Bool   = false
+    # Source surface pressure from the ARCO single_level netCDF (0.25° `sp`,
+    # bilinear-interpolated to N320) instead of synthesising spectral `lnsp`.
+    # Google's ARCO-ERA5 raw model-level GRIB omits `lnsp`; enable this when
+    # the `core` GRIB was assembled from ARCO (see config/downloads/era5_arco.toml).
+    arco_surface_pressure :: Bool   = false
     coefficients_file     :: String = "config/era5_L137_coefficients.toml"
     level_orientation     :: Symbol = :top_down
 end
@@ -87,6 +92,19 @@ function era5_grib_path(settings::AbstractERA5GRIBSettings, date::Date,
     return joinpath(settings.root_dir, layout.subdir, filename)
 end
 
+"""
+    era5_arco_sp_path(settings, date) -> String
+
+Resolve the ARCO single_level surface-pressure netCDF for `date`, written by the
+ERA5-ARCO downloader under `sfc_an_native/arco/YYYYMMDD/surface_pressure.nc`.
+Only consulted when `settings.arco_surface_pressure` is set.
+"""
+function era5_arco_sp_path(settings::AbstractERA5GRIBSettings, date::Date)
+    datestr = Dates.format(date, "yyyymmdd")
+    return joinpath(settings.root_dir, "sfc_an_native", "arco", datestr,
+                    "surface_pressure.nc")
+end
+
 # ---------------------------------------------------------------------------
 # Day-handle container.
 #
@@ -122,6 +140,9 @@ struct ERA5GRIBDayHandles{S <: AbstractERA5GRIBSettings}
     # start of an archive (where date-1 isn't downloaded) this stays
     # `nothing` and the convection reader rejects requests for hours 0..5.
     prev_convection_path :: Union{Nothing, String}
+    # ARCO surface-pressure netCDF for `date` (only set when
+    # `settings.arco_surface_pressure`; supplies PS in place of spectral LNSP).
+    arco_sp_path         :: Union{Nothing, String}
 end
 
 const ERA5_VALID_LEVEL_ORIENTATIONS = (:top_down, :bottom_up)
@@ -178,10 +199,19 @@ function open_era5_day(settings::AbstractERA5GRIBSettings, date::Date;
         prev_convection_path = isfile(candidate) ? candidate : nothing
     end
 
+    arco_sp_path = nothing
+    if settings.arco_surface_pressure
+        candidate = era5_arco_sp_path(settings, date)
+        isfile(candidate) ||
+            error("ERA5 ARCO surface-pressure netCDF not found: $candidate " *
+                  "(arco_surface_pressure=true)")
+        arco_sp_path = candidate
+    end
+
     return ERA5GRIBDayHandles{typeof(settings)}(
         settings, date,
         core_path, convection_path, surface_path, next_core_path,
-        prev_convection_path)
+        prev_convection_path, arco_sp_path)
 end
 
 """
@@ -581,7 +611,7 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
     # debuggable. Q has its own gate because `fields` is reused across
     # windows and a stale Q slice from the previous read would otherwise
     # silently corrupt dry-mass + the regridded Q output.
-    workspace.have_lnsp[] ||
+    (handles.settings.arco_surface_pressure || workspace.have_lnsp[]) ||
         error("ERA5 N320 read: LNSP missing for $(date) hour $(hour)")
     all(workspace.have_t) ||
         error("ERA5 N320 read: T missing for $(date) hour $(hour) at levels $(findall(!, workspace.have_t))")
@@ -634,10 +664,18 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
     # cache (here `caches[1]`) is free to reuse. The `lnsp_grid` buffer is Float64 already, so it
     # serves as both column and scratch (the in-method copy becomes a self-copy
     # of ~500 KB and is amortised across the synthesis kernel cost).
-    _synthesize_into_column!(workspace.lnsp_grid, workspace.lnsp_spec, T,
-                              grid, caches[1], workspace.lnsp_grid)
-    @inbounds for c in 1:nc
-        fields.ps[c] = exp(workspace.lnsp_grid[c])
+    if handles.settings.arco_surface_pressure
+        # No spectral LNSP in ARCO core: interpolate the 0.25° ARCO `sp` onto
+        # the N320 cell centers. The global-mean dry-mass pin downstream
+        # (era5_n320_regrid.jl) absorbs any residual mean bias.
+        _fill_ps_from_arco_sp!(fields.ps, workspace.source_grid,
+                                handles.arco_sp_path::String, Int(hour))
+    else
+        _synthesize_into_column!(workspace.lnsp_grid, workspace.lnsp_spec, T,
+                                  grid, caches[1], workspace.lnsp_grid)
+        @inbounds for c in 1:nc
+            fields.ps[c] = exp(workspace.lnsp_grid[c])
+        end
     end
 
     if _prof
@@ -650,6 +688,60 @@ end
 # ---------------------------------------------------------------------------
 # Internal helpers.
 # ---------------------------------------------------------------------------
+
+"""
+    _fill_ps_from_arco_sp!(ps, source_grid, nc_path, hour) -> ps
+
+Populate `ps` (Pa; N320 cell order south→north) from the ARCO single_level
+surface-pressure netCDF at `nc_path` (`sp[longitude, latitude, time]`, 0.25°
+regular lat-lon, longitude ascending 0→359.75, latitude descending 90→-90),
+by bilinear interpolation to the reduced-Gaussian cell centers of `source_grid`.
+Used when the ARCO `core` GRIB omits spectral `lnsp`.
+"""
+function _fill_ps_from_arco_sp!(ps::AbstractVector, source_grid,
+                                 nc_path::AbstractString, hour::Int)
+    lon, lat, sp = NCDataset(nc_path, "r") do ds
+        (Array{Float64}(ds["longitude"][:]),
+         Array{Float64}(ds["latitude"][:]),
+         Array{Float64}(ds["sp"][:, :, hour + 1]))   # (nlon, nlat)
+    end
+    nlon = length(lon); nlat = length(lat)
+    nlon >= 2 && nlat >= 2 ||
+        error("ARCO sp grid too small: nlon=$nlon nlat=$nlat in $nc_path")
+    size(sp) == (nlon, nlat) ||
+        throw(DimensionMismatch("ARCO sp slice $(size(sp)) != ($nlon, $nlat)"))
+
+    mesh   = source_grid.mesh
+    dlon   = lon[2] - lon[1]          # +0.25 (ascending, periodic)
+    dlat   = lat[2] - lat[1]          # -0.25 (descending N→S)
+    lon0   = lon[1]
+    lat0   = lat[1]
+    # The periodic-longitude wrap below assumes a [0,360) origin (ARCO's layout).
+    # A shifted origin (e.g. -180) would misindex silently, so assert it.
+    (dlon > 0 && -1e-3 <= lon0 <= 1.0) ||
+        error("ARCO sp longitude axis not [0,360)-ascending (lon0=$lon0, dlon=$dlon) in $nc_path")
+
+    @inbounds for j in 1:nrings(mesh)
+        latj = Float64(mesh.latitudes[j])
+        fy   = (latj - lat0) / dlat            # fractional row on descending axis
+        jy   = clamp(floor(Int, fy), 0, nlat - 2)
+        wy   = clamp(fy - jy, 0.0, 1.0)
+        j0   = jy + 1; j1 = j0 + 1
+        lons_j = source_grid.lons_by_ring[j]
+        off    = mesh.ring_offsets[j]
+        for (i, lonc) in enumerate(lons_j)
+            fx  = (Float64(lonc) - lon0) / dlon
+            ix  = floor(Int, fx)
+            wx  = fx - ix
+            i0  = mod(ix,     nlon) + 1        # periodic longitude wrap
+            i1  = mod(ix + 1, nlon) + 1
+            v0  = sp[i0, j0] + wx * (sp[i1, j0] - sp[i0, j0])
+            v1  = sp[i0, j1] + wx * (sp[i1, j1] - sp[i0, j1])
+            ps[off + i - 1] = v0 + wy * (v1 - v0)
+        end
+    end
+    return ps
+end
 
 """Decode `msg` spectral coefficients into level slot `level` of `cube`, using
 the workspace-owned `scratch` matrix as the `read_spectral_coeffs!` target.

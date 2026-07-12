@@ -45,6 +45,10 @@ function _build_source(::Val{:ERA5}, met_cfg, cfg)
     ERA5Source(met_cfg)
 end
 
+function _build_source(::Val{:ERA5ARCO}, met_cfg, cfg)
+    ERA5ARCOSource(met_cfg)
+end
+
 function _build_source(::Val{:GEOSFP}, met_cfg, cfg)
     product = get(get(cfg, "download", Dict()), "product", "geosfp_c720")
     GEOSFPSource(met_cfg, product)
@@ -70,6 +74,7 @@ function _build_protocol(cfg::Dict{String, Any}, source::AbstractDownloadSource)
 end
 
 _default_protocol(::ERA5Source)    = "cds"
+_default_protocol(::ERA5ARCOSource) = "gcs"
 _default_protocol(::GEOSFPSource) = "http"
 _default_protocol(::GEOSITSource) = "s3"
 _default_protocol(::MERRA2Source)  = "opendap"
@@ -108,6 +113,16 @@ function _build_protocol(::Val{:s3}, dl, ::AbstractDownloadSource)
     prefix = get(dl, "prefix", "")
     no_sign = get(dl, "no_sign_request", true)
     return S3Protocol(bucket, prefix, no_sign)
+end
+
+function _build_protocol(::Val{:gcs}, dl, source::AbstractDownloadSource)
+    # base URL comes from the recipe [download] or the met-source [access]
+    base = get(dl, "bucket_base", "")
+    if isempty(base)
+        base = get(get(source.met_config, "access", Dict()), "bucket_base", "")
+    end
+    isempty(base) && error("gcs protocol: set [download].bucket_base or [access].bucket_base")
+    return GCSProtocol(base)
 end
 
 function _build_protocol(::Val{:opendap}, dl, source::AbstractDownloadSource)

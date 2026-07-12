@@ -101,6 +101,7 @@ function _build_met_settings(ctor::Type{<:ERA5GRIBSettings}, cfg::AbstractDict,
     haskey(pre_cfg, "include_vdiff_fields") && throw(ArgumentError(
         "ERA5-N320 does not implement include_vdiff_fields; remove the setting"))
     include_tm5_diffusion = _config_bool(pre_cfg, "include_tm5_diffusion", false, "[preprocessing].include_tm5_diffusion")
+    arco_surface_pressure = _config_bool(pre_cfg, "arco_surface_pressure", false, "[preprocessing].arco_surface_pressure")
 
     include_tm5_diffusion && !include_surface &&
         throw(ArgumentError("[preprocessing] include_tm5_diffusion=true requires \
@@ -108,7 +109,7 @@ function _build_met_settings(ctor::Type{<:ERA5GRIBSettings}, cfg::AbstractDict,
 
     return ctor(; root_dir,
                   include_surface, include_convection,
-                  include_tm5_diffusion, level_orientation,
+                  include_tm5_diffusion, arco_surface_pressure, level_orientation,
                   coefficients_file = coefs, kwargs...)
 end
 

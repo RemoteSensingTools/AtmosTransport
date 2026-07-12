@@ -1,0 +1,54 @@
+# ===========================================================================
+# ERA5 convective mass-flux download ONLY (params 235009-012, forecast).
+#
+# Companion to the ARCO-ERA5 core path: core dynamics/moisture come from the
+# queue-free Google ARCO GRIB mirror; the convective fields are the one thing
+# ARCO lacks, so we still pull them from CDS — but ONLY these fields, in
+# ~6-day chunks. The MARS 150 GB/request limit counts UNCOMPRESSED field data:
+# convection is ~21 GB/day uncompressed (4 params x 137 lev x 24 fc-steps;
+# ~7.4 GB/day compressed on disk), so ~6 days ~126 GB is safely under 150 GB —
+# 15 days (~316 GB) would FAIL like the April monthly attempts.
+#
+# chunk = "monthly" groups a <=6-day --start/--end range into ONE request.
+# Files are named by chunk-start date; split to per-day with eccodes grib_copy
+# (by dataDate) before preprocessing, which expects era5_convection_YYYYMMDD.grib.
+#
+#   julia --project=. scripts/downloads/download_data.jl \
+#       config/downloads/era5_convection_only.toml --start 2022-11-16 --end 2022-11-30
+# ===========================================================================
+
+[source]
+met_source = "config/met_sources/era5.toml"
+
+[download]
+protocol = "cds"
+
+[[download.requests]]
+name = "convection"
+description = "Convective mass flux + detrainment (fc, params 235009-235012)"
+dataset = "reanalysis-era5-complete"
+params = "235009/235010/235011/235012"
+field_type = "fc"
+levels = "1/to/137"
+times = "06:00:00/18:00:00"
+steps = "1/2/3/4/5/6/7/8/9/10/11/12"
+format = "grib"
+
+[output]
+data_root = "~/data/AtmosTransport"
+met_source = "era5"
+grid_name = "N320"
+cadence = "hourly"
+payload_type = "raw"
+subdirectory_by_request = true                    # -> ml_fc_convection/
+filename_template = "era5_convection_{date}.grib" # {date} = chunk-start; split to per-day later
+
+[schedule]
+start_date = "2022-11-16"
+end_date = "2022-11-21"
+chunk = "monthly"                                 # <=6-day range -> one request
+
+[options]
+max_retries = 8
+retry_wait_seconds = 180
+skip_existing = true

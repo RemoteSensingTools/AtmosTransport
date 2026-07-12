@@ -1,0 +1,61 @@
+# ===========================================================================
+# ERA5 download — ARCO-ERA5 (Google GCS) — THE DEFAULT ERA5 CORE PATH.
+#
+# Queue-free replacement for the CDS core+surface download. Pulls native
+# spectral model-level GRIB (concatenated to era5_core_YYYYMMDD.grib) and the
+# single_level surface fields from Google's public ARCO-ERA5 mirror over HTTPS
+# (~78 MB/s parallel; no MARS queue). Drop-in for the N320 preprocessor for the
+# dynamics+moisture; surface pressure is sourced from single_level and handled
+# preprocessing-side (interpolated 0.25° → N320).
+#
+# The ONE field ARCO lacks is the convective mass flux (forecast params
+# 235009-012) — download those separately from CDS in ~6-day chunks via
+# config/downloads/era5_convection_only.toml.
+#
+#   julia --project=. scripts/downloads/download_data.jl \
+#       config/downloads/era5_arco.toml --start 2022-11-16 --end 2023-12-31
+# ===========================================================================
+
+[source]
+met_source = "config/met_sources/era5_arco.toml"
+
+[download]
+protocol = "gcs"
+
+[[download.requests]]
+name = "core"
+description = "Model-level dynamics+moisture (dve+tw+o3q GRIB → era5_core_YYYYMMDD.grib)"
+
+[[download.requests]]
+name = "surface"
+description = "single_level surface pressure + PBL-diffusion inputs (per-variable netCDF)"
+variables = [
+    "surface_pressure",
+    "geopotential",
+    "land_sea_mask",
+    "boundary_layer_height",
+    "friction_velocity",
+    "2m_temperature",
+    "2m_dewpoint_temperature",
+    "surface_sensible_heat_flux",
+    "surface_latent_heat_flux",
+]
+
+[output]
+data_root = "~/data/AtmosTransport"
+met_source = "era5"                # land in the SAME tree the preprocessor reads
+grid_name = "N320"
+cadence = "hourly"
+payload_type = "raw"
+subdirectory_by_request = false    # source builder places core/ and surface/ subdirs itself
+
+[schedule]
+start_date = "2022-11-16"
+end_date = "2023-12-31"
+chunk = "daily"                    # one core file per day
+
+[options]
+max_concurrent = 4
+max_retries = 4
+retry_wait_seconds = 30
+skip_existing = true

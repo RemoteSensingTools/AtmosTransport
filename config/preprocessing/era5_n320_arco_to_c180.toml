@@ -1,0 +1,38 @@
+# ===========================================================================
+# ERA5 N320 (ARCO-assembled) → C180 preprocess — ARCO DEFAULT PATH.
+#
+# Same recipe as era5_n320_to_c180_dec2021_catrine_f32.toml, but the met-source
+# descriptor is the ARCO variant (era5_n320_arco.toml): the `core` GRIB is
+# concatenated from Google ARCO-ERA5 (no spectral lnsp) and PS comes from the
+# ARCO single_level `sp` netCDF interpolated to N320. Run one process per day:
+#   julia -t 16 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+#       config/preprocessing/era5_n320_arco_to_c180.toml --day 2023-12-31
+# ===========================================================================
+
+[source]
+toml     = "config/met_sources/era5_n320_arco.toml"
+root_dir = "/home/cfranken/data/AtmosTransport/met/era5/N320/hourly/raw"
+
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+
+[output]
+directory  = "/home/cfranken/data/AtmosTransport/met/era5/n320_to_c180/transport_binary_arco_test"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+chain_mass     = false
+
+[mass_fix]
+enable = true
+mode = "target_ps_dry"
+target_ps_dry_pa = 98726.0

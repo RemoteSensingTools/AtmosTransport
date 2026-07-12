@@ -10,7 +10,7 @@
 # binaries:
 #   - convection: precomputed TM5 entrainment (entu/detu/entd/detd), NOT
 #     CMFMC -> use [convection] kind = "tm5".
-#   - diffusion:  precomputed TM5 Kz (:kz section) -> kind = "precomputed_kz".
+#   - diffusion: exact TM5 interface exchange (:dkg) -> kind = "precomputed_kz".
 # Single tracer co2_natural (passive — chemistry = none).
 #
 # Runner:

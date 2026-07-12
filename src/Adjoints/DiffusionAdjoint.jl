@@ -129,6 +129,51 @@ end
     end
 end
 
+@kernel function _vertical_diffusion_cs_single_dkg_adjoint_kernel!(
+    lambda, @Const(air_mass), dkg_field, w_scratch,
+    dt, Nz::Int, Hp::Int)
+    ii, jj = @index(Global, NTuple)
+    FT = eltype(lambda)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        dt_ft = FT(dt)
+        w_prev = zero(FT)
+        g_prev = zero(FT)
+        for k in 1:Nz
+            dkg_above = k > 1  ? field_value(dkg_field, (ii, jj, k - 1)) : zero(FT)
+            dkg_below = k < Nz ? field_value(dkg_field, (ii, jj, k))     : zero(FT)
+            m_prev = k > 1  ? air_mass[i, j, k - 1] : zero(FT)
+            m_k    = air_mass[i, j, k]
+            m_next = k < Nz ? air_mass[i, j, k + 1] : zero(FT)
+            a_T = k > 1 && m_prev > zero(FT) ? -dt_ft * dkg_above / m_prev : zero(FT)
+            c_T = k < Nz && m_next > zero(FT) ? -dt_ft * dkg_below / m_next : zero(FT)
+            inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
+            b_T = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
+            d_k = m_k > zero(FT) ? m_k * lambda[i, j, k] : zero(FT)
+            if k == 1
+                w_k = c_T / b_T
+                g_k = d_k / b_T
+            else
+                denom = b_T - a_T * w_prev
+                w_k = c_T / denom
+                g_k = (d_k - a_T * g_prev) / denom
+            end
+            w_scratch[ii, jj, k] = w_k
+            lambda[i, j, k] = g_k
+            w_prev = w_k
+            g_prev = g_k
+        end
+        for k in (Nz - 1):-1:1
+            lambda[i, j, k] -= w_scratch[ii, jj, k] * lambda[i, j, k + 1]
+        end
+        for k in 1:Nz
+            m_k = air_mass[i, j, k]
+            lambda[i, j, k] = m_k > zero(FT) ? lambda[i, j, k] / m_k : zero(FT)
+        end
+    end
+end
+
 function _require_cs_diffusion_workspace(workspace)
     workspace === nothing && throw(ArgumentError(
         "CS adjoint diffusion requires a workspace with panel-native " *
@@ -195,6 +240,30 @@ end
 function _apply_cs_diffusion_adjoint!(lambda_panels, panels_m, ::NoDiffusion,
                                       workspace, dt, meteo,
                                       mesh::CubedSphereMesh)
+    return nothing
+end
+
+function _apply_cs_diffusion_adjoint!(lambda_panels::NTuple{6, A},
+                                      panels_m::NTuple{6},
+                                      op::ImplicitVerticalDiffusion{FT, KzF},
+                                      workspace, dt, meteo,
+                                      mesh::CubedSphereMesh) where {
+                                          FT, A <: AbstractArray{FT, 3},
+                                          KzF <: PrecomputedCSDkgField{FT}}
+    w_scratch, _ = _require_cs_diffusion_workspace(workspace)
+    update_field!(op.kz_field, _adjoint_diffusion_time(FT, meteo))
+    Hp, Nc = mesh.Hp, mesh.Nc
+    @inbounds for p in 1:6
+        panel_lambda = lambda_panels[p]
+        panel_m = panels_m[p]
+        Nz = size(panel_lambda, 3)
+        panel_dkg = panel_field(op.kz_field, p)
+        backend = get_backend(panel_lambda)
+        kernel! = _vertical_diffusion_cs_single_dkg_adjoint_kernel!(backend, (8, 8))
+        kernel!(panel_lambda, panel_m, panel_dkg, w_scratch[p], FT(dt), Nz, Hp;
+                ndrange = (Nc, Nc))
+        synchronize(backend)
+    end
     return nothing
 end
 

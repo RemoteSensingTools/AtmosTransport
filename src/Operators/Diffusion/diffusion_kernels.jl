@@ -372,6 +372,56 @@ column solve is unchanged; only the panel halo offset differs.
     end
 end
 
+# Exact precomputed-TM5 path. `dkg_field[..., k]` is the exchange rate
+# [kg s⁻¹] through the interface between top-down layers k and k+1, with the
+# final entry zero at the surface. Geometry, Kvh, and the chosen mass basis are
+# already baked by preprocessing, so this kernel must not reconstruct them.
+@kernel function _vertical_diffusion_cs_single_dkg_kernel!(q, @Const(air_mass),
+                                                           dkg_field, w_scratch,
+                                                           dt, Nz::Int, Hp::Int)
+    ii, jj = @index(Global, NTuple)
+    FT = eltype(q)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        dt_ft = FT(dt)
+        cref = q[i, j, 1]
+        for k in 2:Nz
+            cref = min(cref, q[i, j, k])
+        end
+        w_prev = zero(FT)
+        g_prev = zero(FT)
+        for k in 1:Nz
+            dkg_above = k > 1  ? field_value(dkg_field, (ii, jj, k - 1)) : zero(FT)
+            dkg_below = k < Nz ? field_value(dkg_field, (ii, jj, k))     : zero(FT)
+            m_k = air_mass[i, j, k]
+            inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
+            a_k = k > 1  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
+            c_k = k < Nz ? -dt_ft * dkg_below * inv_m_k : zero(FT)
+            b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
+            d_k = q[i, j, k] - cref
+            if k == 1
+                w_k = c_k / b_k
+                g_k = d_k / b_k
+            else
+                denom = b_k - a_k * w_prev
+                w_k = c_k / denom
+                g_k = (d_k - a_k * g_prev) / denom
+            end
+            w_scratch[ii, jj, k] = w_k
+            q[i, j, k] = g_k
+            w_prev = w_k
+            g_prev = g_k
+        end
+        for k in (Nz - 1):-1:1
+            q[i, j, k] -= w_scratch[ii, jj, k] * q[i, j, k + 1]
+        end
+        for k in 1:Nz
+            q[i, j, k] += cref
+        end
+    end
+end
+
 """
     _vertical_diffusion_cs_kernel!(q, kz_field, dz, w_scratch, dt, Nz, Hp)
 
@@ -472,6 +522,52 @@ column and are computed locally to keep the workspace rank unchanged.
         end
 
         # restore the per-column reference removed before the solve
+        for k in 1:Nz
+            q[i, j, k, t] += cref
+        end
+    end
+end
+
+@kernel function _vertical_diffusion_cs_dkg_kernel!(q, @Const(air_mass),
+                                                    dkg_field, w_scratch,
+                                                    dt, Nz::Int, Hp::Int)
+    ii, jj, t = @index(Global, NTuple)
+    FT = eltype(q)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        dt_ft = FT(dt)
+        cref = q[i, j, 1, t]
+        for k in 2:Nz
+            cref = min(cref, q[i, j, k, t])
+        end
+        w_prev = zero(FT)
+        g_prev = zero(FT)
+        for k in 1:Nz
+            dkg_above = k > 1  ? field_value(dkg_field, (ii, jj, k - 1)) : zero(FT)
+            dkg_below = k < Nz ? field_value(dkg_field, (ii, jj, k))     : zero(FT)
+            m_k = air_mass[i, j, k]
+            inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
+            a_k = k > 1  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
+            c_k = k < Nz ? -dt_ft * dkg_below * inv_m_k : zero(FT)
+            b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
+            d_k = q[i, j, k, t] - cref
+            if k == 1
+                w_k = c_k / b_k
+                g_k = d_k / b_k
+            else
+                denom = b_k - a_k * w_prev
+                w_k = c_k / denom
+                g_k = (d_k - a_k * g_prev) / denom
+            end
+            w_scratch[ii, jj, k] = w_k
+            q[i, j, k, t] = g_k
+            w_prev = w_k
+            g_prev = g_k
+        end
+        for k in (Nz - 1):-1:1
+            q[i, j, k, t] -= w_scratch[ii, jj, k] * q[i, j, k + 1, t]
+        end
         for k in 1:Nz
             q[i, j, k, t] += cref
         end

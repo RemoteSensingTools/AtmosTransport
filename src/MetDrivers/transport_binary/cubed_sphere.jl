@@ -28,8 +28,9 @@ function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol
         return npanel * Nc * Nc
     elseif _is_gchp_vdiff_payload_section(section)
         return npanel * Nc * Nc * nlevel
-    elseif section === :kz
-        # Precomputed layer-centre eddy diffusivity (TM5 bldiff), m² s⁻¹.
+    elseif section === :kz || section === :dkg
+        # :kz is legacy layer-centre diffusivity [m² s⁻¹]; :dkg is exact
+        # top-down interface exchange [kg s⁻¹]. Both use one value per layer.
         return npanel * Nc * Nc * nlevel
     elseif section === :cmfmc
         return npanel * Nc * Nc * (nlevel + 1)
@@ -93,7 +94,7 @@ function _pack_cs_window!(dest::Vector{FT}, offset::Int,
 end
 
 function _cs_section_panel_shape(Nc::Int, nlevel::Int, section::Symbol)
-    if section in (:m, :dm, :kz, :dtrain, :entu, :detu, :entd, :detd) ||
+    if section in (:m, :dm, :kz, :dkg, :dtrain, :entu, :detu, :entd, :detd) ||
        _is_gchp_vdiff_payload_section(section)
         return [Nc, Nc, nlevel]
     elseif section === :am
@@ -194,6 +195,7 @@ function open_streaming_cs_transport_binary(
         include_tm5conv::Bool = false,
         include_gchp_vdiff::Bool = false,
         include_precomputed_kz::Bool = false,
+        include_precomputed_dkg::Bool = false,
         panel_convention = "gnomonic",
         cs_definition = nothing,
         cs_coordinate_law = nothing,
@@ -202,6 +204,9 @@ function open_streaming_cs_transport_binary(
         extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}())
     include_dtrain && !include_cmfmc &&
         throw(ArgumentError("CS transport binaries cannot include dtrain without cmfmc"))
+    include_precomputed_dkg && mass_basis !== :dry && throw(ArgumentError(
+        "exact TM5 `:dkg` is defined on the runtime dry-air mass basis; " *
+        "include_precomputed_dkg=true requires mass_basis=:dry"))
 
     ncell = npanel * Nc * Nc
     nface_h = npanel * 2 * Nc * (Nc + 1)
@@ -217,6 +222,9 @@ function open_streaming_cs_transport_binary(
     end
     include_gchp_vdiff && append!(payload_sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
     include_precomputed_kz && push!(payload_sections, :kz)
+    include_precomputed_dkg && push!(payload_sections, :dkg)
+    include_precomputed_kz && include_precomputed_dkg &&
+        throw(ArgumentError("a CS binary cannot carry both legacy `:kz` and exact `:dkg` TM5 diffusion payloads"))
 
     elems_per_window = sum(_cs_section_elements(Nc, npanel, nlevel, s)
                            for s in payload_sections)
@@ -282,6 +290,9 @@ function open_streaming_cs_transport_binary(
         "include_precomputed_kz" => include_precomputed_kz,
         "precomputed_kz_payload" => include_precomputed_kz ? "tm5_bldiff_layer_center_kz_v1" : "none",
         "n_kz" => include_precomputed_kz ? _cs_section_elements(Nc, npanel, nlevel, :kz) : 0,
+        "include_precomputed_dkg" => include_precomputed_dkg,
+        "precomputed_dkg_payload" => include_precomputed_dkg ? "tm5_bldiff_interface_dkg_dry_v1" : "none",
+        "n_dkg" => include_precomputed_dkg ? _cs_section_elements(Nc, npanel, nlevel, :dkg) : 0,
         "n_pblh" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :pblh) : 0,
         "n_ustar" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :ustar) : 0,
         "n_pbl_hflux" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :pbl_hflux) : 0,

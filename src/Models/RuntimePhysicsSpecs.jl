@@ -459,13 +459,15 @@ function materialize(s::PrecomputedKzDiffusionSpec, ::CubedSphereRuntimeRecipeSt
                      ::Type{FT}, context) where {FT}
     _runtime_has_precomputed_kz(context) ||
         throw(ArgumentError(
-            "[diffusion] kind = \"precomputed_kz\" requires a `:kz` section in " *
-            "the cubed-sphere transport binary (the preprocessor's TM5 bldiff " *
-            "eddy diffusivity). Regenerate with include_tm5_diffusion=true."))
+            "[diffusion] kind = \"precomputed_kz\" requires an exact `:dkg` " *
+            "section (preferred) or legacy `:kz` section in the cubed-sphere " *
+            "transport binary. Regenerate with include_tm5_diffusion=true."))
     Nc1, Nc2, Nz = _pbl_cache_shape(context)
     host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
+    field = _runtime_has_precomputed_dkg(context) ?
+        PrecomputedCSDkgField(host_cache) : PrecomputedCSKzField(host_cache)
     return ImplicitVerticalDiffusion(;
-        kz_field = PrecomputedCSKzField(host_cache),
+        kz_field = field,
         surface_flux_coupling = _diffusion_surface_coupling(s.surface_flux_boundary))
 end
 materialize(::PrecomputedKzDiffusionSpec, ::AbstractRuntimeRecipeStyle, ::Type{FT},

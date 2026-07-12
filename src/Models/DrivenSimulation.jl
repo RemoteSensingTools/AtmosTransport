@@ -405,6 +405,7 @@ function _copy_window_payload!(dest::CubedSphereTransportWindow{B},
     _copy_optional_surface!(dest.surface, src.surface)
     _copy_optional_vdiff!(dest.vdiff, src.vdiff)
     _copy_optional_storage!(dest.kz, src.kz, :kz)
+    _copy_optional_storage!(dest.dkg, src.dkg, :dkg)
     return dest
 end
 
@@ -584,6 +585,17 @@ function _refresh_pbl_kz_for_window!(field::PrecomputedCSKzField,
                                      sim::DrivenSimulation)
     refresh_precomputed_cs_kz_cache!(field, sim.window.kz)
     return nothing
+end
+
+function _refresh_pbl_kz_for_window!(field::PrecomputedCSDkgField,
+                                     sim::DrivenSimulation)
+    refresh_precomputed_cs_dkg_cache!(field, sim.window.dkg)
+    return nothing
+end
+
+@inline function _fill_dz_for_diffusion!(dz_scratch, _ps, _ak, _bk,
+        ::ImplicitVerticalDiffusion{FT, <:PrecomputedCSDkgField}, _window) where FT
+    return dz_scratch
 end
 
 @inline _refresh_pbl_kz_for_window!(::NoDiffusion, _sim::DrivenSimulation) = nothing

@@ -141,9 +141,24 @@ _runtime_has_gchp_vdiff(driver::CubedSphereTransportDriver) =
 
 _runtime_has_precomputed_kz(_context) = false
 _runtime_has_precomputed_kz(reader::CubedSphereBinaryReader) =
-    :kz in reader.header.payload_sections
+    any(s in reader.header.payload_sections for s in (:dkg, :kz))
 _runtime_has_precomputed_kz(driver::CubedSphereTransportDriver) =
     _runtime_has_precomputed_kz(driver.reader)
+
+_runtime_has_precomputed_dkg(_context) = false
+_runtime_has_precomputed_dkg(reader::CubedSphereBinaryReader) =
+    :dkg in reader.header.payload_sections
+_runtime_has_precomputed_dkg(driver::CubedSphereTransportDriver) =
+    _runtime_has_precomputed_dkg(driver.reader)
+
+# Concrete-operator validators must require the matching section on every
+# daily binary. The broad capability above is only for first-context
+# materialization and backward-compatible test contexts.
+_runtime_has_legacy_precomputed_kz(context) = _runtime_has_precomputed_kz(context)
+_runtime_has_legacy_precomputed_kz(reader::CubedSphereBinaryReader) =
+    :kz in reader.header.payload_sections
+_runtime_has_legacy_precomputed_kz(driver::CubedSphereTransportDriver) =
+    _runtime_has_legacy_precomputed_kz(driver.reader)
 
 function build_runtime_convection(cfg, context)
     return build_runtime_convection(cfg, _runtime_recipe_style(context))
@@ -237,11 +252,20 @@ end
 function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
                                     ::ImplicitVerticalDiffusion{FT, <:PrecomputedCSKzField},
                                     context) where FT
-    _runtime_has_precomputed_kz(context) ||
+    _runtime_has_legacy_precomputed_kz(context) ||
         throw(ArgumentError(
-            "[diffusion] kind = \"precomputed_kz\" requires a `:kz` section in " *
-            "every cubed-sphere transport binary (the preprocessor's TM5 bldiff " *
-            "eddy diffusivity). Regenerate with include_tm5_diffusion=true."))
+            "The active diffusion operator was materialized from a legacy `:kz` " *
+            "binary, so every cubed-sphere binary in this run must also carry `:kz`. " *
+            "Do not mix legacy `:kz` and exact `:dkg` daily binaries; regenerate " *
+            "the complete interval with include_tm5_diffusion=true."))
+    return nothing
+end
+
+function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
+                                    ::ImplicitVerticalDiffusion{FT, <:PrecomputedCSDkgField},
+                                    context) where FT
+    _runtime_has_precomputed_dkg(context) || throw(ArgumentError(
+        "TM5 precomputed diffusion requires a `:dkg` section in every cubed-sphere transport binary."))
     return nothing
 end
 

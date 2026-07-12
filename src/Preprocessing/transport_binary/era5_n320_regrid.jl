@@ -36,9 +36,9 @@
 #
 # TM5 convection (entu/detu/entd/detd) IS now written when
 # `include_convection = true`. The N320 forecast (UDMF/DDMF/UDRF/DDRF)
-# is converted to TM5 fields via `ec2tm_from_rates!` on each column,
-# then regridded to C180 via the existing conservative path, then
-# attached to the per-window writer payload as `window.tm5_fields`.
+# is conservatively mapped to C180 first, then converted to TM5 fields via
+# `ec2tm_from_rates!` using target-grid thermodynamic geometry, and attached
+# to the per-window writer payload as `window.tm5_fields`.
 # CMFMC/DTRAIN is NOT written from this preprocessor; consumers that
 # want CMFMC should read from a GEOS-IT binary or convert from TM5
 # downstream.

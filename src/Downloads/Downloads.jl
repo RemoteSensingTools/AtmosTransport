@@ -59,6 +59,7 @@ include("pipeline.jl")
 
 # Source-specific task builders
 include("sources/era5.jl")
+include("sources/era5_arco.jl")
 include("sources/geosfp.jl")
 include("sources/geosit.jl")
 include("sources/merra2.jl")
@@ -66,8 +67,8 @@ include("sources/merra2.jl")
 # Exports
 export download_data!
 export parse_download_config, DownloadConfig
-export ERA5Source, GEOSFPSource, GEOSITSource, MERRA2Source
-export CDSProtocol, MARSProtocol, OPeNDAPProtocol, HTTPProtocol, S3Protocol
+export ERA5Source, ERA5ARCOSource, GEOSFPSource, GEOSITSource, MERRA2Source
+export CDSProtocol, MARSProtocol, OPeNDAPProtocol, HTTPProtocol, S3Protocol, GCSProtocol
 export verified_download, verify_downloads
 export detect_python_env, PythonEnvironment
 

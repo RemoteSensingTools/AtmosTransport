@@ -150,6 +150,8 @@ _download_protocol_identity(protocol::S3Protocol) =
     (kind="s3", bucket=protocol.bucket, prefix=protocol.prefix)
 _download_protocol_identity(protocol::OPeNDAPProtocol) =
     (kind="opendap", base_url=protocol.base_url)
+_download_protocol_identity(protocol::GCSProtocol) =
+    (kind="gcs", bucket_base=protocol.bucket_base)
 
 function _download_task_identity(task::DownloadTask, protocol::AbstractDownloadProtocol)
     request_items = sort!(collect(task.request); by=first)

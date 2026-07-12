@@ -17,10 +17,21 @@ Data Layout hierarchy (`docs/reference/DATA_LAYOUT.md`).
 
 | Recipe | Source | Chunk | Description |
 |--------|--------|-------|-------------|
-| `era5_native_monthly.toml` | ERA5 | Monthly | All fields: core (VO/D/T/Q/LNSP), convection, surface |
+| `era5_arco.toml` | ERA5-ARCO | Daily | **Default ERA5 core+surface.** Native spectral GRIB + single_level netCDF from Google ARCO-ERA5 (GCS, no MARS queue, ~78 MB/s) |
+| `era5_convection_only.toml` | ERA5 (CDS) | ≤6-day | Convective mass flux (235009-012) — the one field ARCO lacks; ≤6-day chunks stay under MARS's 150 GB limit |
+| `era5_native_monthly.toml` | ERA5 (CDS) | Monthly | Legacy all-fields CDS path (core/convection/surface); MARS-queue-bound |
 | `geosfp_c720.toml` | GEOS-FP | Per-file | C720 cubed-sphere CTM mass fluxes from WashU |
 | `geosit_c180.toml` | GEOS-IT | Per-file | C180 cubed-sphere from AWS S3 |
 | `merra2.toml` | MERRA-2 | Per-day | OPeNDAP download (not yet implemented) |
+
+**ERA5 default:** use `era5_arco.toml` (queue-free GCS) for core+surface and
+`era5_convection_only.toml` (CDS) for convection. Preprocess the ARCO core with
+`config/met_sources/era5_n320_arco.toml` (`arco_surface_pressure=true` — PS comes
+from the single_level `sp` netCDF, not spectral `lnsp`). The CDS
+`era5_native_*` recipes remain for fallback but are gated by the MARS queue.
+For a full multi-year bulk pull, the standalone
+`met/era5/N320/hourly/raw/_jobs/run_arco_core_download.sh` driver parallelizes
+days and skips the per-file SHA-256 manifest that `download_data.jl` writes.
 
 ### Examples
 

@@ -1,0 +1,53 @@
+# ===========================================================================
+# ERA5-ARCO — Met Data Source Configuration
+#
+# ERA5 served from Google's ARCO-ERA5 public GCS mirror
+# (gs://gcp-public-data-arco-era5). Same ECMWF ERA5 data as era5.toml, but
+# pre-staged over HTTPS — no CDS/MARS request queue. The `raw/ERA5GRIB`
+# collection preserves the native form the N320 preprocessor consumes:
+# spectral (T639) dynamics + reduced-Gaussian (N320) moisture.
+#
+# The `name` here ("ERA5-ARCO") selects ERA5ARCOSource + the gcs protocol.
+# Surface pressure / PBL fields are NOT in the model-level GRIB; they come
+# from the single_level netCDF collection (see [access.arco]).
+# ===========================================================================
+
+[source]
+name        = "ERA5-ARCO"
+description = "ECMWF ERA5 via Google ARCO-ERA5 (queue-free GCS mirror)"
+institution = "ECMWF (data) / Google Research (ARCO mirror)"
+reference   = "https://github.com/google-research/arco-era5"
+
+# Native ERA5 model-level grid (for the record; the preprocessor auto-detects
+# the reduced-Gaussian geometry from the GRIB itself).
+[grid]
+type      = "ReducedGaussian"
+truncation = 639          # T639 spectral (HRES)
+N         = 320           # N320 reduced Gaussian
+Nz        = 137
+
+[vertical]
+coordinate_type   = "HybridSigmaPressure"
+coefficients_file = "config/era5_L137_coefficients.toml"
+n_levels          = 137
+n_interfaces      = 138
+
+# ---------------------------------------------------------------------------
+# ARCO / GCS access. bucket_base is the public HTTPS endpoint of the bucket.
+# Templates use {YYYY}/{MM}/{DD}/{variable} placeholders.
+# ---------------------------------------------------------------------------
+[access]
+protocol    = "gcs"
+bucket_base = "https://storage.googleapis.com/gcp-public-data-arco-era5"
+
+[access.arco]
+# Model-level "core": one GRIB2 per variable-group per day, concatenated.
+#   dve = vorticity(138)+divergence(155) spectral
+#   tw  = temperature(130) spectral + vertical velocity
+#   o3q = specific humidity(133) reduced-Gaussian N320 + ozone + clouds
+core_dir_template = "raw/ERA5GRIB/HRES/Daily/{YYYY}"
+core_components   = ["dve", "tw", "o3q"]
+
+# Single-level surface fields: one netCDF per variable per day.
+single_level_dir_template = "raw/date-variable-single_level/{YYYY}/{MM}/{DD}/{variable}"
+single_level_filename     = "surface.nc"

@@ -4,7 +4,7 @@ Meteorological driver and transport-window infrastructure.
 
 This folder is the bridge between external data and the runtime model.
 It owns the abstract driver contract, binary readers, driver adapters,
-mass-closure helpers, convection-forcing containers, and the ERA5- and
+replay diagnostics, convection-forcing containers, and the ERA5- and
 cubed-sphere-specific data paths.
 
 ## Entry Points
@@ -32,7 +32,7 @@ cubed-sphere-specific data paths.
 - The abstract met-driver capability contract used by `DrivenSimulation`
 - Binary/window readers and adapters that return runtime-friendly
   transport windows
-- Mass-closure and dry-flux helper logic
+- Replay-continuity diagnostics for loaded windows
 - Driver-level capability traits such as `supports_diffusion` and
   `supports_convection`
 - Simulation time plumbing via `current_time(meteo)`
@@ -41,9 +41,7 @@ cubed-sphere-specific data paths.
 
 - [`MetDrivers.jl`](MetDrivers.jl) — submodule assembly and public exports
 - [`AbstractMetDriver.jl`](AbstractMetDriver.jl) — required driver
-  methods, traits, and default `current_time`
-- [`DryFluxBuilder.jl`](DryFluxBuilder.jl) — generic dry-flux and air-mass
-  assembly helpers
+  methods, traits, and the `current_time` contract
 - [`ConvectionForcing.jl`](ConvectionForcing.jl) — convection forcing
   storage, adaptation, and copy helpers
 - [`SurfaceForcing.jl`](SurfaceForcing.jl) — surface forcing payload
@@ -109,9 +107,9 @@ cubed-sphere-specific data paths.
 - Runtime flow:
   [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)
 - Tests:
-  - [`../../test/test_transport_binary_reader.jl`](../../test/test_transport_binary_reader.jl)
-  - [`../../test/test_run_transport_binary_recipe.jl`](../../test/test_run_transport_binary_recipe.jl)
-  - [`../../test/test_binary_path_expander.jl`](../../test/test_binary_path_expander.jl)
-  - [`../../test/test_dry_flux_interface.jl`](../../test/test_dry_flux_interface.jl)
-  - [`../../test/test_current_time.jl`](../../test/test_current_time.jl)
-  - [`../../test/test_cubed_sphere_runtime.jl`](../../test/test_cubed_sphere_runtime.jl)
+  - [`../../test/real_data/test_transport_binary_reader.jl`](../../test/real_data/test_transport_binary_reader.jl)
+  - [`../../test/orphan/test_run_transport_binary_recipe.jl`](../../test/orphan/test_run_transport_binary_recipe.jl)
+  - [`../../test/core/test_binary_path_expander.jl`](../../test/core/test_binary_path_expander.jl)
+  - [`../../test/real_data/test_dry_flux_interface.jl`](../../test/real_data/test_dry_flux_interface.jl)
+  - [`../../test/orphan/test_current_time.jl`](../../test/orphan/test_current_time.jl)
+  - [`../../test/orphan/test_cubed_sphere_runtime.jl`](../../test/orphan/test_cubed_sphere_runtime.jl)

@@ -132,6 +132,6 @@ are genuine fast-path implementations, not generic wrappers.
   [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl) and
   [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Tests:
-  - [`../../../test/test_convection_types.jl`](../../../test/test_convection_types.jl)
-  - [`../../../test/test_convection_forcing.jl`](../../../test/test_convection_forcing.jl)
-  - [`../../../test/test_cmfmc_convection.jl`](../../../test/test_cmfmc_convection.jl)
+  - [`../../../test/orphan/test_convection_types.jl`](../../../test/orphan/test_convection_types.jl)
+  - [`../../../test/orphan/test_convection_forcing.jl`](../../../test/orphan/test_convection_forcing.jl)
+  - [`../../../test/orphan/test_cmfmc_convection.jl`](../../../test/orphan/test_cmfmc_convection.jl)

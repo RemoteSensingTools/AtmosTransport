@@ -18,10 +18,14 @@ duplicating coverage claims.
 
 | Operator | LatLon | RG | CS |
 |----------|:------:|:--:|:--:|
-| `UpwindScheme` / `SlopesScheme` / `PPMScheme` | ✅ | ✅ | ✅ |
+| `UpwindScheme` | ✅ | ✅ | ✅ |
+| `SlopesScheme` / `PPMScheme` | ✅ | ❌ | ✅ |
+| `LinRoodPPMScheme` | ❌ | ❌ | ✅ |
 | `ImplicitVerticalDiffusion` | ✅ | ✅ | ✅ |
 | `SurfaceFluxOperator` | ✅ | ✅ | ✅ |
 | `CMFMCConvection` | ✅ | ✅ | ✅ |
+| `TM5Convection` | ✅ | ✅ | ✅ |
+| `CMFMCMatrixConvection` | ✅ | ✅ | ✅ |
 | `ExponentialDecay` / `CompositeChemistry` | ✅ | ✅ | ✅ |
 
 ✅ = dedicated `apply!` or `apply_*!` dispatch exists, tested and live through `TransportModel.step!`.
@@ -35,7 +39,8 @@ For each ✅ combination, the authoritative dispatch method:
 
 - **LatLon** — rank-4 Strang palindrome `X→Y→Z→V(dt)→Z→Y→X` in
   [`Advection/StrangSplitting.jl`](Advection/StrangSplitting.jl)
-- **RG** — face-indexed `H→V(dt)→H` in the same file
+- **RG** — face-indexed `H→V(dt)→H` with `UpwindScheme` in the same file;
+  higher-order schemes are rejected
 - **CS** — panel-oriented packed-tracer
   [`strang_split_cs_mt!`](Advection/CubedSphereStrang.jl) for split-sweep
   schemes, with [`strang_split_cs!`](Advection/CubedSphereStrang.jl) retained
@@ -58,7 +63,7 @@ The mass-conserving `apply_vertical_diffusion_vmr!` dispatches in
   topology-dispatched `apply!` for all three flux-state types
 - Kernels live in [`SurfaceFlux/surface_flux_kernels.jl`](SurfaceFlux/surface_flux_kernels.jl)
 
-### Convection (CMFMC)
+### Convection
 
 Three valid `apply!` methods + one rejection in
 [`Convection/CMFMCConvection.jl`](Convection/CMFMCConvection.jl):
@@ -68,6 +73,10 @@ Three valid `apply!` methods + one rejection in
 - `apply!(::CubedSphereState, ::ConvectionForcing, ::AtmosGrid{<:CubedSphereMesh}, ::CMFMCConvection, dt)`
 - A fourth dispatch rejects face-indexed state on non-RG grids to
   catch configuration mistakes.
+
+`TM5Convection.jl` and `CMFMCMatrixConvection.jl` provide the same three
+topology-specific state/grid dispatches. The matrix variant derives TM5-style
+rates from CMFMC forcing before delegating to the implicit column solve.
 
 ### Chemistry
 
@@ -83,7 +92,8 @@ the six panels and launches the same rank-agnostic decay kernel per panel.
 
 ## Known gaps
 
-None at present.
+- Reduced Gaussian advection is first-order only.
+- `LinRoodPPMScheme` is cubed-sphere only.
 
 ## How to update this file
 

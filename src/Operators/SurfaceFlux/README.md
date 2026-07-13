@@ -78,8 +78,8 @@ the topology-specific kernels that inject mass into the surface layer.
   [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl) and
   [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Tests:
-  - [`../../../test/test_surface_flux_operator.jl`](../../../test/test_surface_flux_operator.jl)
-  - [`../../../test/test_transport_model_emissions.jl`](../../../test/test_transport_model_emissions.jl)
-  - [`../../../test/test_emissions_palindrome.jl`](../../../test/test_emissions_palindrome.jl)
-  - [`../../../test/test_driven_simulation.jl`](../../../test/test_driven_simulation.jl)
-  - [`../../../test/test_cubed_sphere_runtime.jl`](../../../test/test_cubed_sphere_runtime.jl)
+  - [`../../../test/orphan/test_surface_flux_operator.jl`](../../../test/orphan/test_surface_flux_operator.jl)
+  - [`../../../test/orphan/test_transport_model_emissions.jl`](../../../test/orphan/test_transport_model_emissions.jl)
+  - [`../../../test/orphan/test_emissions_palindrome.jl`](../../../test/orphan/test_emissions_palindrome.jl)
+  - [`../../../test/core/test_driven_simulation.jl`](../../../test/core/test_driven_simulation.jl)
+  - [`../../../test/orphan/test_cubed_sphere_runtime.jl`](../../../test/orphan/test_cubed_sphere_runtime.jl)

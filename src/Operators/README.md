@@ -103,6 +103,6 @@ submodules before assuming it is cosmetic.
 - Topology coverage and current status:
   [`TOPOLOGY_SUPPORT.md`](TOPOLOGY_SUPPORT.md)
 - Test entrypoints:
-  - [`../../test/test_basis_explicit_core.jl`](../../test/test_basis_explicit_core.jl)
-  - [`../../test/test_driven_simulation.jl`](../../test/test_driven_simulation.jl)
+  - [`../../test/core/test_basis_explicit_core.jl`](../../test/core/test_basis_explicit_core.jl)
+  - [`../../test/core/test_driven_simulation.jl`](../../test/core/test_driven_simulation.jl)
   - submodule-specific tests listed in each subfolder README

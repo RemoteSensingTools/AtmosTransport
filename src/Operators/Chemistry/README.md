@@ -67,5 +67,6 @@ operators, and sequential `CompositeChemistry` composition that
 - Topology coverage:
   [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)
 - Tests:
-  - [`../../../test/test_chemistry.jl`](../../../test/test_chemistry.jl)
-  - [`../../../test/test_current_time.jl`](../../../test/test_current_time.jl)
+  - [`../../../test/orphan/test_chemistry.jl`](../../../test/orphan/test_chemistry.jl)
+  - [`../../../test/core/test_cs_chemistry.jl`](../../../test/core/test_cs_chemistry.jl)
+  - [`../../../test/orphan/test_current_time.jl`](../../../test/orphan/test_current_time.jl)

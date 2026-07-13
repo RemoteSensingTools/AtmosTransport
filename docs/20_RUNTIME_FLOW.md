@@ -85,7 +85,7 @@ function step!(model::TransportModel, dt; meteo = nothing)
 end
 ```
 
-For Plan-41 v3 transport binaries that declare
+For v4 transport binaries that declare
 `runtime_substep_contract = "binary_schedule"`, `DrivenSimulation` calls
 `transport_step!` on every stored binary substep and calls
 `convection_chemistry_step!` once at the met-window boundary with
@@ -170,15 +170,10 @@ fluxes ready to consume (Invariants 13 and 14). See
 [`30_BINARY_AND_DRIVERS.md`](30_BINARY_AND_DRIVERS.md) for the binary
 contract.
 
-The `DryFluxBuilder` runtime converter (`src/MetDrivers/ERA5/DryFluxBuilder.jl`)
-is retained for backward compatibility with old moist-basis binaries
-only.
-
 ## Related docs
 
 - [`10_CORE_CONTRACTS.md`](10_CORE_CONTRACTS.md) — State / flux / driver contracts
 - [`30_BINARY_AND_DRIVERS.md`](30_BINARY_AND_DRIVERS.md) — Transport binary format
 - [`35_RUNTIME_STABILITY_AND_SUBCYCLING.md`](35_RUNTIME_STABILITY_AND_SUBCYCLING.md) — CFL pilots and subcycling
-- [`../src/Operators/TOPOLOGY_SUPPORT.md`](../src/Operators/TOPOLOGY_SUPPORT.md) — Per-operator dispatch matrix
 - [`../src/Operators/TOPOLOGY_SUPPORT.md`](../src/Operators/TOPOLOGY_SUPPORT.md) — Per-operator dispatch matrix
 - [`reference/ARCHITECTURE.md`](reference/ARCHITECTURE.md) — Architecture overview

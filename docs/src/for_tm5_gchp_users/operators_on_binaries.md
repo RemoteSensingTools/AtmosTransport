@@ -73,9 +73,12 @@ flowchart LR
 | Scheme | What TM5/GCHP user it maps to | Grids | Multi-tracer fusion |
 | --- | --- | --- | --- |
 | `UpwindScheme` | First-order upwind (debugging only) | LL, RG, CS | yes |
-| `SlopesScheme` | Russell-Lerner slopes / "TM5 sl_advection" | LL, RG, CS | yes |
-| `PPMScheme` | PPM with Colella-Woodward monotonicity (GCHP PPM-NV5) | LL, RG, CS split-sweep | yes |
+| `SlopesScheme` | Russell-Lerner slopes / "TM5 sl_advection" | LL, CS | yes |
+| `PPMScheme` | PPM with Colella-Woodward monotonicity (GCHP PPM-NV5) | LL, CS split-sweep | yes |
 | `LinRoodPPMScheme{ORD}` (ORD ∈ {5,7}) | FV3 Lin-Rood PPM (GCHP dynamics) | CS only | **no** (per-tracer loop) |
+
+Reduced Gaussian currently supports `UpwindScheme` only; requesting a
+higher-order scheme on RG is rejected before transport begins.
 
 The TOML `[advection].scheme` key parses to a Julia type at config
 time; the runtime sees the typed value and dispatches at compile
@@ -97,10 +100,10 @@ n_sub = ceil(ratio / safety_factor)
 with `out_d = max(0,-a_lo) + max(0,a_hi)` (the Lin-Rood 1996
 refinement, not `max(|a_lo|, |a_hi|)`). The factor of 2 is because
 the palindrome traverses each direction twice. For binaries written
-with adaptive substeps, the count per window is already baked into
-`steps_per_window_by_window[k]`; the runtime uses the binary's value
-as the floor and may refine upward if cell-by-cell mass would go
-negative.
+with adaptive substeps, the preprocessor bakes the verified count into
+`steps_per_window_by_window[k]`. The binary-scheduled runtime executes exactly
+that many transport substeps and fixes the inner directional subcycle count at
+one; it neither re-pilots nor refines the stored schedule.
 
 This is the analogue of TM5's CFL-driven substep, hardened against
 the palindrome's specific stacking pattern.

@@ -405,7 +405,8 @@ end
 
 # ===========================================================================
 # Top-down column driver: from the model's native top-down profiles (k=1 = TOA,
-# k=Nz = surface) to a layer-centre Kz field ready for the binary `:Kz` payload.
+# k=Nz = surface) to a layer-centre Kz diagnostic. The v4 writer stores the
+# derived interface exchange `dkg`, not this intermediate Kz profile.
 #
 # The runtime diffusion kernel reads Kz at layer CENTRES and averages adjacent
 # centres to interfaces, whereas `bldiff` produces Kz at INTERFACES. We map the

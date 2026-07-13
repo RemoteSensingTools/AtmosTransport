@@ -29,7 +29,8 @@ using .AtmosTransport.Preprocessing: GEOSITSettings, process_day,
                                       plan_vertical,
                                       MergeAbovePressure,
                                       CS_PANEL_COUNT
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window,
+using .AtmosTransport.MetDrivers: TransportBinaryReader, CubedSphereBinaryGeometry,
+                                  binary_geometry, load_window!,
                                   load_flux_delta_window!,
                                   verify_window_continuity_cs
 
@@ -40,9 +41,9 @@ const NZ = 4
 const MFXC_C5 = 80.0
 const MFYC_C5 = -40.0
 
-function assert_cs_window_replay(reader::CubedSphereBinaryReader, win::Int;
+function assert_cs_window_replay(reader::TransportBinaryReader, win::Int;
                                  tol::Real = 1e-12)
-    window = load_cs_window(reader, win)
+    window = load_window!(reader, win)
     deltas = load_flux_delta_window!(reader, win)
     steps = reader.header.steps_per_window_by_window[win]
     m_next = ntuple(p -> window.m[p] .+ deltas.dm[p], 6)
@@ -276,15 +277,16 @@ end
         @test first.out_path == out_path
 
         # Open the binary back and confirm the header round-trips.
-        reader = CubedSphereBinaryReader(out_path; FT=FT_TEST)
+        reader = TransportBinaryReader(out_path; FT=FT_TEST)
         try
-            @test reader.header.Nc == NC
-            @test reader.header.npanel == 6
+            @test binary_geometry(reader) isa CubedSphereBinaryGeometry
+            @test reader.header.geometry.Nc == NC
+            @test reader.header.geometry.npanel == 6
             @test reader.header.nlevel == NZ
             @test reader.header.nwindow == 24                        # GEOS hourly
             @test reader.header.steps_per_window == 8
             @test reader.header.mass_basis === :dry
-            @test reader.header.panel_convention === :geos_native
+            @test reader.header.geometry.panel_convention === :geos_native
             @test :dm in reader.header.payload_sections              # delta enabled
             @test reader.header.raw_header["runtime_substep_contract"] == "binary_schedule"
             @test reader.header.raw_header["geos_mass_endpoint"] == "raw_dry_endpoint"
@@ -337,7 +339,7 @@ end
         @test isfile(out_path)
         @test result.worst_replay_rel < 1e-12
 
-        reader = CubedSphereBinaryReader(out_path; FT=FT_TEST)
+        reader = TransportBinaryReader(out_path; FT=FT_TEST)
         try
             @test reader.header.nlevel == 3
             @test reader.header.raw_header["vertical_Nz_output"] == 3

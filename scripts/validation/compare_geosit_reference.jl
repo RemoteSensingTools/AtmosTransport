@@ -33,7 +33,7 @@ const REPO_ROOT = abspath(joinpath(@__DIR__, "..", ".."))
 include(joinpath(REPO_ROOT, "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.MetDrivers:
-    CubedSphereBinaryReader, load_cs_window, load_grid
+    TransportBinaryReader, load_window!, load_grid
 using .AtmosTransport.Preprocessing:
     geos_native_to_face_flux!, recover_cs_cell_center_winds!,
     rotate_panel_to_geographic!
@@ -208,7 +208,7 @@ function main()
     ps_corr_threshold = parse(Float64, get(opts, "ps-corr-threshold", "0.95"))
     strict = "strict" in flags
 
-    reader = CubedSphereBinaryReader(bin_path; FT=Float32)
+    reader = TransportBinaryReader(bin_path; FT=Float32)
     h = reader.header
     windows = parse_windows(get(opts, "windows", "1:$(h.nwindow)"), h.nwindow)
     all(1 .<= windows .<= h.nwindow) ||
@@ -217,14 +217,14 @@ function main()
     grid = load_grid(reader; FT=Float64, arch=CPU())
     mesh = grid.horizontal
     tangent_basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
-    Nc = h.Nc
+    Nc = h.geometry.Nc
     Nz_gen = h.nlevel
 
-    @assert h.panel_convention === :geos_native
-    @assert h.cs_definition === :gmao_equal_distance
-    @assert h.coordinate_law === :gmao_equal_distance_gnomonic
-    @assert h.center_law === :four_corner_normalized
-    @assert h.longitude_offset_deg == -10.0
+    @assert h.geometry.panel_convention === :geos_native
+    @assert h.geometry.definition === :gmao_equal_distance
+    @assert h.geometry.coordinate_law === :gmao_equal_distance_gnomonic
+    @assert h.geometry.center_law === :four_corner_normalized
+    @assert h.geometry.longitude_offset_deg == -10.0
 
     geos_path = geos_ctm_path(root, date)
     ds = NCDataset(geos_path)
@@ -288,7 +288,7 @@ function main()
             dt_factor = Float32(AtmosTransport.MetDrivers.flux_application_seconds(
                 h.dt_met_seconds, steps, AtmosTransport.MetDrivers.flux_kind(reader)))
             geos_flux_scale = Float32(Float64(dt_factor) / geos_mass_flux_dt) / GRAVITY
-            win = load_cs_window(reader, w)
+            win = load_window!(reader, w)
             fill_dp_from_mass!(gen_dp, win.m, mesh.cell_areas, GRAVITY)
             recover_cs_cell_center_winds!(gen_u_loc, gen_v_loc, win.am, win.bm,
                                           gen_dp, mesh.Δx, mesh.Δy,

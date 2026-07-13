@@ -27,7 +27,7 @@ using .AtmosTransport.Preprocessing: GEOSITSettings, open_day, close_day!,
                                       has_convection, process_day,
                                       build_target_geometry,
                                       load_hybrid_coefficients
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader
+using .AtmosTransport.MetDrivers: TransportBinaryReader
 
 const FT_TEST = Float64
 const NC = 8
@@ -268,13 +268,13 @@ end
                     out_path = out_full,
                     dt_met_seconds = 3600.0, FT = FT_TEST,
                     mass_basis = :dry, replay_tol = 1e-12)
-        reader = CubedSphereBinaryReader(out_full; FT = FT_TEST)
+        reader = TransportBinaryReader(out_full; FT = FT_TEST)
         try
             @test :pblh  in reader.header.payload_sections
             @test :ustar in reader.header.payload_sections
             @test :pbl_hflux in reader.header.payload_sections
             @test :t2m   in reader.header.payload_sections
-            win = AtmosTransport.MetDrivers.load_cs_window(reader, 1)
+            win = AtmosTransport.MetDrivers.load_window!(reader, 1)
             @test win.surface.pblh[1][1, 1] == 1000.0
             @test win.surface.t2m[1][1, 1] == 295.0
         finally
@@ -288,7 +288,7 @@ end
                     out_path = out_on,
                     dt_met_seconds = 3600.0, FT = FT_TEST,
                     mass_basis = :dry, replay_tol = 1e-12)
-        reader = CubedSphereBinaryReader(out_on; FT = FT_TEST)
+        reader = TransportBinaryReader(out_on; FT = FT_TEST)
         try
             @test :cmfmc  in reader.header.payload_sections
             @test :dtrain in reader.header.payload_sections
@@ -303,7 +303,7 @@ end
                     out_path = out_off,
                     dt_met_seconds = 3600.0, FT = FT_TEST,
                     mass_basis = :dry, replay_tol = 1e-12)
-        reader = CubedSphereBinaryReader(out_off; FT = FT_TEST)
+        reader = TransportBinaryReader(out_off; FT = FT_TEST)
         try
             @test !(:cmfmc  in reader.header.payload_sections)
             @test !(:dtrain in reader.header.payload_sections)

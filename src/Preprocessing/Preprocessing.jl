@@ -93,7 +93,9 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis
 using ..Regridding: build_regridder, apply_regridder!
 using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField,
                     HorizontalVectorField, HorizontalFluxField
-using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transport_binary,
+using ..MetDrivers: LatLonBinaryGeometry, TransportBinaryReader,
+                    TransportBinaryHeader, binary_geometry, grid_type,
+                    write_transport_binary,
                     TRANSPORT_BINARY_FORMAT_VERSION,
                     StreamingTransportBinaryWriter,
                     open_streaming_transport_binary, write_streaming_window!,

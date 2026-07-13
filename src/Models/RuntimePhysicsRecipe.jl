@@ -57,18 +57,15 @@ end
 @inline _runtime_recipe_style(::AtmosGrid{<:ReducedGaussianMesh}) = ReducedGaussianRuntimeRecipeStyle()
 @inline _runtime_recipe_style(::AtmosGrid{<:CubedSphereMesh}) = CubedSphereRuntimeRecipeStyle()
 @inline _runtime_recipe_style(driver::AbstractMetDriver) = _runtime_recipe_style(driver_grid(driver))
-@inline _runtime_recipe_style(::CubedSphereBinaryReader) = CubedSphereRuntimeRecipeStyle()
-
-@inline function _runtime_recipe_style(reader::TransportBinaryReader)
-    if grid_type(reader) === :latlon && horizontal_topology(reader) === :structureddirectional
-        return LatLonRuntimeRecipeStyle()
-    elseif grid_type(reader) === :reduced_gaussian && horizontal_topology(reader) === :faceindexed
-        return ReducedGaussianRuntimeRecipeStyle()
-    end
-    throw(ArgumentError(
-        "No runtime recipe style is defined for transport binary grid/topology " *
-        "$(grid_type(reader)) / $(horizontal_topology(reader))."))
-end
+@inline _runtime_recipe_style(
+    ::TransportBinaryReader{<:Any, <:Any, LatLonBinaryGeometry},
+) = LatLonRuntimeRecipeStyle()
+@inline _runtime_recipe_style(
+    ::TransportBinaryReader{<:Any, <:Any, ReducedGaussianBinaryGeometry},
+) = ReducedGaussianRuntimeRecipeStyle()
+@inline _runtime_recipe_style(
+    ::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
+) = CubedSphereRuntimeRecipeStyle()
 
 function _runtime_recipe_style(context)
     throw(ArgumentError(
@@ -117,25 +114,31 @@ function _pbl_cache_shape(context)
         "[diffusion] kind = \"tm5_beljaars_viterbo_local_kz\" requires a cubed-sphere reader or driver " *
         "context so the Kz cache can be sized."))
 end
-_pbl_cache_shape(reader::CubedSphereBinaryReader) =
-    (reader.header.Nc, reader.header.Nc, reader.header.nlevel)
+_pbl_cache_shape(
+    reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
+) = (reader.header.geometry.Nc, reader.header.geometry.Nc, reader.header.nlevel)
 _pbl_cache_shape(driver::CubedSphereTransportDriver) =
-    (driver.reader.header.Nc, driver.reader.header.Nc, driver.reader.header.nlevel)
+    (driver.reader.header.geometry.Nc,
+     driver.reader.header.geometry.Nc,
+     driver.reader.header.nlevel)
 
 @inline _runtime_has_surface(_context) = false
 _runtime_has_surface(reader::TransportBinaryReader) = MetDrivers.has_surface(reader)
-_runtime_has_surface(reader::CubedSphereBinaryReader) = MetDrivers.has_surface(reader)
 _runtime_has_surface(driver::TransportBinaryDriver) = MetDrivers.has_surface(driver.reader)
 _runtime_has_surface(driver::CubedSphereTransportDriver) = MetDrivers.has_surface(driver.reader)
 
 @inline _runtime_has_gchp_vdiff(_context) = false
-_runtime_has_gchp_vdiff(reader::CubedSphereBinaryReader) =
+_runtime_has_gchp_vdiff(
+    reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
+) =
     MetDrivers.has_surface(reader) && MetDrivers.has_vdiff_fields(reader)
 _runtime_has_gchp_vdiff(driver::CubedSphereTransportDriver) =
     _runtime_has_gchp_vdiff(driver.reader)
 
 _runtime_has_precomputed_dkg(_context) = false
-_runtime_has_precomputed_dkg(reader::CubedSphereBinaryReader) =
+_runtime_has_precomputed_dkg(
+    reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
+) =
     :dkg in reader.header.payload_sections
 _runtime_has_precomputed_dkg(driver::CubedSphereTransportDriver) =
     _runtime_has_precomputed_dkg(driver.reader)
@@ -173,11 +176,9 @@ end
 @inline _runtime_has_tm5_convection(_context) = false
 @inline _runtime_has_cmfmc(_context) = false
 @inline _runtime_has_tm5_convection(reader::TransportBinaryReader) = MetDrivers.has_tm5_convection(reader)
-@inline _runtime_has_tm5_convection(reader::CubedSphereBinaryReader) = MetDrivers.has_tm5_convection(reader)
 @inline _runtime_has_tm5_convection(driver::TransportBinaryDriver) = MetDrivers.has_tm5_convection(driver.reader)
 @inline _runtime_has_tm5_convection(driver::CubedSphereTransportDriver) = MetDrivers.has_tm5_convection(driver.reader)
 @inline _runtime_has_cmfmc(reader::TransportBinaryReader) = MetDrivers.has_cmfmc(reader)
-@inline _runtime_has_cmfmc(reader::CubedSphereBinaryReader) = MetDrivers.has_cmfmc(reader)
 @inline _runtime_has_cmfmc(driver::TransportBinaryDriver) = MetDrivers.has_cmfmc(driver.reader)
 @inline _runtime_has_cmfmc(driver::CubedSphereTransportDriver) = MetDrivers.has_cmfmc(driver.reader)
 

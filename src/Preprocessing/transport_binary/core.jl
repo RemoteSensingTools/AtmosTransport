@@ -369,7 +369,7 @@ function output_binary_path(date::Date, out_dir::String, min_dp::Float64, ::Type
 end
 
 # Peek the JSON header at byte 0 (null-terminated; matches both
-# `_parse_transport_header` and `CubedSphereBinaryReader`). Returns
+# `_parse_transport_header` and `TransportBinaryReader`). Returns
 # `nothing` on any failure so callers can fall back gracefully.
 function _peek_transport_header(bin_path::AbstractString)
     isfile(bin_path) || return nothing

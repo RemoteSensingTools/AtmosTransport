@@ -47,7 +47,7 @@ function nearest_cs_cell(mesh, lon, lat)
     best = (dist = Inf, panel = 0, i = 0, j = 0, lon = NaN, lat = NaN)
     for p in 1:6
         lons, lats = panel_cell_center_lonlat(mesh, p)
-        for j in 1:mesh.Nc, i in 1:mesh.Nc
+        for j in 1:mesh.geometry.Nc, i in 1:mesh.geometry.Nc
             d = _gc_distance2(lon, lat, Float64(lons[i, j]), Float64(lats[i, j]))
             if d < best.dist
                 best = (dist = d, panel = p, i = i, j = j,
@@ -59,7 +59,7 @@ function nearest_cs_cell(mesh, lon, lat)
 end
 
 function interior_window_arrays(window, mesh, panel)
-    Hp, Nc = mesh.Hp, mesh.Nc
+    Hp, Nc = mesh.Hp, mesh.geometry.Nc
     ir = (Hp + 1):(Hp + Nc)
     m = @view window.air_mass[panel][ir, ir, :]
     am = @view window.fluxes.am[panel][(Hp + 1):(Hp + Nc + 1), ir, :]
@@ -119,7 +119,7 @@ function wind_stats_at_pressures(window, mesh, basis, dt_factor)
     for p in 1:6
         m, _, _ = interior_window_arrays(window, mesh, p)
         Nz = size(m, 3)
-        for j in 1:mesh.Nc, i in 1:mesh.Nc
+        for j in 1:mesh.geometry.Nc, i in 1:mesh.geometry.Nc
             ptop = 0.0
             bestdiff = fill(Inf, length(TARGET_HPA))
             bestspeed = zeros(Float64, length(TARGET_HPA))

@@ -8,8 +8,8 @@
 # first 6 hours = 48 substeps.
 #
 # Uses the same loaders as `scripts/benchmarks/run_cs_transport.jl`
-# (`CubedSphereBinaryReader`,
-# `load_cs_window`, `_pad` to Hp=3). Memory budget is bounded by the
+# (`TransportBinaryReader`,
+# `load_window!`, `_pad` to Hp=3). Memory budget is bounded by the
 # LinRood horizontal tape (~5-10 GB) and `_CSSweepRecord` Z snapshots
 # (~10-15 GB). Total comfortably fits in 64 GB+ host memory.
 # ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ using .AtmosTransport
 using .AtmosTransport: CubedSphereMesh
 using .AtmosTransport.Adjoints: cs_surface_emission_footprint,
                                 CSColumnMeanObjective
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window,
+using .AtmosTransport.MetDrivers: TransportBinaryReader, load_window!,
                                   mesh_definition
 using .AtmosTransport.Operators.Advection: LinRoodPPMScheme, fill_panel_halos!
 using .AtmosTransport.Grids: panel_cell_center_lonlat
@@ -53,7 +53,7 @@ end
 # faces. So face arrays should be supplied at the (Nc+1, Nc, Nz) /
 # (Nc, Nc+1, Nz) shape directly, no padding needed. BUT the C180
 # binary stores them at (Nc, Nc, Nz) and (Nc, Nc, Nz) — let me check
-# the actual on-disk shapes via load_cs_window.
+# the actual on-disk shapes via load_window!.
 
 function _build_meteo_step_sequence(reader, nsteps_total, AT)
     # Load N windows × M substeps, where each substep within a window
@@ -67,8 +67,8 @@ function _build_meteo_step_sequence(reader, nsteps_total, AT)
         "nsteps_total ($nsteps_total) must be a multiple of steps_per_window ($steps_per_window)"
     n_windows = nsteps_total ÷ steps_per_window
 
-    # Storage. Use the panel-tuple type returned by load_cs_window.
-    pm_w1, _, _, _, _ = load_cs_window(reader, 1)
+    # Storage. Use the panel-tuple type returned by load_window!.
+    pm_w1, _, _, _, _ = load_window!(reader, 1)
     Nc, _, Nz = size(pm_w1[1])
     panels_am_steps = Vector{Any}(undef, nsteps_total)
     panels_bm_steps = Vector{Any}(undef, nsteps_total)
@@ -76,7 +76,7 @@ function _build_meteo_step_sequence(reader, nsteps_total, AT)
 
     for win in 1:n_windows
         @printf("  loading window %2d / %d\n", win, n_windows)
-        _, _, pam_w, pbm_w, pcm_w = load_cs_window(reader, win)
+        _, _, pam_w, pbm_w, pcm_w = load_window!(reader, win)
         # Convert per-window fluxes to a per-substep "rate" by dividing
         # by steps_per_window. Face arrays remain UNPADDED — the LinRood
         # kernels read am/bm at kernel-local indices `[i, jf, k]`
@@ -111,7 +111,7 @@ function _find_la_cell(mesh::CubedSphereMesh)
     best_dist2 = Inf
     for p in 1:6
         lons, lats = panel_cell_center_lonlat(mesh, p)
-        for j in 1:mesh.Nc, i in 1:mesh.Nc
+        for j in 1:mesh.geometry.Nc, i in 1:mesh.geometry.Nc
             dlon = lons[i, j] - la_lon
             dlon = mod(dlon + 180, 360) - 180
             dlat = lats[i, j] - la_lat
@@ -131,9 +131,9 @@ function main()
     println("=" ^ 72)
 
     @printf("Binary:  %s\n", BIN_PATH)
-    reader = CubedSphereBinaryReader(BIN_PATH; FT)
+    reader = TransportBinaryReader(BIN_PATH; FT)
     h = reader.header
-    Nc = h.Nc; Nz = h.nlevel
+    Nc = h.geometry.Nc; Nz = h.nlevel
     steps_per_window = h.steps_per_window
     nsteps_total = SIX_HOUR_WINDOWS * steps_per_window
     dt_substep = h.dt_met_seconds / steps_per_window
@@ -155,7 +155,7 @@ function main()
     # Initial state from the binary's first window (interior-only),
     # padded to Hp=3 and halo-filled across panels.
     print("Loading initial state... ")
-    pm_w1, _, _, _, _ = load_cs_window(reader, 1)
+    pm_w1, _, _, _, _ = load_window!(reader, 1)
     panels_m0 = ntuple(p -> AT(_pad_panel(FT.(pm_w1[p]), Hp)), 6)
     fill_panel_halos!(panels_m0, mesh; dir=0)
     # Tracer starts at zero — surface emissions seeded by base_emission_rates

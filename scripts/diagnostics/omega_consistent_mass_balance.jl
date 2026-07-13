@@ -22,10 +22,10 @@ using Printf, Statistics
 const MD = AtmosTransport.MetDrivers
 
 function audit_binary(path::AbstractString)
-    reader = MD.CubedSphereBinaryReader(path)
+    reader = MD.TransportBinaryReader(path)
     h = reader.header
-    Nc = h.Nc; Nz = h.nlevel; np = h.npanel
-    nwin = MD.cs_window_count(reader)
+    Nc = h.geometry.Nc; Nz = h.nlevel; np = h.geometry.npanel
+    nwin = MD.window_count(reader)
     scale_sched = h.poisson_balance_target_scale_by_window
     steps_sched = h.steps_per_window_by_window
     @printf("\n=== %s ===\n", basename(path))
@@ -38,14 +38,14 @@ function audit_binary(path::AbstractString)
     worst_int_rms = 0.0; worst_int_max = 0.0
     worst_glob = 0.0; worst_cmtop = 0.0
     win_for_int = 0; win_for_cmtop = 0
-    cur = MD.load_cs_window(reader, 1)
+    cur = MD.load_window!(reader, 1)
     for w in 1:nwin
         # 5b: global dry air mass of window w (state m).
         mw = 0.0
         for p in 1:np; mw += sum(Float64, cur.m[p]); end
         push!(masses, mw)
         w == nwin && break
-        nxt = MD.load_cs_window(reader, w + 1)
+        nxt = MD.load_window!(reader, w + 1)
         scale = w <= length(scale_sched) ? Float64(scale_sched[w]) :
                 1.0 / (2 * Float64(steps_sched[w]))
         am = cur.am; bm = cur.bm; cm = cur.cm; m = cur.m; mn = nxt.m

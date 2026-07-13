@@ -49,15 +49,15 @@ end
     end
 end
 
-function _transport_section_elements(h::TransportBinaryHeader, section::Symbol)
-    if _transport_is_structured(h)
-        return _transport_structured_section_elements(h.Nx, h.Ny, h.ncell, h.nlevel, section)
-    elseif _transport_is_faceindexed(h)
-        return _transport_faceindexed_section_elements(h.ncell, h.nface_h, h.nlevel, section)
-    else
-        error("Unsupported payload section $(section) for grid/topology $(h.grid_type) / $(h.horizontal_topology)")
-    end
-end
+_transport_section_elements(h::TransportBinaryHeader{LatLonBinaryGeometry},
+                            section::Symbol) =
+    _transport_structured_section_elements(
+        h.geometry.Nx, h.geometry.Ny, h.ncell, h.nlevel, section)
+
+_transport_section_elements(h::TransportBinaryHeader{ReducedGaussianBinaryGeometry},
+                            section::Symbol) =
+    _transport_faceindexed_section_elements(
+        h.ncell, h.nface_h, h.nlevel, section)
 
 const _FIELD_PRODUCER_HINT = Dict{Symbol, String}(
     :m => "Regenerate the transport binary with the unified preprocessor; `m` is a required air-mass section.",

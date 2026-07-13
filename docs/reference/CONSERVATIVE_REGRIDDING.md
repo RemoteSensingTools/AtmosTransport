@@ -210,7 +210,7 @@ julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl \
     --Nc 90 [--convention gnomonic|geos_native] [--cache-dir <path>]
 ```
 
-The output binary is drop-in compatible with `CubedSphereBinaryReader`.
+The output binary is drop-in compatible with `TransportBinaryReader`.
 `--convention gnomonic` is the default ERA5-derived CS layout.
 `--convention geos_native` writes GEOS-FP/IT panel order/orientation and records
 `panel_convention="geos_native"` in the binary header. Regridding, wind

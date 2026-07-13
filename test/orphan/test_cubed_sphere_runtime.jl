@@ -169,7 +169,7 @@ end
                                window_mass_scales=(1, 1),
                                steps_per_window=2)
         rewrite_cs_header!(path; updates = Dict("format_version" => 1))
-        @test_throws ArgumentError CubedSphereBinaryReader(path; FT=Float64)
+        @test_throws ArgumentError TransportBinaryReader(path; FT=Float64)
     end
 end
 
@@ -275,7 +275,7 @@ end
         close(io)
         write_driven_cs_binary(path; FT=Float64, window_mass_scales=(1, 1))
 
-        reader = CubedSphereBinaryReader(path; FT=Float64)
+        reader = TransportBinaryReader(path; FT=Float64)
         @test grid_type(reader) == :cubed_sphere
         @test horizontal_topology(reader) == :structureddirectional
         @test window_count(reader) == 2
@@ -348,12 +348,12 @@ end
                                window_mass_scales = (FT(5e15),),
                                surface_windows = (surface,))
 
-        reader = CubedSphereBinaryReader(path; FT = FT)
+        reader = TransportBinaryReader(path; FT = FT)
         @test has_surface(reader)
         @test :pblh in reader.header.payload_sections
         @test :pbl_hflux in reader.header.payload_sections
         @test !(:hflux in reader.header.payload_sections)
-        raw = load_cs_window(reader, 1)
+        raw = load_window!(reader, 1)
         @test raw.surface isa PBLSurfaceForcing
         @test raw.surface.pblh[1][1, 1] == FT(1000)
         @test raw.surface.ustar[1][1, 1] == FT(0.35)
@@ -412,10 +412,10 @@ end
                                surface_windows = (surface,),
                                vdiff_windows = (vdiff,))
 
-        reader = CubedSphereBinaryReader(path; FT = FT)
+        reader = TransportBinaryReader(path; FT = FT)
         @test has_surface(reader)
         @test has_vdiff_fields(reader)
-        raw = load_cs_window(reader, 1)
+        raw = load_window!(reader, 1)
         @test raw.vdiff !== nothing
         @test raw.vdiff.t[2] == vdiff.t[2]
         close(reader)
@@ -481,8 +481,8 @@ end
                                convection_windows = (cmfmc,),
                                dtrain_windows = (dtrain,))
 
-        reader = CubedSphereBinaryReader(path; FT = FT)
-        raw = load_cs_window(reader, 1)
+        reader = TransportBinaryReader(path; FT = FT)
+        raw = load_window!(reader, 1)
         @test has_surface(reader)
         @test has_cmfmc(reader)
         for p in 1:6
@@ -527,7 +527,7 @@ end
                                window_mass_scales=(1,),
                                window_dm_panels=(dm_zero,))
 
-        reader = CubedSphereBinaryReader(path; FT=Float64)
+        reader = TransportBinaryReader(path; FT=Float64)
         @test has_flux_delta(reader)
         close(reader)
 
@@ -565,7 +565,7 @@ end
                                convection_windows = (cmfmc,),
                                dtrain_windows = (dtrain,))
 
-        reader = CubedSphereBinaryReader(path; FT = FT)
+        reader = TransportBinaryReader(path; FT = FT)
         @test has_cmfmc(reader)
         close(reader)
 
@@ -816,7 +816,7 @@ end
                                window_mass_scales = (FT(1e16),),
                                tm5_windows = (tm5,))
 
-        reader = CubedSphereBinaryReader(path; FT = FT)
+        reader = TransportBinaryReader(path; FT = FT)
         @test has_tm5_convection(reader)
         close(reader)
 

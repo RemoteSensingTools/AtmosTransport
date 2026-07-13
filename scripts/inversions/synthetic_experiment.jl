@@ -92,7 +92,7 @@ end
 
 function _constant_flow_problem(cfg::SyntheticExperimentConfig{FT}) where FT
     mesh = AT.CubedSphereMesh(Nc = cfg.Nc, Hp = cfg.Hp, FT = FT)
-    N = mesh.Nc + 2mesh.Hp
+    N = mesh.geometry.Nc + 2mesh.Hp
     panels_m = ntuple(6) do p
         m = zeros(FT, N, N, cfg.Nz)
         for k in 1:cfg.Nz, j in 1:N, i in 1:N

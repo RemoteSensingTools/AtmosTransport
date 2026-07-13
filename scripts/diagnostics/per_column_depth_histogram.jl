@@ -19,12 +19,12 @@ using Printf
 using Statistics
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader
+using .AtmosTransport.MetDrivers: TransportBinaryReader
 
 const DEFAULT_BIN = "/temp1/c180_era5_geosgrid_cfl85_tm5_surface_f32_steps48_v3_20260520/era5_transport_20211202_merged1000Pa_float32.bin"
 
 function _section_elements(h, section::Symbol)
-    Nc, Nz, np = h.Nc, h.nlevel, h.npanel
+    Nc, Nz, np = h.geometry.Nc, h.nlevel, h.geometry.npanel
     section === :m     && return np * Nc * Nc * Nz
     section === :am    && return np * (Nc + 1) * Nc * Nz
     section === :bm    && return np * Nc * (Nc + 1) * Nz
@@ -49,7 +49,7 @@ end
 
 function _panel_view(reader, win::Int, section::Symbol, panel::Int)
     h = reader.header
-    Nc, Nz = h.Nc, h.nlevel
+    Nc, Nz = h.geometry.Nc, h.nlevel
     panel_elems = Nc * Nc * Nz
     sec_off = _section_offset(h, win, section)
     lo = sec_off + (panel - 1) * panel_elems + 1
@@ -60,9 +60,9 @@ end
 function main()
     bin = length(ARGS) >= 1 ? ARGS[1] : DEFAULT_BIN
     @info "Scanning per-column depth" bin
-    reader = CubedSphereBinaryReader(bin; FT = Float32)
+    reader = TransportBinaryReader(bin; FT = Float32)
     h = reader.header
-    Nc, Nz, np, nw = h.Nc, h.nlevel, h.npanel, h.nwindow
+    Nc, Nz, np, nw = h.geometry.Nc, h.nlevel, h.geometry.npanel, h.nwindow
     threshold = Float32(1e-9)
 
     # Histogram of active depths.  depth = Nz - icltop + 1 ∈ [1, Nz].  We

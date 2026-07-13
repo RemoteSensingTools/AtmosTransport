@@ -1,30 +1,28 @@
-# TransportBinaryReader: struct, accessors, constructor, grid + per-window loaders.
-#
-# Part of the TransportBinary format implementation; included from
-# `TransportBinary.jl` into the `MetDrivers` module (shared namespace,
-# shared `using`s). Split out of the former 2658-line monolith — pure code
-# move, no behavior change.
+# Shared version-4 reader, accessors, and structured/face-indexed loaders.
 
 """
-    TransportBinaryReader{FT, DiskFT}
+    TransportBinaryReader{FT, DiskFT, G}
 
-Reader for topology-generic preprocessed transport binaries.
+Memory-mapped reader for the current transport-binary format.
 
-Implemented combinations:
-- `grid_type = :latlon`, `horizontal_topology = :structureddirectional`
-- `grid_type = :reduced_gaussian`, `horizontal_topology = :faceindexed`
+`FT` is the element type produced by window loaders, `DiskFT` is the mmap
+element type, and `G` is the concrete geometry metadata type. Payloads remain
+in their native topology: structured arrays for lat-lon, face-indexed arrays
+for reduced Gaussian, and six panel arrays for cubed sphere.
 """
-struct TransportBinaryReader{FT, DiskFT}
+struct TransportBinaryReader{FT, DiskFT, G <: AbstractTransportBinaryGeometry}
     data   :: Vector{DiskFT}
     io     :: IOStream
-    header :: TransportBinaryHeader
+    header :: TransportBinaryHeader{G}
     path   :: String
 end
+
+_transport_load_float_type(::TransportBinaryReader{FT}) where FT = FT
 
 function Base.summary(r::TransportBinaryReader{FT, DiskFT}) where {FT, DiskFT}
     return string(
         "TransportBinaryReader{", FT, "←", DiskFT, "}(",
-        basename(r.path), ", ", r.header.grid_type, "/", r.header.horizontal_topology, ", ",
+        basename(r.path), ", ", grid_type(r), "/", horizontal_topology(r), ", ",
         r.header.nwindow, " windows)"
     )
 end
@@ -34,7 +32,8 @@ function Base.show(io::IO, r::TransportBinaryReader)
     print(io, summary(r), "\n",
           "├── path:          ", r.path, "\n",
           "├── geometry:      ", _transport_geometry_summary(h), "\n",
-          "├── storage:       ", h.on_disk_float_type, " on disk, load as ", eltype(r.data), "\n",
+          "├── storage:       ", h.on_disk_float_type, " on disk, load as ",
+              _transport_load_float_type(r), "\n",
           "├── basis:         ", h.mass_basis, "\n",
           "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=",
               _steps_per_window_summary(h.steps_per_window, h.steps_per_window_by_window), "\n",
@@ -53,8 +52,9 @@ steps_per_window(r::TransportBinaryReader, win::Integer) =
 steps_per_window_schedule(r::TransportBinaryReader) =
     copy(r.header.steps_per_window_by_window)
 mass_basis(r::TransportBinaryReader) = r.header.mass_basis
-grid_type(r::TransportBinaryReader) = r.header.grid_type
-horizontal_topology(r::TransportBinaryReader) = r.header.horizontal_topology
+binary_geometry(r::TransportBinaryReader) = binary_geometry(r.header)
+grid_type(r::TransportBinaryReader) = grid_type(r.header)
+horizontal_topology(r::TransportBinaryReader) = horizontal_topology(r.header)
 source_flux_sampling(r::TransportBinaryReader) = r.header.source_flux_sampling
 air_mass_sampling(r::TransportBinaryReader) = r.header.air_mass_sampling
 flux_sampling(r::TransportBinaryReader) = r.header.flux_sampling
@@ -63,8 +63,10 @@ humidity_sampling(r::TransportBinaryReader) = r.header.humidity_sampling
 delta_semantics(r::TransportBinaryReader) = r.header.delta_semantics
 A_ifc(r::TransportBinaryReader) = r.header.A_ifc
 B_ifc(r::TransportBinaryReader) = r.header.B_ifc
-has_qv(r::TransportBinaryReader) = r.header.include_qv || r.header.include_qv_endpoints
-has_qv_endpoints(r::TransportBinaryReader) = r.header.include_qv_endpoints
+has_qv(r::TransportBinaryReader) =
+    :qv in r.header.payload_sections || has_qv_endpoints(r)
+has_qv_endpoints(r::TransportBinaryReader) =
+    :qv_start in r.header.payload_sections && :qv_end in r.header.payload_sections
 has_flux_delta(r::TransportBinaryReader) = any(section in (:dam, :dbm, :dcm, :dm, :dhflux) for section in r.header.payload_sections)
 
 """
@@ -78,7 +80,7 @@ preprocessor when `tm5_convection = true`. Used by the
 """
 has_tm5_convection(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in (:entu, :detu, :entd, :detd))
-has_cmfmc(::TransportBinaryReader) = false
+has_cmfmc(r::TransportBinaryReader) = :cmfmc in r.header.payload_sections
 has_surface(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)
 has_vdiff_fields(r::TransportBinaryReader) =
@@ -92,9 +94,8 @@ has_vdiff_fields(r::TransportBinaryReader) =
 # can give precise errors ("config requested `tm5` but binary lacks
 # entu/detu/entd/detd") instead of silently failing at the first step.
 #
-# `inspect_binary(path)` is the library-level entry point that opens
-# either a `TransportBinaryReader` (LL/RG) or a `CubedSphereBinaryReader`
-# (CS), runs all load-time gates, prints a rich report, and returns the
+# `inspect_binary(path)` is the library-level entry point that opens a
+# `TransportBinaryReader`, runs all load-time gates, prints a rich report, and returns the
 # capability summary. `scripts/diagnostics/inspect_transport_binary.jl`
 # is a thin CLI over this function.
 # ---------------------------------------------------------------------------
@@ -122,7 +123,8 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
             "transport binary size mismatch for $(bin_path): expected $(expected_bytes) bytes " *
             "from the header, found $(actual_bytes)"))
         data = Mmap.mmap(io, Vector{DiskFT}, total_elems, header.header_bytes)
-        return TransportBinaryReader{FT, DiskFT}(data, io, header, bin_path)
+        G = typeof(header.geometry)
+        return TransportBinaryReader{FT, DiskFT, G}(data, io, header, bin_path)
     catch
         isopen(io) && close(io)
         rethrow()
@@ -140,90 +142,91 @@ function _transport_interval_from_centers(centers::Vector{Float64}, fallback_Δ:
     return (centers[1] - Δ / 2, centers[end] + Δ / 2)
 end
 
-function load_grid(reader::TransportBinaryReader;
-                   FT::Type{<:AbstractFloat} = Float64,
-                   arch = CPU())
+function load_grid(reader::TransportBinaryReader{<:Any, <:Any, LatLonBinaryGeometry};
+                   FT::Type{<:AbstractFloat} = Float64, arch = CPU())
     h = reader.header
+    g = h.geometry
     vc = HybridSigmaPressure(FT.(h.A_ifc), FT.(h.B_ifc))
+    longitude = length(g.longitude_interval) == 2 ?
+        (FT(g.longitude_interval[1]), FT(g.longitude_interval[2])) :
+        let interval = _transport_interval_from_centers(g.longitudes, 360.0 / g.Nx)
+            (FT(interval[1]), FT(interval[2]))
+        end
+    latitude = length(g.latitude_interval) == 2 ?
+        (FT(g.latitude_interval[1]), FT(g.latitude_interval[2])) :
+        let interval = _transport_interval_from_centers(g.latitudes, 180.0 / g.Ny)
+            (FT(interval[1]), FT(interval[2]))
+        end
+    mesh = LatLonMesh(; FT=FT, size=(g.Nx, g.Ny), longitude=longitude, latitude=latitude)
+    return AtmosGrid(mesh, vc, arch; FT=FT)
+end
 
-    if _transport_is_structured(h)
-        longitude = length(h.longitude_interval_f64) == 2 ?
-            (FT(h.longitude_interval_f64[1]), FT(h.longitude_interval_f64[2])) :
-            let interval = _transport_interval_from_centers(h.lons_f64, 360.0 / h.Nx)
-                (FT(interval[1]), FT(interval[2]))
-            end
-        latitude = length(h.latitude_interval_f64) == 2 ?
-            (FT(h.latitude_interval_f64[1]), FT(h.latitude_interval_f64[2])) :
-            let interval = _transport_interval_from_centers(h.lats_f64, 180.0 / h.Ny)
-                (FT(interval[1]), FT(interval[2]))
-            end
-        mesh = LatLonMesh(; FT=FT, size=(h.Nx, h.Ny), longitude=longitude, latitude=latitude)
-        return AtmosGrid(mesh, vc, arch; FT=FT)
-    elseif _transport_is_faceindexed(h)
-        mesh = ReducedGaussianMesh(h.ring_latitudes_f64, h.nlon_per_ring; FT=FT)
-        return AtmosGrid(mesh, vc, arch; FT=FT)
-    else
-        throw(ArgumentError("Unsupported transport binary grid/topology combination: $(h.grid_type) / $(h.horizontal_topology)"))
-    end
+function load_grid(reader::TransportBinaryReader{<:Any, <:Any, ReducedGaussianBinaryGeometry};
+                   FT::Type{<:AbstractFloat} = Float64, arch = CPU())
+    h = reader.header
+    g = h.geometry
+    vc = HybridSigmaPressure(FT.(h.A_ifc), FT.(h.B_ifc))
+    mesh = ReducedGaussianMesh(g.latitudes, g.nlon_per_ring; FT=FT)
+    return AtmosGrid(mesh, vc, arch; FT=FT)
 end
 
 _transport_allocate_mass(reader::TransportBinaryReader{FT}) where FT =
     _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.nlevel) :
+        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny, reader.header.nlevel) :
         Array{FT}(undef, reader.header.ncell, reader.header.nlevel)
 
 _transport_allocate_ps(reader::TransportBinaryReader{FT}) where FT =
     _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.Nx, reader.header.Ny) :
+        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny) :
         Array{FT}(undef, reader.header.ncell)
 
 _transport_allocate_cm(reader::TransportBinaryReader{FT}) where FT =
     _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.nlevel + 1) :
+        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny, reader.header.nlevel + 1) :
         Array{FT}(undef, reader.header.ncell, reader.header.nlevel + 1)
 
 _transport_allocate_am(reader::TransportBinaryReader{FT}) where FT =
-    Array{FT}(undef, reader.header.Nx + 1, reader.header.Ny, reader.header.nlevel)
+    Array{FT}(undef, reader.header.geometry.Nx + 1, reader.header.geometry.Ny, reader.header.nlevel)
 
 _transport_allocate_bm(reader::TransportBinaryReader{FT}) where FT =
-    Array{FT}(undef, reader.header.Nx, reader.header.Ny + 1, reader.header.nlevel)
+    Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny + 1, reader.header.nlevel)
 
 _transport_allocate_hflux(reader::TransportBinaryReader{FT}) where FT =
     Array{FT}(undef, reader.header.nface_h, reader.header.nlevel)
 
 _transport_allocate_qv(reader::TransportBinaryReader{FT}) where FT =
     _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.nlevel) :
+        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny, reader.header.nlevel) :
         Array{FT}(undef, reader.header.ncell, reader.header.nlevel)
 
 _transport_allocate_dam(reader::TransportBinaryReader{FT}) where FT =
-    Array{FT}(undef, reader.header.Nx + 1, reader.header.Ny, reader.header.nlevel)
+    Array{FT}(undef, reader.header.geometry.Nx + 1, reader.header.geometry.Ny, reader.header.nlevel)
 
 _transport_allocate_dbm(reader::TransportBinaryReader{FT}) where FT =
-    Array{FT}(undef, reader.header.Nx, reader.header.Ny + 1, reader.header.nlevel)
+    Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny + 1, reader.header.nlevel)
 
 _transport_allocate_dhflux(reader::TransportBinaryReader{FT}) where FT =
     Array{FT}(undef, reader.header.nface_h, reader.header.nlevel)
 
 _transport_allocate_dm(reader::TransportBinaryReader{FT}) where FT =
     _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.nlevel) :
+        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny, reader.header.nlevel) :
         Array{FT}(undef, reader.header.ncell, reader.header.nlevel)
 
 _transport_allocate_dcm(reader::TransportBinaryReader{FT}) where FT =
     _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.nlevel + 1) :
+        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny, reader.header.nlevel + 1) :
         Array{FT}(undef, reader.header.ncell, reader.header.nlevel + 1)
 
 _transport_allocate_surface_field(reader::TransportBinaryReader{FT}) where FT =
     _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.Nx, reader.header.Ny) :
+        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny) :
         Array{FT}(undef, reader.header.ncell)
 
 # TM5 convection fields — all layer-center, shape matches `m`.
 _transport_allocate_tm5_field(reader::TransportBinaryReader{FT}) where FT =
     _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.nlevel) :
+        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny, reader.header.nlevel) :
         Array{FT}(undef, reader.header.ncell, reader.header.nlevel)
 
 function _transport_make_fluxes(::Val{:dry}, am, bm, cm)
@@ -320,7 +323,8 @@ function load_window!(reader::TransportBinaryReader{FT}, win::Int;
         fluxes = _transport_make_fluxes(Val(h.mass_basis), hflux, cm)
         return m, ps, fluxes
     else
-        throw(ArgumentError("Unsupported transport binary grid/topology combination: $(h.grid_type) / $(h.horizontal_topology)"))
+        throw(ArgumentError("Unsupported transport binary grid/topology combination: " *
+                            "$(grid_type(h)) / $(horizontal_topology(h))"))
     end
 end
 
@@ -503,7 +507,7 @@ end
 function load_qv_window!(reader::TransportBinaryReader{FT}, win::Int;
                          qv = nothing) where FT
     h = reader.header
-    h.include_qv || return nothing
+    :qv in h.payload_sections || return nothing
     qv = isnothing(qv) ? _transport_allocate_qv(reader) : qv
 
     o = _transport_window_offset(reader, win)
@@ -523,7 +527,7 @@ function load_qv_pair_window!(reader::TransportBinaryReader{FT}, win::Int;
                               qv_start = nothing,
                               qv_end = nothing) where FT
     h = reader.header
-    h.include_qv_endpoints || return nothing
+    has_qv_endpoints(reader) || return nothing
     qv_start = isnothing(qv_start) ? _transport_allocate_qv(reader) : qv_start
     qv_end = isnothing(qv_end) ? _transport_allocate_qv(reader) : qv_end
 

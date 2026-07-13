@@ -9,7 +9,7 @@ using Printf
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 
 using .AtmosTransport.Grids: CubedSphereMesh, panel_cell_local_tangent_basis
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window, mesh_definition,
+using .AtmosTransport.MetDrivers: TransportBinaryReader, load_window!, mesh_definition,
     flux_application_seconds, flux_kind
 
 const GRAV = 9.80665
@@ -108,7 +108,7 @@ function build_masks(era, geos, cfg::Config)
 end
 
 function source_mesh(reader)
-    return CubedSphereMesh(; FT=Float64, Nc=reader.header.Nc, Hp=0,
+    return CubedSphereMesh(; FT=Float64, Nc=reader.header.geometry.Nc, Hp=0,
                            radius=R_EARTH_M, definition=mesh_definition(reader))
 end
 
@@ -157,10 +157,10 @@ function pressure_midpoint_hpa(window, mesh, panel, i, j, k)
 end
 
 function profile_rows(source::SourceSpec, masks::Vector{MaskSpec}, area, cfg::Config)
-    reader = CubedSphereBinaryReader(source.bin_path; FT=Float32)
+    reader = TransportBinaryReader(source.bin_path; FT=Float32)
     try
         mesh = source_mesh(reader)
-        window = load_cs_window(reader, cfg.profile_window)
+        window = load_window!(reader, cfg.profile_window)
         basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
         steps = reader.header.steps_per_window_by_window[cfg.profile_window]
         dt_factor = flux_application_seconds(reader.header.dt_met_seconds, steps,

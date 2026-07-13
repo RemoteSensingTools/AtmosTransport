@@ -211,9 +211,9 @@ function run_cs(cfg)
     end
 
     # --- Grid & scheme ---
-    reader1 = CubedSphereBinaryReader(first(binary_paths); FT)
+    reader1 = TransportBinaryReader(first(binary_paths); FT)
     h = reader1.header
-    Nc, Nz = h.Nc, h.nlevel
+    Nc, Nz = h.geometry.Nc, h.nlevel
     window_hours = h.dt_met_seconds / 3600.0
     mesh = CubedSphereMesh(; Nc, Hp, definition=mesh_definition(reader1))
 
@@ -225,7 +225,7 @@ function run_cs(cfg)
     println("="^60)
 
     # --- Initialise state ---
-    pm_w1, _, _, _, _ = load_cs_window(reader1, 1)
+    pm_w1, _, _, _, _ = load_window!(reader1, 1)
     pm = ntuple(p -> AT(_pad(pm_w1[p], Hp)), 6)
     fill_panel_halos!(pm, mesh; dir=1)
 
@@ -255,7 +255,7 @@ function run_cs(cfg)
         capture!(); @printf("  Snapshot %d at t=%.0fh\n", snap_idx, 0.0); snap_idx += 1
     end
 
-    readers = [reader1; [CubedSphereBinaryReader(expanduser(p); FT) for p in binary_paths[2:end]]]
+    readers = [reader1; [TransportBinaryReader(expanduser(p); FT) for p in binary_paths[2:end]]]
     t0 = time()
 
     # --- Window loop ---
@@ -265,7 +265,7 @@ function run_cs(cfg)
 
         for win in start_window:stop_win
             steps_per_window = reader.header.steps_per_window_by_window[win]
-            pm_w, _, pam_w, pbm_w, pcm_w = load_cs_window(reader, win)
+            pm_w, _, pam_w, pbm_w, pcm_w = load_window!(reader, win)
 
             for p in 1:6; pm[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :] .= AT(pm_w[p]); end
             fill_panel_halos!(pm, mesh; dir=1)

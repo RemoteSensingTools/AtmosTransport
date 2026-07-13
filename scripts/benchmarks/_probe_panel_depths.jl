@@ -7,12 +7,12 @@ using Statistics
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader
+using .AtmosTransport.MetDrivers: TransportBinaryReader
 
 const DEFAULT_BIN = "/temp1/c180_era5_geosgrid_cfl85_tm5_surface_f32_steps48_v3_20260520/era5_transport_20211202_merged1000Pa_float32.bin"
 
 function _section_elements(h, section::Symbol)
-    Nc, Nz, np = h.Nc, h.nlevel, h.npanel
+    Nc, Nz, np = h.geometry.Nc, h.nlevel, h.geometry.npanel
     section === :m     && return np * Nc * Nc * Nz
     section === :am    && return np * (Nc + 1) * Nc * Nz
     section === :bm    && return np * Nc * (Nc + 1) * Nz
@@ -37,7 +37,7 @@ end
 
 function _panel_view(reader, win::Int, section::Symbol, panel::Int)
     h = reader.header
-    Nc, Nz = h.Nc, h.nlevel
+    Nc, Nz = h.geometry.Nc, h.nlevel
     panel_elems = Nc * Nc * Nz
     sec_off = _section_offset(h, win, section)
     lo = sec_off + (panel - 1) * panel_elems + 1
@@ -46,9 +46,9 @@ function _panel_view(reader, win::Int, section::Symbol, panel::Int)
 end
 
 function probe_panel(bin::String, win::Int, panel::Int)
-    reader = CubedSphereBinaryReader(bin; FT = Float32)
+    reader = TransportBinaryReader(bin; FT = Float32)
     h = reader.header
-    Nc, Nz = h.Nc, h.nlevel
+    Nc, Nz = h.geometry.Nc, h.nlevel
     detu = collect(_panel_view(reader, win, :detu, panel))
     entd = collect(_panel_view(reader, win, :entd, panel))
     close(reader)

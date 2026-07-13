@@ -48,7 +48,7 @@ using .AtmosTransport
         AtmosTransport.MetDrivers.write_streaming_cs_window!(writer, window, Nc, np)
         AtmosTransport.MetDrivers.close_streaming_transport_binary!(writer)
 
-        reader = AtmosTransport.MetDrivers.CubedSphereBinaryReader(path; FT = FT)
+        reader = AtmosTransport.MetDrivers.TransportBinaryReader(path; FT = FT)
         try
             @test AtmosTransport.MetDrivers.has_surface(reader)
             @test AtmosTransport.MetDrivers.has_vdiff_fields(reader)
@@ -57,7 +57,7 @@ using .AtmosTransport
             @test :vdiff_u in reader.header.payload_sections
             @test reader.header.raw_header["include_gchp_vdiff"] == true
 
-            loaded = AtmosTransport.MetDrivers.load_cs_window(reader, 1)
+            loaded = AtmosTransport.MetDrivers.load_window!(reader, 1)
             @test loaded.vdiff !== nothing
             @test loaded.vdiff.u[3] == window.vdiff.u[3]
             @test loaded.vdiff.v[4] == window.vdiff.v[4]

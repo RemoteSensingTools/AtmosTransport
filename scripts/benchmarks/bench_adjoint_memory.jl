@@ -77,7 +77,7 @@ _halo_width(s::Symbol) = _halo_width(Val(s))
 
 function _problem(Nc::Int, Nz::Int, nsteps::Int, FT, scheme::Symbol)
     mesh = CubedSphereMesh(; Nc=Nc, Hp=_halo_width(scheme), FT=FT)
-    N = mesh.Nc + 2mesh.Hp
+    N = mesh.geometry.Nc + 2mesh.Hp
     panels_m = ntuple(_ -> fill(FT(1), N, N, Nz), 6)
     fill_panel_halos!(panels_m, mesh; dir=0)
     panels_am = Vector{Any}(undef, nsteps)

@@ -10,7 +10,7 @@ using Printf
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window,
+using .AtmosTransport.MetDrivers: TransportBinaryReader, load_window!,
     load_flux_delta_window!, verify_window_continuity_cs
 
 const USAGE = """
@@ -88,14 +88,14 @@ function main(argv = ARGS)
     @info "  binary: $path"
     @info "  threshold: $threshold"
 
-    reader = CubedSphereBinaryReader(path; FT = Float64)
+    reader = TransportBinaryReader(path; FT = Float64)
     try
         h = reader.header
         Nt = h.nwindow
         steps_schedule = h.steps_per_window_by_window
         has_dm = :dm in h.payload_sections
         @info @sprintf("  grid: C%d panels=%d levels=%d windows=%d steps/window=%d%s",
-                       h.Nc, h.npanel, h.nlevel, Nt, h.steps_per_window,
+                       h.geometry.Nc, h.geometry.npanel, h.nlevel, Nt, h.steps_per_window,
                        length(unique(steps_schedule)) == 1 ? "" :
                        @sprintf(" max (per-window %d:%d)",
                                 minimum(steps_schedule), maximum(steps_schedule)))
@@ -109,14 +109,14 @@ function main(argv = ARGS)
         worst_source = ""
 
         dm_worst = nothing
-        cur = load_cs_window(reader, 1)
+        cur = load_window!(reader, 1)
         for win in 1:Nt
             target_source = ""
             m_next = nothing
             next = nothing
 
             if win < Nt
-                next = load_cs_window(reader, win + 1)
+                next = load_window!(reader, win + 1)
                 m_next = next.m
                 target_source = "next_window_m"
 

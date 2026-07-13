@@ -7,7 +7,7 @@ Offline conservative regridding between mesh types, built on
 Designed for the preprocessing stage: build a sparse weights matrix once per
 `(source_mesh, target_mesh)` pair, cache it to disk, and reuse at every
 subsequent run. The runtime transport core never calls into this module —
-`TransportBinaryReader` / `CubedSphereBinaryReader` consume binaries that are
+`TransportBinaryReader` consumes binaries that are
 already on the target grid.
 
 ## Workflow

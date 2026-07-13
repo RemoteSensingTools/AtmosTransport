@@ -174,7 +174,7 @@ function _haloed_panel(::Type{FT}, Nc::Int, Hp::Int, Nz::Int) where {FT}
 end
 
 function _fill_mass!(panels_m, mesh::CubedSphereMesh, ::Type{FT}) where {FT}
-    Nc, Hp = mesh.Nc, mesh.Hp
+    Nc, Hp = mesh.geometry.Nc, mesh.Hp
     @inbounds for p in 1:6
         m = panels_m[p]
         for k in axes(m, 3), j in 1:Nc, i in 1:Nc
@@ -193,7 +193,7 @@ function _fill_mass!(panels_m, mesh::CubedSphereMesh, ::Type{FT}) where {FT}
 end
 
 function _make_tracer(panels_m, mesh::CubedSphereMesh, ::Type{FT}, tracer_idx::Int) where {FT}
-    Nc, Hp = mesh.Nc, mesh.Hp
+    Nc, Hp = mesh.geometry.Nc, mesh.Hp
     panels_rm = ntuple(_ -> similar(panels_m[1]), 6)
     @inbounds for p in 1:6
         m = panels_m[p]
@@ -217,7 +217,7 @@ end
 
 function _fill_fluxes!(am, bm, cm, panels_m, mesh::CubedSphereMesh,
                        ::Type{FT}; cfl::Real = 0.45) where {FT}
-    Nc, Hp = mesh.Nc, mesh.Hp
+    Nc, Hp = mesh.geometry.Nc, mesh.Hp
     cf = FT(cfl)
     @inbounds for p in 1:6
         m = panels_m[p]

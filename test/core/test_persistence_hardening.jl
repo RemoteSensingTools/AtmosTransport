@@ -256,7 +256,7 @@ end
             before = length(readdir("/proc/self/fd"))
             for _ in 1:100
                 @test_throws Exception MD.TransportBinaryReader(malformed)
-                @test_throws Exception MD.CubedSphereBinaryReader(malformed)
+                @test_throws Exception MD.TransportBinaryReader(malformed)
             end
             after = length(readdir("/proc/self/fd"))
             @test after <= before + 2
@@ -300,7 +300,7 @@ end
         )
         MD.write_streaming_cs_window!(cs_writer, cs_window, Nc, npanel)
         MD.close_streaming_transport_binary!(cs_writer)
-        cs_reader = MD.CubedSphereBinaryReader(cs_path)
+        cs_reader = MD.TransportBinaryReader(cs_path)
         close(cs_reader)
         @test MD.inspect_binary(cs_path; io=IOBuffer()).grid_type == :cubed_sphere
 
@@ -313,7 +313,7 @@ end
             write(io, fill(UInt8(' '), 400_001 - null_index))
             write(io, UInt8(0))
         end
-        @test_throws ArgumentError MD.CubedSphereBinaryReader(cs_path)
+        @test_throws ArgumentError MD.TransportBinaryReader(cs_path)
     end
 
     @test_throws ArgumentError MD._read_transport_header_json(

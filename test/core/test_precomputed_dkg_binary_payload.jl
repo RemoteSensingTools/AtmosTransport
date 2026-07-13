@@ -36,12 +36,12 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
         AtmosTransport.MetDrivers.write_streaming_cs_window!(writer, window, Nc, np)
         AtmosTransport.MetDrivers.close_streaming_transport_binary!(writer)
 
-        reader = AtmosTransport.MetDrivers.CubedSphereBinaryReader(path; FT)
+        reader = AtmosTransport.MetDrivers.TransportBinaryReader(path; FT)
         try
             @test :dkg in reader.header.payload_sections
             @test reader.header.raw_header["precomputed_dkg_payload"] ==
                   "tm5_bldiff_interface_dkg_dry_v1"
-            loaded = AtmosTransport.MetDrivers.load_cs_window(reader, 1)
+            loaded = AtmosTransport.MetDrivers.load_window!(reader, 1)
             @test loaded.dkg == dkg
 
             cache = ntuple(_ -> zeros(FT, Nc, Nc, Nz), np)
@@ -76,7 +76,7 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
             open(path, "w") do out
                 write(out, bytes)
             end
-            @test_throws ArgumentError CubedSphereBinaryReader(path; FT)
+            @test_throws ArgumentError TransportBinaryReader(path; FT)
         end
         open(path, "w") do out
             write(out, original)

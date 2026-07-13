@@ -9,7 +9,7 @@ using .AtmosTransport.Preprocessing: GEOSFPSettings, open_day, close_day!,
                                       read_window!, allocate_raw_window,
                                       process_day, build_target_geometry,
                                       load_hybrid_coefficients
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader
+using .AtmosTransport.MetDrivers: TransportBinaryReader
 
 const FP_NC = 4
 const FP_NP = 6
@@ -191,7 +191,7 @@ end
                 out_path = out, dt_met_seconds = 3600.0,
                 FT = Float64, mass_basis = :dry, replay_tol = 1e-12)
 
-    reader = CubedSphereBinaryReader(out; FT = Float64)
+    reader = TransportBinaryReader(out; FT = Float64)
     try
         for section in (:pblh, :ustar, :pbl_hflux, :t2m, :cmfmc, :dtrain)
             @test section in reader.header.payload_sections

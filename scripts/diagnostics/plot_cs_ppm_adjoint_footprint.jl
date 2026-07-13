@@ -58,7 +58,7 @@ end
 
 function _demo_problem(; Nc::Int, Nz::Int=4, nsteps::Int=3, FT=Float64)
     mesh = CubedSphereMesh(Nc=Nc, Hp=3, FT=FT)
-    N = mesh.Nc + 2mesh.Hp
+    N = mesh.geometry.Nc + 2mesh.Hp
     Hp = mesh.Hp
 
     panels_m = ntuple(6) do p
@@ -125,7 +125,7 @@ end
 
 function _demo_tm5_convection(mesh, panels_m)
     FT = eltype(panels_m[1])
-    Nc = mesh.Nc
+    Nc = mesh.geometry.Nc
     Nz = size(panels_m[1], 3)
     entu = ntuple(_ -> begin
         e = zeros(FT, Nc, Nc, Nz)

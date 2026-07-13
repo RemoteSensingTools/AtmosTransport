@@ -25,7 +25,7 @@ using Printf
 using Statistics
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader
+using .AtmosTransport.MetDrivers: TransportBinaryReader
 
 const DEFAULT_TARGET_KG = 5.135313897e18
 
@@ -50,7 +50,7 @@ end
 # `scripts/diagnostics/compare_c180_binary_mass_fluxes.jl` so the layout walk
 # is self-contained.
 function _cs_section_elements(h, section::Symbol)
-    nc, nz, np = h.Nc, h.nlevel, h.npanel
+    nc, nz, np = h.geometry.Nc, h.nlevel, h.geometry.npanel
     section === :m && return np * nc * nc * nz
     section === :am && return np * (nc + 1) * nc * nz
     section === :bm && return np * nc * (nc + 1) * nz
@@ -73,9 +73,9 @@ end
 """Sum the `:m` payload (dry mass per cell per layer, kg) across all 6 panels
 of one window without materialising the per-panel arrays beyond a single
 panel-sized scratch."""
-function _sum_window_mass(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
+function _sum_window_mass(reader::TransportBinaryReader{FT}, win::Int) where FT
     h = reader.header
-    nc, nz, np = h.Nc, h.nlevel, h.npanel
+    nc, nz, np = h.geometry.Nc, h.nlevel, h.geometry.npanel
     offset = (win - 1) * h.elems_per_window
     scratch = Array{FT}(undef, nc, nc, nz)
     total = 0.0
@@ -98,7 +98,7 @@ function _sum_window_mass(reader::CubedSphereBinaryReader{FT}, win::Int) where F
 end
 
 function _check_one_binary(path::AbstractString)
-    reader = CubedSphereBinaryReader(path)
+    reader = TransportBinaryReader(path)
     try
         h = reader.header
         h.mass_basis === :dry ||

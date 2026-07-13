@@ -1,17 +1,10 @@
-# Read-only inspection: binary_capabilities, inspect_binary, header peeking, capability print.
-#
-# Part of the TransportBinary format implementation; included from
-# `TransportBinary.jl` into the `MetDrivers` module (shared namespace,
-# shared `using`s). Split out of the former 2658-line monolith — pure code
-# move, no behavior change.
+# Read-only capability inspection for every version-4 geometry.
 
 """
     binary_capabilities(reader) -> NamedTuple
 
-Summarise what operators this binary can drive. Works on either
-`TransportBinaryReader` (LL/RG) or `CubedSphereBinaryReader` (CS) via
-the existing `has_flux_delta`, `has_tm5_convection`, `has_cmfmc`, and
-`has_qv` predicates. Fields:
+Summarise what operators this binary can drive. Geometry-specific advection
+requirements are selected through the reader's geometry type. Fields:
 
 - `advection :: Bool` — always `true` (m, am, bm, cm are required).
 - `replay_gate :: Bool` — dam/dbm/dcm/dm present.
@@ -24,10 +17,14 @@ the existing `has_flux_delta`, `has_tm5_convection`, `has_cmfmc`, and
 - `flux_kind :: Symbol` — stored mass-flux normalization contract.
 - `payload_sections :: Vector{Symbol}` — raw set for debugging.
 """
+_required_advection_sections(::LatLonBinaryGeometry) = (:m, :am, :bm, :cm)
+_required_advection_sections(::ReducedGaussianBinaryGeometry) = (:m, :hflux, :cm)
+_required_advection_sections(::CubedSphereBinaryGeometry) = (:m, :am, :bm, :cm)
+
 function binary_capabilities(reader::TransportBinaryReader)
     hdr = reader.header
-    required_advection = _transport_is_structured(hdr) ?
-        (:m, :am, :bm, :cm) : (:m, :hflux, :cm)
+    raw = hdr.raw_header
+    required_advection = _required_advection_sections(hdr.geometry)
     return (
         advection        = all(s in hdr.payload_sections for s in required_advection),
         replay_gate      = has_flux_delta(reader),
@@ -38,14 +35,14 @@ function binary_capabilities(reader::TransportBinaryReader)
         surface_pressure = :ps in hdr.payload_sections,
         humidity         = has_qv(reader),
         mass_basis       = hdr.mass_basis,
-        grid_type        = Symbol(hdr.grid_type),
+        grid_type        = grid_type(hdr),
         nlevel           = hdr.nlevel,
         steps_per_window = hdr.steps_per_window,
         variable_step_schedule = _has_variable_step_schedule(hdr.steps_per_window_by_window),
         flux_kind = flux_kind(reader),
-        preprocessor_contract = nothing,
-        vertical_Nz_output = nothing,
-        adaptive_substeps = nothing,
+        preprocessor_contract = get(raw, "preprocessor_contract", nothing),
+        vertical_Nz_output = get(raw, "vertical_Nz_output", nothing),
+        adaptive_substeps = get(raw, "adaptive_substeps", nothing),
         payload_sections = hdr.payload_sections,
     )
 end
@@ -53,7 +50,7 @@ end
 """
     inspect_binary(path; io = stdout) -> NamedTuple
 
-Open the binary at `path` (auto-detecting LL/RG vs CS format), print
+Open the binary at `path`, print
 a capability-augmented report to `io`, and return the
 `binary_capabilities` NamedTuple for programmatic consumption (tests,
 CLI capability-intersection, folder-level validation).
@@ -64,7 +61,7 @@ if a stale file must be audited.
 """
 function inspect_binary(path::AbstractString; io::IO = stdout)
     isfile(path) || throw(ArgumentError("binary not found: $(path)"))
-    reader = _open_binary_for_inspection(path)
+    reader = TransportBinaryReader(String(path); FT = Float64)
     try
         println(io, reader)
         println(io)
@@ -74,57 +71,6 @@ function inspect_binary(path::AbstractString; io::IO = stdout)
         close(reader)
     end
 end
-
-# Internal: open either LL/RG or CS reader. Peek at the JSON header
-# `grid_type` field to pick; a CS binary opened as `TransportBinaryReader`
-# errors during semantics validation, which is an unhelpful failure
-# mode for a diagnostic tool.
-function _open_binary_for_inspection(path::AbstractString)
-    grid_type_hint = _peek_grid_type(path)
-    if grid_type_hint === :cubed_sphere
-        return _open_cubed_sphere_binary_reader(path)
-    end
-    return TransportBinaryReader(path; FT = Float64)
-end
-
-# Peek the JSON header to decide LL/RG vs CS without constructing a
-# full reader. Both LL/RG and CS writers start the file with a
-# null-terminated JSON blob at byte 0 (see
-# `_parse_transport_header` and `CubedSphereBinaryReader` — both find
-# the first `0x00` and parse the preceding bytes). We only need
-# `grid_type`; on any parse failure we fall back to `:latlon` so the
-# `TransportBinaryReader` constructor can emit its own richer error.
-function _peek_grid_type(path::AbstractString)
-    try
-        open(path, "r") do io
-            header_json = _read_transport_header_json(
-                io; source = "transport binary $(path)")
-            hdr = _peek_parse_header(header_json)
-            raw = get(hdr, :grid_type, get(hdr, "grid_type", "latlon"))
-            return Symbol(lowercase(String(raw)))
-        end
-    catch
-        return :latlon
-    end
-end
-
-# Lightweight JSON parse that doesn't pull in the reader's full stack.
-# Falls back gracefully if the header format differs (e.g. legacy
-# binaries that don't use JSON).
-function _peek_parse_header(bytes)
-    try
-        return JSON3.read(String(bytes))
-    catch
-        return Dict{String, Any}()
-    end
-end
-
-# Forward declaration; the CS reader lives in CubedSphereBinaryReader.jl
-# and is not a subtype of anything common. The MetDrivers module's
-# load order (TransportBinary.jl first, CubedSphereBinaryReader.jl
-# second) means we must stub this here and let the CS file's include
-# define the method.
-function _open_cubed_sphere_binary_reader end
 
 function _print_capability_rows(io::IO, reader)
     caps = binary_capabilities(reader)

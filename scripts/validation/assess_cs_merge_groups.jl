@@ -15,7 +15,7 @@
 using Printf
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window, load_grid
+using .AtmosTransport.MetDrivers: TransportBinaryReader, load_window!, load_grid
 
 const USAGE = """
 Usage:
@@ -185,7 +185,7 @@ _required_steps(current_steps::Int, ratio::Float64; threshold::Float64 = 0.95) =
     max(1, ceil(Int, current_steps * ratio / threshold))
 
 function assess!(io, path::String, groups; max_windows::Union{Nothing, Int} = nothing)
-    reader = CubedSphereBinaryReader(path; FT = Float32)
+    reader = TransportBinaryReader(path; FT = Float32)
     try
         h = reader.header
         grid = load_grid(reader; FT = Float64, Hp = 0)
@@ -205,7 +205,7 @@ function assess!(io, path::String, groups; max_windows::Union{Nothing, Int} = no
         ]
 
         for w in 1:nw
-            win = load_cs_window(reader, w)
+            win = load_window!(reader, w)
             for (gidx, (k1, k2)) in enumerate(groups)
                 xr, yr, zr, tr, vec_sse, vec_energy, angle_sse, angle_weight,
                     internal_z, xloc, yloc, zloc, tloc =
@@ -263,7 +263,7 @@ function main(args)
     out, path, spec = args
     max_windows = length(args) == 4 ? parse(Int, args[4]) : nothing
     isnothing(max_windows) || max_windows >= 1 || error("MAX_WINDOWS must be positive")
-    reader = CubedSphereBinaryReader(path; FT = Float32)
+    reader = TransportBinaryReader(path; FT = Float32)
     Nz = reader.header.nlevel
     close(reader)
     groups = _parse_groups(spec, Nz)

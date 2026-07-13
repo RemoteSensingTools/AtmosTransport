@@ -139,7 +139,10 @@ using .Output
 include("MetDrivers/MetDrivers.jl")
 using .MetDrivers: AbstractMetDriver,
                    current_time,
-                   TransportBinaryReader, TransportBinaryHeader, write_transport_binary,
+                   AbstractTransportBinaryGeometry, LatLonBinaryGeometry,
+                   ReducedGaussianBinaryGeometry, CubedSphereBinaryGeometry,
+                   TransportBinaryReader, TransportBinaryHeader, binary_geometry,
+                   write_transport_binary,
                    TransportBinaryDriver, AbstractTransportWindow,
                    StructuredFluxDeltas, FaceIndexedFluxDeltas,
                    StructuredTransportWindow, FaceIndexedTransportWindow,
@@ -163,8 +166,7 @@ using .MetDrivers: AbstractMetDriver,
                    read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh,
                    total_windows, window_dt, steps_per_window, steps_per_window_schedule,
                    supports_diffusion, supports_convection,
-                   CubedSphereBinaryReader, CubedSphereBinaryHeader,
-                   load_cs_window, cs_window_count, mesh_convention, mesh_definition,
+                   mesh_convention, mesh_definition,
                    TRANSPORT_BINARY_FORMAT_VERSION,
                    StreamingTransportBinaryWriter,
                    open_streaming_transport_binary, write_streaming_window!,
@@ -268,8 +270,10 @@ export TransportTracerSpec
 
 # Transport binaries and met-driver summaries
 export write_transport_binary
+export AbstractTransportBinaryGeometry, LatLonBinaryGeometry
+export ReducedGaussianBinaryGeometry, CubedSphereBinaryGeometry, binary_geometry
 export TransportBinaryReader, TransportBinaryHeader, TransportBinaryDriver
-export CubedSphereTransportDriver, CubedSphereTransportWindow, CubedSphereBinaryReader
+export CubedSphereTransportDriver, CubedSphereTransportWindow
 export load_transport_window, driver_grid
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export window_count, load_grid, mass_basis, air_mass_basis

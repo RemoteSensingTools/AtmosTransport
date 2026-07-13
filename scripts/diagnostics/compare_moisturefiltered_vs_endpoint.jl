@@ -6,7 +6,7 @@
 #   julia --project=. scripts/diagnostics/compare_moisturefiltered_vs_endpoint.jl
 # ===========================================================================
 using AtmosTransport
-using AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window, load_grid
+using AtmosTransport.MetDrivers: TransportBinaryReader, load_window!, load_grid
 using AtmosTransport.Grids: panel_cell_center_lonlat
 using AtmosTransport.Architectures: CPU
 using Printf
@@ -33,9 +33,9 @@ end
 
 function main()
     println("Opening readers …")
-    rA = CubedSphereBinaryReader(BIN_A; FT = Float32)
-    rB = CubedSphereBinaryReader(BIN_B; FT = Float32)
-    Nc = rA.header.Nc; Nz = rA.header.nlevel
+    rA = TransportBinaryReader(BIN_A; FT = Float32)
+    rB = TransportBinaryReader(BIN_B; FT = Float32)
+    Nc = rA.header.geometry.Nc; Nz = rA.header.nlevel
     @printf("  Nc=%d  Nz=%d (merged, TOA-first)\n", Nc, Nz)
 
     mesh = load_grid(rA; FT = Float32, arch = CPU(), Hp = 0).horizontal
@@ -44,7 +44,7 @@ function main()
     @printf("  SH cells (lat<-30): %d of %d\n", sum(sum, sh), 6Nc*Nc)
 
     for win in (1, 6, 12)
-        wA = load_cs_window(rA, win); wB = load_cs_window(rB, win)
+        wA = load_window!(rA, win); wB = load_window!(rB, win)
         # Direct: do the cm fields differ at all? (max over full sphere + SH)
         dmax = 0.0; dmax_sh = 0.0; cmscale = 0.0
         for p in 1:6, k in 1:Nz+1, j in 1:Nc, i in 1:Nc
@@ -68,7 +68,7 @@ function main()
     end
 
     # ps (column dry mass) conservation: window-2 start = window-1 endpoint.
-    mA = load_cs_window(rA, 2).m; mB = load_cs_window(rB, 2).m
+    mA = load_window!(rA, 2).m; mB = load_window!(rB, 2).m
     max_ps = 0.0; max_lay = 0.0; dcol = 0.0; dlay = 0.0
     for p in 1:6, j in 1:Nc, i in 1:Nc
         cA = 0.0; cB = 0.0

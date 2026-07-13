@@ -3,7 +3,7 @@
 # ERA5/spectral production fallback (expected much smoother).
 #   julia --project=. scripts/diagnostics/cm_sh_roughness_profile.jl <binary.bin> [window]
 using AtmosTransport
-using AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window, load_grid
+using AtmosTransport.MetDrivers: TransportBinaryReader, load_window!, load_grid
 using AtmosTransport.Grids: panel_cell_center_lonlat
 using AtmosTransport.Architectures: CPU
 using Printf
@@ -28,13 +28,13 @@ end
 
 function main()
     bin = ARGS[1]; win = length(ARGS) >= 2 ? parse(Int, ARGS[2]) : 1
-    r = CubedSphereBinaryReader(bin; FT=Float32)
-    Nc, Nz = r.header.Nc, r.header.nlevel
+    r = TransportBinaryReader(bin; FT=Float32)
+    Nc, Nz = r.header.geometry.Nc, r.header.nlevel
     @printf("%s\n  Nc=%d Nz=%d  window=%d\n", basename(bin), Nc, Nz, win)
     mesh = load_grid(r; FT=Float32, arch=CPU(), Hp=0).horizontal
     lats = ntuple(p -> Float64.(panel_cell_center_lonlat(mesh, p)[2]), 6)
     sh = ntuple(p -> lats[p] .< -30.0, 6)
-    w = load_cs_window(r, win)
+    w = load_window!(r, win)
     println("  TOA-frac   iface   SH cm rough")
     mx = 0.0; mxf = 0.0
     for iface in 2:Nz

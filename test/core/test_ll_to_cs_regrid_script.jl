@@ -5,7 +5,7 @@
 # Exercises `regrid_ll_binary_to_cs` end-to-end: writes a tiny LL v4 fixture,
 # regrids it to a C4 cubed-sphere binary, and verifies
 #   1. the output file exists and its header is readable by
-#      `CubedSphereBinaryReader` / `inspect_binary`,
+#      `TransportBinaryReader` / `inspect_binary`,
 #   2. unchanged windows retain negligible `cm`, while explicit endpoint
 #      mass tendencies diagnose bounded vertical `cm`,
 #   3. the total CS air mass matches the LL source to within conservative-
@@ -24,7 +24,7 @@ include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.Preprocessing: regrid_ll_binary_to_cs, build_target_geometry,
                                       PreprocessorRunCache, CubedSphereTargetGeometry
-using .AtmosTransport.MetDrivers: load_cs_window, has_surface
+using .AtmosTransport.MetDrivers: load_window!, has_surface
 
 # LL fixture: small but non-trivial. Pressure varies with latitude so
 # `recover_ll_cell_center_winds!` sees a genuine ∇p field, and air mass
@@ -175,9 +175,9 @@ end
 
             # Numerical invariants: load via the CS reader and check the
             # total air mass and post-balance cm/m.
-            reader = CubedSphereBinaryReader(cs_path; FT = Float64)
-            @test reader.header.Nc == 4
-            @test reader.header.npanel == 6
+            reader = TransportBinaryReader(cs_path; FT = Float64)
+            @test reader.header.geometry.Nc == 4
+            @test reader.header.geometry.npanel == 6
             @test reader.header.nwindow == meta.nwindow
             @test reader.header.nlevel == meta.Nz
             @test has_flux_delta(reader)
@@ -190,9 +190,9 @@ end
             # walk — load_cs_transport_window! would be the canonical route
             # but is driver-owned; testing at the reader level keeps the
             # dependency minimal.
-            Nc = reader.header.Nc
+            Nc = reader.header.geometry.Nc
             Nz = reader.header.nlevel
-            npanel = reader.header.npanel
+            npanel = reader.header.geometry.npanel
 
             for win in 1:reader.header.nwindow
                 # Offset within the window for the `m` section (first in
@@ -266,16 +266,16 @@ end
             caps = inspect_binary(cs_path; io = devnull)
             @test caps.tm5_convection === true
 
-            # Load window 1 via the CS reader's `load_cs_window` (which
+            # Load window 1 via the CS reader's `load_window!` (which
             # surfaces TM5 fields as panel-tuples). A uniform LL input
             # round-trips to near-uniform CS output through conservative
             # regrid, so each panel cell should be close to `tm5_val`.
-            reader = CubedSphereBinaryReader(cs_path; FT = Float64)
-            win = load_cs_window(reader, 1)
+            reader = TransportBinaryReader(cs_path; FT = Float64)
+            win = load_window!(reader, 1)
             @test haskey(win, :tm5_fields) && win.tm5_fields !== nothing
             for fld in (:entu, :detu, :entd, :detd)
                 panels = getfield(win.tm5_fields, fld)
-                @test length(panels) == reader.header.npanel
+                @test length(panels) == reader.header.geometry.npanel
                 @test all(size(p) == (4, 4, 4) for p in panels)
                 vals = vcat(map(vec, panels)...)
                 @test isapprox(maximum(vals), tm5_val; atol = 5e-3)
@@ -306,15 +306,15 @@ end
             caps = inspect_binary(cs_path; io = devnull)
             @test caps.pbl_diffusion === true
 
-            reader = CubedSphereBinaryReader(cs_path; FT = Float64)
+            reader = TransportBinaryReader(cs_path; FT = Float64)
             @test has_surface(reader)
             @test :pbl_hflux in reader.header.payload_sections
             @test !(:hflux in reader.header.payload_sections)
-            win = load_cs_window(reader, 1)
+            win = load_window!(reader, 1)
             @test haskey(win, :surface) && win.surface !== nothing
             for (fld, expected) in pairs(sfc)
                 panels = getfield(win.surface, fld)
-                @test length(panels) == reader.header.npanel
+                @test length(panels) == reader.header.geometry.npanel
                 @test all(size(p) == (4, 4) for p in panels)
                 vals = vcat(map(vec, panels)...)
                 @test isapprox(maximum(vals), expected; atol = 1e-8)
@@ -350,8 +350,8 @@ end
             @test length(run_cache.entries) == 1
 
             function _horizontal_flux_l1(path)
-                reader = CubedSphereBinaryReader(path; FT = Float64)
-                win = load_cs_window(reader, 1)
+                reader = TransportBinaryReader(path; FT = Float64)
+                win = load_window!(reader, 1)
                 steps = reader.header.steps_per_window
                 total = sum(map(p -> sum(abs, p), win.am)) +
                         sum(map(p -> sum(abs, p), win.bm))
@@ -405,7 +405,7 @@ end
 
             script = joinpath(@__DIR__, "..", "..", "scripts", "preprocessing",
                               "regrid_ll_transport_binary_to_cs.jl")
-            project = joinpath(@__DIR__, "..", "..")
+            project = dirname(Base.active_project())
 
             # Run synchronously, capture stdout+stderr for debugging on
             # failure. The process should exit 0 and produce the output.
@@ -423,8 +423,8 @@ end
             caps = inspect_binary(cs_path; io = devnull)
             @test caps.grid_type === :cubed_sphere
             @test caps.mass_basis === :dry
-            reader = CubedSphereBinaryReader(cs_path; FT = Float64)
-            @test reader.header.panel_convention === :geos_native
+            reader = TransportBinaryReader(cs_path; FT = Float64)
+            @test reader.header.geometry.panel_convention === :geos_native
             close(reader)
         end
     end

@@ -175,7 +175,7 @@ function main()
     driver = CubedSphereTransportDriver(BIN; FT = FT, arch = AtmosTransport.CPU())
     grid = driver_grid(driver)
     mesh = grid.horizontal
-    Nc = mesh.Nc
+    Nc = mesh.geometry.Nc
     @info "mesh" Nc
 
     # --- geometry alignment check vs GC ---

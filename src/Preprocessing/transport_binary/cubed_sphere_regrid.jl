@@ -120,8 +120,11 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     # --- Open LL binary reader ---
     reader = TransportBinaryReader(ll_binary_path; FT=FT)
     h = reader.header
-    Nx_ll = h.Nx
-    Ny_ll = h.Ny
+    geometry = binary_geometry(reader)
+    geometry isa LatLonBinaryGeometry || throw(ArgumentError(
+        "LL-to-CS regridding requires a lat-lon binary; got $(grid_type(reader))"))
+    Nx_ll = geometry.Nx
+    Ny_ll = geometry.Ny
     Nz = h.nlevel
     Nt = h.nwindow
     A_ifc = Float64.(h.A_ifc)

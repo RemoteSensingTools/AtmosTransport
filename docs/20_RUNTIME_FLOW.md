@@ -28,7 +28,7 @@ default paths are bit-exact to pre-operator behavior.
 
 | What | Owner | Where it lives at runtime |
 |---|---|---|
-| File I/O, window timing, humidity endpoints, interpolation | Met driver | `sim.driver` (e.g. `TransportBinaryDriver`, `CubedSphereBinaryReader`) |
+| File I/O, window timing, humidity endpoints, interpolation | Met driver | `sim.driver` (e.g. `TransportBinaryDriver`, `TransportBinaryReader`) |
 | Air mass, tracer masses, advection workspace, operator config | Model | `sim.model :: TransportModel` |
 | Current simulation time | Simulation | `sim.time`, exposed via `current_time(sim)` |
 | Per-window forcing payload | Driver-owned, model-consumed | `sim.window` (from driver) → `model.fluxes` + `model.convection_forcing` |

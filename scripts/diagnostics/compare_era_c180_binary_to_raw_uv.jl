@@ -193,9 +193,9 @@ function main()
     mkpath(cfg.out_dir)
 
     raw_uv = load_raw_uv(cfg.raw_uv_nc, cfg.time_index)
-    reader = CubedSphereBinaryReader(cfg.era_cs_bin; FT=Float32)
+    reader = TransportBinaryReader(cfg.era_cs_bin; FT=Float32)
     try
-        raw = load_cs_window(reader, cfg.window)
+        raw = load_window!(reader, cfg.window)
         mesh = load_grid(reader; FT=Float32, arch=CPU(), Hp=0).horizontal
         basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
         lonlat = ntuple(p -> panel_cell_center_lonlat(mesh, p), 6)
@@ -207,7 +207,7 @@ function main()
         rows = NamedTuple[]
         for p in 1:6
             lons, lats = lonlat[p]
-            for j in 1:mesh.Nc, i in 1:mesh.Nc
+            for j in 1:mesh.geometry.Nc, i in 1:mesh.geometry.Nc
                 lon = Float64(lons[i, j])
                 lat = Float64(lats[i, j])
                 in_region(lon, lat, cfg.region) || continue

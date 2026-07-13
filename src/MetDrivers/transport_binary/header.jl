@@ -1,10 +1,4 @@
-# Header schema, parsing, and on-disk metadata for the transport binary format.
-# (TransportBinaryHeader, schedule/sampling parsers, header summary/show, _parse_transport_header, _transport_common_header.)
-#
-# Part of the TransportBinary format implementation; included from
-# `TransportBinary.jl` into the `MetDrivers` module (shared namespace,
-# shared `using`s). Split out of the former 2658-line monolith — pure code
-# move, no behavior change.
+# Typed geometry metadata, common header schema, and version-4 parsing.
 
 const _PBL_SURFACE_PAYLOAD_SECTIONS = (:pblh, :ustar, :pbl_hflux, :t2m)
 const _PBL_SURFACE_FIELD_NAMES = (:pblh, :ustar, :hflux, :t2m)
@@ -27,41 +21,67 @@ const TRANSPORT_BINARY_FORMAT_VERSION = 4
 end
 
 """
-    TransportBinaryHeader
+    AbstractTransportBinaryGeometry
 
-Metadata for a topology-generic preprocessed transport binary.
-
-## Key fields
-
-- `grid_type`: `:latlon` or `:reduced_gaussian`
-- `horizontal_topology`: `:structureddirectional` (LL, arrays `(Nx, Ny, Nz)`)
-  or `:faceindexed` (RG, arrays `(ncell, Nz)` + `(nface_h, Nz)`)
-- `ncell`: total horizontal cells (LL: `Nx × Ny`; RG: sum of nlon_per_ring)
-- `nface_h`: total horizontal faces (LL: `(Nx+1)×Ny + Nx×(Ny+1)`;
-  RG: `ncell + Σ boundary_counts`)
-- `nlevel`: number of vertical levels (k=1 = TOA, k=nlevel = surface)
-- `nwindow`: windows per day (typically 24 for hourly ERA5)
-- `A_ifc`: hybrid A coefficients [Pa] at `nlevel + 1` half-levels.
-  `p_half[k] = A_ifc[k] + B_ifc[k] × ps`. For ERA5 tropo34: `A_ifc[1] = 0`
-  (TOA), `A_ifc[end] = 0` (surface where B=1).
-- `B_ifc`: hybrid B coefficients [dimensionless] at `nlevel + 1` half-levels.
-  `B_ifc[1] = 0` (TOA, pure pressure levels), `B_ifc[end] = 1.0` (surface,
-  pure sigma level).
-- `mass_basis`: `:moist` or `:dry` — determines whether the stored air mass
-  includes or excludes water vapour.
-- `flux_kind`: `:substep_mass_amount` or `:full_window_mass_amount` — stored
-  flux is either the mass [kg] per scheduled transport substep, or the full
-  met-window mass amount that the runtime divides by its schedule.
-- `flux_sampling`: `:window_start_endpoint`, `:window_constant`, or
-  `:window_mean`, describing how the stored forcing represents its window.
+Geometry metadata embedded in a version-4 transport binary. Concrete geometry
+types carry only the fields meaningful for their topology; reader and grid
+construction code dispatches on this type instead of branching on string tags.
 """
-struct TransportBinaryHeader
+abstract type AbstractTransportBinaryGeometry end
+
+"""Geometry metadata for a regular longitude-latitude binary."""
+struct LatLonBinaryGeometry <: AbstractTransportBinaryGeometry
+    Nx                 :: Int
+    Ny                 :: Int
+    longitudes         :: Vector{Float64}
+    latitudes          :: Vector{Float64}
+    longitude_interval :: Vector{Float64}
+    latitude_interval  :: Vector{Float64}
+end
+
+"""Geometry metadata for a face-indexed reduced-Gaussian binary."""
+struct ReducedGaussianBinaryGeometry <: AbstractTransportBinaryGeometry
+    latitudes     :: Vector{Float64}
+    nlon_per_ring :: Vector{Int}
+end
+
+"""Geometry metadata for a six-panel cubed-sphere binary."""
+struct CubedSphereBinaryGeometry <: AbstractTransportBinaryGeometry
+    Nc                   :: Int
+    npanel               :: Int
+    panel_convention     :: Symbol
+    definition           :: Symbol
+    coordinate_law       :: Symbol
+    center_law           :: Symbol
+    longitude_offset_deg :: Float64
+end
+
+grid_type(::LatLonBinaryGeometry) = :latlon
+grid_type(::ReducedGaussianBinaryGeometry) = :reduced_gaussian
+grid_type(::CubedSphereBinaryGeometry) = :cubed_sphere
+
+horizontal_topology(::LatLonBinaryGeometry) = :structureddirectional
+horizontal_topology(::ReducedGaussianBinaryGeometry) = :faceindexed
+horizontal_topology(::CubedSphereBinaryGeometry) = :structureddirectional
+
+"""
+    TransportBinaryHeader{G<:AbstractTransportBinaryGeometry}
+
+Validated metadata for the current transport-binary format. `geometry` selects
+the horizontal topology through dispatch, while the remaining fields describe
+the common timing, vertical coordinate, mass basis, and payload contract.
+
+`A_ifc` and `B_ifc` define interface pressure as
+`p_half[k] = A_ifc[k] + B_ifc[k] * surface_pressure`, with `k = 1` at the
+top of atmosphere. `flux_kind` distinguishes mass per transport substep from a
+full-window mass amount.
+"""
+struct TransportBinaryHeader{G <: AbstractTransportBinaryGeometry}
     format_version       :: Int
     header_bytes         :: Int
     on_disk_float_type   :: Symbol      # :Float32 or :Float64
     float_bytes          :: Int         # 4 or 8
-    grid_type            :: Symbol      # :latlon or :reduced_gaussian
-    horizontal_topology  :: Symbol      # :structureddirectional or :faceindexed
+    geometry             :: G
     ncell                :: Int         # total horizontal cells
     nface_h              :: Int         # total horizontal faces
     nlevel               :: Int         # vertical levels (k=1 TOA, k=nlevel surface)
@@ -83,23 +103,14 @@ struct TransportBinaryHeader
     B_ifc                :: Vector{Float64}  # hybrid B [1],  length nlevel+1
     mass_basis           :: Symbol           # :moist or :dry
     payload_sections     :: Vector{Symbol}
-    include_qv           :: Bool
-    include_qv_endpoints :: Bool
-    n_qv                 :: Int
-    n_qv_start           :: Int
-    n_qv_end             :: Int
     n_geometry_elems     :: Int
     elems_per_window     :: Int
-    Nx                   :: Int
-    Ny                   :: Int
-    lons_f64             :: Vector{Float64}
-    lats_f64             :: Vector{Float64}
-    longitude_interval_f64 :: Vector{Float64}
-    latitude_interval_f64  :: Vector{Float64}
-    nlat                 :: Int
-    ring_latitudes_f64   :: Vector{Float64}
-    nlon_per_ring        :: Vector{Int}
+    raw_header           :: Dict{String, Any}
 end
+
+binary_geometry(h::TransportBinaryHeader) = h.geometry
+grid_type(h::TransportBinaryHeader) = grid_type(h.geometry)
+horizontal_topology(h::TransportBinaryHeader) = horizontal_topology(h.geometry)
 
 function _parse_steps_per_window_schedule(hdr, nwindow::Integer,
                                           steps_per_window::Integer)
@@ -146,20 +157,19 @@ function _steps_per_window_summary(steps::Integer,
     return string(Int(steps))
 end
 
-@inline function _transport_geometry_summary(h::TransportBinaryHeader)
-    if _transport_is_structured(h)
-        return string(h.Nx, "×", h.Ny, " structured cells, ", h.nlevel, " levels")
-    elseif _transport_is_faceindexed(h)
-        return string(h.ncell, " cells, ", h.nface_h, " faces, ", h.nlevel, " levels")
-    else
-        return string(h.ncell, " cells, ", h.nlevel, " levels")
-    end
-end
+@inline _transport_geometry_summary(g::LatLonBinaryGeometry, h::TransportBinaryHeader) =
+    string(g.Nx, "×", g.Ny, " structured cells, ", h.nlevel, " levels")
+@inline _transport_geometry_summary(::ReducedGaussianBinaryGeometry, h::TransportBinaryHeader) =
+    string(h.ncell, " cells, ", h.nface_h, " faces, ", h.nlevel, " levels")
+@inline _transport_geometry_summary(g::CubedSphereBinaryGeometry, h::TransportBinaryHeader) =
+    string("C", g.Nc, ", panels=", g.npanel, ", ", h.nlevel, " levels")
+@inline _transport_geometry_summary(h::TransportBinaryHeader) =
+    _transport_geometry_summary(h.geometry, h)
 
 @inline function _transport_qv_summary(h::TransportBinaryHeader)
-    if h.include_qv_endpoints
+    if :qv_start in h.payload_sections && :qv_end in h.payload_sections
         return "qv_start/qv_end"
-    elseif h.include_qv
+    elseif :qv in h.payload_sections
         return "qv"
     else
         return "none"
@@ -179,7 +189,7 @@ end
 function Base.summary(h::TransportBinaryHeader)
     return string(
         "TransportBinaryHeader(v", h.format_version, ", ",
-        h.grid_type, "/", h.horizontal_topology, ", ",
+        grid_type(h), "/", horizontal_topology(h), ", ",
         h.nwindow, " windows)"
     )
 end
@@ -198,10 +208,9 @@ function Base.show(io::IO, h::TransportBinaryHeader)
           "└── header bytes:  ", h.header_bytes)
 end
 
-_transport_is_structured(h::TransportBinaryHeader) =
-    h.grid_type === :latlon && h.horizontal_topology === :structureddirectional
-_transport_is_faceindexed(h::TransportBinaryHeader) =
-    h.grid_type === :reduced_gaussian && h.horizontal_topology === :faceindexed
+_transport_is_structured(h::TransportBinaryHeader) = h.geometry isa LatLonBinaryGeometry
+_transport_is_faceindexed(h::TransportBinaryHeader) = h.geometry isa ReducedGaussianBinaryGeometry
+_transport_is_cubed_sphere(h::TransportBinaryHeader) = h.geometry isa CubedSphereBinaryGeometry
 
 function _transport_disk_float_type(sym::Symbol)
     sym === :Float64 ? Float64 : Float32
@@ -301,6 +310,36 @@ function _transport_header_interval(hdr, key::Symbol)
     return haskey(hdr, key) ? Float64.(collect(getproperty(hdr, key))) : Float64[]
 end
 
+function _parse_transport_geometry(hdr, grid::Symbol, topology::Symbol)
+    if grid === :latlon && topology === :structureddirectional
+        Nx, Ny = Int(hdr.Nx), Int(hdr.Ny)
+        return LatLonBinaryGeometry(
+            Nx,
+            Ny,
+            _transport_header_axis(hdr, Nx, :lons),
+            _transport_header_axis(hdr, Ny, :lats),
+            _transport_header_interval(hdr, :longitude_interval),
+            _transport_header_interval(hdr, :latitude_interval),
+        )
+    elseif grid === :reduced_gaussian && topology === :faceindexed
+        return ReducedGaussianBinaryGeometry(
+            Float64.(collect(hdr.latitudes)),
+            Int.(collect(hdr.nlon_per_ring)),
+        )
+    elseif grid === :cubed_sphere && topology === :structureddirectional
+        return CubedSphereBinaryGeometry(
+            Int(hdr.Nc),
+            Int(hdr.npanel),
+            Symbol(lowercase(String(hdr.panel_convention))),
+            Symbol(lowercase(String(hdr.cs_definition))),
+            Symbol(lowercase(String(hdr.cs_coordinate_law))),
+            Symbol(lowercase(String(hdr.cs_center_law))),
+            Float64(hdr.longitude_offset_deg),
+        )
+    end
+    throw(ArgumentError("unsupported transport-binary geometry $(grid)/$(topology)"))
+end
+
 function _parse_transport_header(raw_bytes::Vector{UInt8})
     json_end = something(findfirst(==(0x00), raw_bytes), length(raw_bytes) + 1) - 1
     hdr = JSON3.read(String(raw_bytes[1:json_end]))
@@ -320,6 +359,7 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     disk_ft, float_bytes = _transport_parse_on_disk_float_type(hdr)
     grid_type = _transport_parse_grid_type(hdr)
     topology = _transport_parse_topology(hdr)
+    geometry = _parse_transport_geometry(hdr, grid_type, topology)
     ncell = Int(hdr.ncell)
     nface_h = Int(hdr.nface_h)
     nlevel = Int(hdr.nlevel)
@@ -327,8 +367,6 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     A_ifc = Float64.(collect(hdr.A_ifc))
     B_ifc = Float64.(collect(hdr.B_ifc))
     payload_sections = _transport_parse_sections(hdr)
-    include_qv = :qv in payload_sections
-    include_qv_endpoints = (:qv_start in payload_sections) && (:qv_end in payload_sections)
     source_flux_sampling = _transport_parse_symbol_key(hdr, :source_flux_sampling, :unknown)
     air_mass_sampling    = _transport_parse_symbol_key(hdr, :air_mass_sampling,    :unknown)
     flux_sampling        = _transport_parse_symbol_key(hdr, :flux_sampling,        :unknown)
@@ -343,31 +381,16 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     steps_schedule = _parse_steps_per_window_schedule(hdr, nwindow, steps_per_window)
     poisson_scale_schedule = _parse_poisson_scale_schedule(
         hdr, nwindow, poisson_balance_target_scale)
-    n_qv = Int(get(hdr, :n_qv, include_qv ? ncell * nlevel : 0))
-    n_qv_start = Int(get(hdr, :n_qv_start, include_qv_endpoints ? ncell * nlevel : 0))
-    n_qv_end = Int(get(hdr, :n_qv_end, include_qv_endpoints ? ncell * nlevel : 0))
     n_geometry_elems = Int(get(hdr, :n_geometry_elems, 0))
     elems_per_window = Int(hdr.elems_per_window)
-
-    Nx = haskey(hdr, :Nx) ? Int(hdr.Nx) : 0
-    Ny = haskey(hdr, :Ny) ? Int(hdr.Ny) : 0
-    lons_f64 = _transport_header_axis(hdr, Nx, :lons)
-    lats_f64 = _transport_header_axis(hdr, Ny, :lats)
-    longitude_interval_f64 = _transport_header_interval(hdr, :longitude_interval)
-    latitude_interval_f64 = _transport_header_interval(hdr, :latitude_interval)
-
-    nlon_per_ring = haskey(hdr, :nlon_per_ring) ? Int.(collect(hdr.nlon_per_ring)) : Int[]
-    ring_latitudes = haskey(hdr, :latitudes) ?
-                     Float64.(collect(hdr.latitudes)) : Float64[]
-    nlat = haskey(hdr, :nlat) ? Int(hdr.nlat) : 0
+    raw_header = Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
 
     return TransportBinaryHeader(
         format_version,
         header_bytes,
         disk_ft,
         float_bytes,
-        grid_type,
-        topology,
+        geometry,
         ncell,
         nface_h,
         nlevel,
@@ -389,22 +412,9 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
         B_ifc,
         _transport_parse_mass_basis(hdr),
         payload_sections,
-        include_qv,
-        include_qv_endpoints,
-        n_qv,
-        n_qv_start,
-        n_qv_end,
         n_geometry_elems,
         elems_per_window,
-        Nx,
-        Ny,
-        lons_f64,
-        lats_f64,
-        longitude_interval_f64,
-        latitude_interval_f64,
-        nlat,
-        ring_latitudes,
-        nlon_per_ring,
+        raw_header,
     )
 end
 

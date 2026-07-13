@@ -62,6 +62,13 @@ end
 
 @testset "plan 40 Commit 5 — binary_capabilities + inspect_binary" begin
 
+    @testset "one version-4 reader API" begin
+        @test isdefined(AtmosTransport, :TransportBinaryReader)
+        @test !isdefined(AtmosTransport, :CubedSphereBinaryReader)
+        @test !isdefined(AtmosTransport, :CubedSphereBinaryHeader)
+        @test !isdefined(AtmosTransport, :load_cs_window)
+    end
+
     @testset "LL writer rejects unsupported full-window flux storage" begin
         @test_throws ArgumentError _inspector_fixture_binary(
             tempname(); flux_kind = :full_window_mass_amount)
@@ -80,6 +87,7 @@ end
             @test caps.surface_pressure === true
             @test caps.mass_basis === :dry
             @test caps.grid_type === :latlon
+            @test binary_geometry(reader) isa LatLonBinaryGeometry
             @test caps.flux_kind === :substep_mass_amount
             @test :m in caps.payload_sections
             @test :am in caps.payload_sections

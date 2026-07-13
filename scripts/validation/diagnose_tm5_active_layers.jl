@@ -9,7 +9,7 @@ using Printf
 using JSON3
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader
+using .AtmosTransport.MetDrivers: TransportBinaryReader
 
 const USAGE = """
 Usage:
@@ -41,7 +41,7 @@ function _output_paths(prefix::AbstractString)
 end
 
 function _section_elements(h, section::Symbol)
-    Nc, Nz, np = h.Nc, h.nlevel, h.npanel
+    Nc, Nz, np = h.geometry.Nc, h.nlevel, h.geometry.npanel
     if section === :m
         return np * Nc * Nc * Nz
     elseif section === :am
@@ -79,7 +79,7 @@ end
 
 function _panel_view(reader, section_offsets, section::Symbol, panel::Int)
     h = reader.header
-    Nc, Nz = h.Nc, h.nlevel
+    Nc, Nz = h.geometry.Nc, h.nlevel
     panel_elems = Nc * Nc * Nz
     lo = section_offsets[section] + (panel - 1) * panel_elems + 1
     hi = lo + panel_elems - 1
@@ -97,7 +97,7 @@ function _scan_window(reader, win::Int, threshold::Float64)
     all(s in h.payload_sections for s in (:entu, :detu, :entd, :detd)) ||
         error("CS binary does not carry all TM5 sections (:entu, :detu, :entd, :detd)")
 
-    Nc, Nz, np = h.Nc, h.nlevel, h.npanel
+    Nc, Nz, np = h.geometry.Nc, h.nlevel, h.geometry.npanel
     section_offsets = Dict(s => _section_offset(h, win, s)
                            for s in (:entu, :detu, :entd, :detd))
 
@@ -207,7 +207,7 @@ end
 function diagnose_binary!(summary_io, levels_io, path::String,
                           threshold::Float64, max_windows::Union{Nothing, Int})
     FT = _on_disk_float_type(path)
-    reader = CubedSphereBinaryReader(path; FT = FT)
+    reader = TransportBinaryReader(path; FT = FT)
     try
         h = reader.header
         nw = isnothing(max_windows) ? h.nwindow : min(max_windows, h.nwindow)

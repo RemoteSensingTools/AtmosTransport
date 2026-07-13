@@ -4,7 +4,7 @@ using Printf
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window, cs_window_count,
+using .AtmosTransport.MetDrivers: TransportBinaryReader, load_window!, window_count,
     mesh_definition
 using .AtmosTransport.Grids: CubedSphereMesh
 using .AtmosTransport.Preprocessing: sync_all_cs_boundary_mirrors!
@@ -101,30 +101,30 @@ function max_flux_delta(original, synced)
 end
 
 function check_window(reader, mesh, win::Int)
-    raw = load_cs_window(reader, win)
+    raw = load_window!(reader, win)
     synced_am = deepcopy(raw.am)
     synced_bm = deepcopy(raw.bm)
     sync_all_cs_boundary_mirrors!(synced_am, synced_bm, mesh.connectivity,
-                                  reader.header.Nc, reader.header.nlevel)
+                                  reader.header.geometry.Nc, reader.header.nlevel)
     return max_flux_delta((am = raw.am, bm = raw.bm),
                           (am = synced_am, bm = synced_bm))
 end
 
 function main(argv = ARGS)
     opts = parse_args(Vector{String}(argv))
-    reader = CubedSphereBinaryReader(opts.path; FT = Float64)
+    reader = TransportBinaryReader(opts.path; FT = Float64)
     try
         h = reader.header
-        wins = opts.all_windows ? collect(1:cs_window_count(reader)) :
+        wins = opts.all_windows ? collect(1:window_count(reader)) :
                isempty(opts.windows) ? [1, min(24, h.nwindow), min(48, h.nwindow)] :
                parse_windows(opts.windows, h.nwindow)
         wins = unique(wins)
-        mesh = CubedSphereMesh(; FT = Float64, Nc = h.Nc, Hp = 0,
+        mesh = CubedSphereMesh(; FT = Float64, Nc = h.geometry.Nc, Hp = 0,
                                definition = mesh_definition(reader))
 
         @info "CS binary seam mirror validation"
         @info "  binary: $(opts.path)"
-        @info @sprintf("  grid: C%d levels=%d windows=%d", h.Nc, h.nlevel, h.nwindow)
+        @info @sprintf("  grid: C%d levels=%d windows=%d", h.geometry.Nc, h.nlevel, h.nwindow)
         @info "  selected windows: $(join(wins, ","))"
 
         global_abs = 0.0

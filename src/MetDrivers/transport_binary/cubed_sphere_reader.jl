@@ -1,185 +1,6 @@
-# ---------------------------------------------------------------------------
-# CubedSphereBinaryReader — reads CS transport binaries with 6-panel layout
-#
-# The standard TransportBinaryReader assumes (Nx, Ny, Nz) structured layout.
-# CS binaries store 6 panels packed sequentially: [panel1][panel2]...[panel6]
-# for each payload section. This reader loads all 6 panels into NTuples.
-#
-# Binary format: same MFLX header as LatLon/RG, but with:
-#   grid_type = "cubed_sphere"
-#   horizontal_topology = "StructuredDirectional"
-#   Nc (cells per panel edge), npanel = 6
-#   Data packed: per section, [panel 1 ... panel 6] contiguous
-# ---------------------------------------------------------------------------
-
-using JSON3
-using Mmap
-
-"""
-    CubedSphereBinaryHeader
-
-Parsed header for a cubed-sphere transport binary.
-"""
-struct CubedSphereBinaryHeader
-    format_version   :: Int
-    Nc               :: Int
-    npanel           :: Int
-    nlevel           :: Int
-    nwindow          :: Int
-    header_bytes     :: Int
-    float_bytes      :: Int
-    dt_met_seconds   :: Float64
-    steps_per_window :: Int
-    steps_per_window_by_window :: Vector{Int}
-    mass_basis       :: Symbol
-    panel_convention :: Symbol   # :gnomonic or :geos_native
-    cs_definition    :: Symbol
-    coordinate_law   :: Symbol
-    center_law       :: Symbol
-    longitude_offset_deg :: Float64
-    A_ifc            :: Vector{Float64}
-    B_ifc            :: Vector{Float64}
-    payload_sections :: Vector{Symbol}
-    elems_per_window :: Int
-    poisson_balance_target_scale_by_window :: Vector{Float64}
-    raw_header       :: Dict{String, Any}
-end
-
-"""
-    CubedSphereBinaryReader{FT}
-
-Reader for cubed-sphere transport binaries. Data is memory-mapped for
-zero-copy access to per-window payloads.
-"""
-# `FT` is the *load-as* element type (per-window panels are `Array{FT}`); `DT`
-# is the *on-disk* element type the payload is memory-mapped as. Keeping `data`
-# at the on-disk type (DT, usually Float32) and converting element-wise in the
-# per-window `copyto!` avoids materializing a full FT copy of the whole binary.
-# For an FT=Float64 run that eager copy was ~2× the file: a C180/L137 ERA5 day
-# is ~36 GB on disk, so the dropped F64 copy was ~72 GB of host RAM *per day*,
-# which OOM-killed multi-day F64 runs. F32 runs are unaffected (DT===FT, so
-# `data` is the zero-copy mmap exactly as before).
-"""
-    CubedSphereBinaryReader(path; FT=Float64)
-
-Memory-mapped reader for canonical v4 cubed-sphere transport binaries. Header
-metadata is validated at construction; window payloads are converted to FT
-when loaded and remain panel-native.
-"""
-struct CubedSphereBinaryReader{FT, DT}
-    data    :: Vector{DT}
-    io      :: IOStream
-    header  :: CubedSphereBinaryHeader
-    path    :: String
-end
-
-function _cs_on_disk_float_type(path::AbstractString)
-    open(path, "r") do io
-        raw = _read_transport_header_json(io; source = "cubed-sphere binary $(path)")
-        hdr = JSON3.read(String(raw))
-        float_bytes = Int(get(hdr, :float_bytes, 4))
-        float_bytes in (4, 8) || throw(ArgumentError(
-            "unsupported cubed-sphere binary float_bytes=$(float_bytes)"))
-        return float_bytes == 8 ? Float64 : Float32
-    end
-end
-
-# Bridge for `inspect_binary` in TransportBinary.jl.
-# Lives here because the CS reader type is defined in this file but the
-# inspector lives in TransportBinary.jl (which is loaded first).  Use the
-# on-disk float type; otherwise inspecting a large Float32 CS binary eagerly
-# converts the entire mmap to Float64.
-_open_cubed_sphere_binary_reader(path::AbstractString) =
-    CubedSphereBinaryReader(String(path); FT = _cs_on_disk_float_type(path))
-
-function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Float64)
-    io = open(bin_path, "r")
-    try
-        raw = _read_transport_header_json(io; source = "cubed-sphere binary $(bin_path)")
-        # `String(::Vector{UInt8})` may take ownership of and empty the vector;
-        # preserve it for the terminator-vs-header-region check below.
-        hdr = JSON3.read(String(copy(raw)))
-        hdr_dict = Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
-        validate_transport_contract!(hdr_dict)
-        length(raw) < Int(hdr_dict["header_bytes"]) || throw(ArgumentError(
-            "cubed-sphere binary JSON header is not null-terminated before header_bytes"))
-
-        format_version = Int(hdr.format_version)
-        header_bytes = Int(hdr.header_bytes)
-        float_bytes = Int(hdr.float_bytes)
-        Nc = Int(hdr.Nc)
-        npanel = Int(hdr.npanel)
-        nlevel = Int(hdr.nlevel)
-        nwindow = Int(hdr.nwindow)
-        dt_met = Float64(hdr.dt_met_seconds)
-        steps_per_window = Int(hdr.steps_per_window)
-        steps_schedule = _parse_steps_per_window_schedule(hdr, nwindow, steps_per_window)
-        scalar_poisson_scale = Float64(hdr.poisson_balance_target_scale)
-        poisson_scale_schedule = _parse_poisson_scale_schedule(
-            hdr, nwindow, scalar_poisson_scale)
-        mass_basis = _transport_parse_mass_basis(hdr)
-        panel_convention = Symbol(_normalize_cs_panel_convention(hdr.panel_convention))
-        cs_definition = Symbol(lowercase(String(hdr.cs_definition)))
-        coordinate_law = Symbol(lowercase(String(hdr.cs_coordinate_law)))
-        center_law = Symbol(lowercase(String(hdr.cs_center_law)))
-        longitude_offset_deg = Float64(hdr.longitude_offset_deg)
-        A_ifc = Float64.(collect(hdr.A_ifc))
-        B_ifc = Float64.(collect(hdr.B_ifc))
-
-        sections_raw = collect(hdr.payload_sections)
-        payload_sections = Symbol.(lowercase.(String.(sections_raw)))
-        elems_per_window = Int(hdr.elems_per_window)
-
-        cs_header = CubedSphereBinaryHeader(
-            format_version, Nc, npanel, nlevel, nwindow, header_bytes, float_bytes,
-            dt_met, steps_per_window, steps_schedule, mass_basis, panel_convention,
-            cs_definition, coordinate_law, center_law, longitude_offset_deg,
-            A_ifc, B_ifc,
-            payload_sections, elems_per_window, poisson_scale_schedule,
-            Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr)),
-        )
-
-        # Memory-map exactly the payload declared by the validated header.
-        DiskFT = float_bytes == 4 ? Float32 : Float64
-        n_elems = elems_per_window * nwindow
-        expected_bytes = header_bytes + n_elems * sizeof(DiskFT)
-        actual_bytes = filesize(bin_path)
-        actual_bytes == expected_bytes || throw(ArgumentError(
-            "cubed-sphere binary size mismatch for $(bin_path): expected $(expected_bytes) " *
-            "bytes from the header, found $(actual_bytes)"))
-        raw_data = Mmap.mmap(io, Vector{DiskFT}, n_elems, header_bytes)
-
-        return CubedSphereBinaryReader{FT, DiskFT}(raw_data, io, cs_header, bin_path)
-    catch
-        isopen(io) && close(io)
-        rethrow()
-    end
-end
-
-function Base.summary(r::CubedSphereBinaryReader{FT}) where FT
-    h = r.header
-    disk_ft = h.float_bytes == 8 ? Float64 : Float32
-    return string(
-        "CubedSphereBinaryReader{", FT, "<-", disk_ft, "}(",
-        basename(r.path), ", C", h.Nc, " x ", h.nlevel, ", ",
-        h.nwindow, " windows)"
-    )
-end
-
-function Base.show(io::IO, r::CubedSphereBinaryReader{FT}) where FT
-    h = r.header
-    disk_ft = h.float_bytes == 8 ? Float64 : Float32
-    print(io, summary(r), "\n",
-          "├── path:          ", r.path, "\n",
-          "├── geometry:      C", h.Nc, ", panels=", h.npanel,
-          ", convention=", h.panel_convention, ", definition=", h.cs_definition, "\n",
-          "├── storage:       ", disk_ft, " on disk, load as ", FT, "\n",
-          "├── basis:         ", h.mass_basis, "\n",
-          "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=",
-              _steps_per_window_summary(h.steps_per_window, h.steps_per_window_by_window), "\n",
-          "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
-          "└── windows:       ", h.nwindow)
-end
+# Cubed-sphere specializations for `TransportBinaryReader`. Version-4 files
+# share header parsing, validation, mmap ownership, accessors, and inspection
+# with the other geometries; only panel layout and mesh reconstruction differ.
 
 function _cs_coordinate_law_from_symbol(sym::Symbol)
     sym === :equiangular_gnomonic && return EquiangularGnomonic()
@@ -197,8 +18,10 @@ end
 # Section element counts
 # ---------------------------------------------------------------------------
 
-function _cs_section_elements(h::CubedSphereBinaryHeader, section::Symbol)
-    Nc, Nz, np = h.Nc, h.nlevel, h.npanel
+function _cs_section_elements(h::TransportBinaryHeader{CubedSphereBinaryGeometry},
+                              section::Symbol)
+    g = h.geometry
+    Nc, Nz, np = g.Nc, h.nlevel, g.npanel
     if section === :m
         return np * Nc * Nc * Nz
     elseif section === :am
@@ -240,18 +63,20 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    load_cs_window(reader, win) -> NamedTuple
+    load_window!(reader, win) -> NamedTuple
 
 Load window `win` from a cubed-sphere transport binary. Returns NTuples of
 per-panel arrays plus optional `cmfmc` / `dtrain` payloads when they are
 present in the binary.
 """
-function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
+function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinaryGeometry},
+                      win::Int) where {FT, DiskFT}
     h = reader.header
-    Nc, Nz, np = h.Nc, h.nlevel, h.npanel
+    g = h.geometry
+    Nc, Nz, np = g.Nc, h.nlevel, g.npanel
 
     # Compute window offset in elements
-    win_offset = (win - 1) * h.elems_per_window
+    win_offset = _transport_window_offset(reader, win)
 
     panels_m  = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np)
     panels_ps = ntuple(_ -> Array{FT}(undef, Nc, Nc), np)
@@ -452,18 +277,22 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
     )
 end
 
-function load_flux_delta_window!(reader::CubedSphereBinaryReader{FT}, win::Int;
-                                 dm = nothing) where FT
+function load_flux_delta_window!(
+    reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinaryGeometry},
+    win::Int; dm = nothing,
+) where {FT, DiskFT}
     h = reader.header
+    g = h.geometry
     :dm in h.payload_sections || return nothing
 
-    dm = isnothing(dm) ? ntuple(_ -> Array{FT}(undef, h.Nc, h.Nc, h.nlevel), h.npanel) : dm
-    o = (win - 1) * h.elems_per_window
+    dm = isnothing(dm) ?
+        ntuple(_ -> Array{FT}(undef, g.Nc, g.Nc, h.nlevel), g.npanel) : dm
+    o = _transport_window_offset(reader, win)
 
     for section in h.payload_sections
         if section === :dm
-            for p in 1:h.npanel
-                n = h.Nc * h.Nc * h.nlevel
+            for p in 1:g.npanel
+                n = g.Nc * g.Nc * h.nlevel
                 copyto!(dm[p], 1, reader.data, o + 1, n)
                 o += n
             end
@@ -476,24 +305,19 @@ function load_flux_delta_window!(reader::CubedSphereBinaryReader{FT}, win::Int;
 end
 
 """
-    load_surface_window!(reader::CubedSphereBinaryReader, win) -> PBLSurfaceForcing | nothing
+    load_surface_window!(reader, win) -> PBLSurfaceForcing | nothing
 
 Load the raw PBL surface payload for one CS window. This is a convenience
-wrapper over `load_cs_window`; callers that already need the advection fields
-should use `load_cs_window(reader, win).surface` to avoid a second payload read.
+wrapper over `load_window!`; callers that already need the advection fields
+should use `load_window!(reader, win).surface` to avoid a second payload read.
 """
-load_surface_window!(reader::CubedSphereBinaryReader, win::Int; kwargs...) =
-    load_cs_window(reader, win).surface
+load_surface_window!(
+    reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
+    win::Int; kwargs...,
+) = load_window!(reader, win).surface
 
 """
-    cs_window_count(reader) -> Int
-
-Number of time windows in the binary.
-"""
-cs_window_count(reader::CubedSphereBinaryReader) = reader.header.nwindow
-
-"""
-    mesh_convention(reader::CubedSphereBinaryReader) -> AbstractCubedSpherePanelConvention
+    mesh_convention(reader) -> AbstractCubedSpherePanelConvention
 
 Return the panel-numbering convention declared in the binary header.
 
@@ -503,8 +327,10 @@ Returns `GnomonicPanelConvention()` for ERA5-CS binaries and
 `CubedSphereMesh(; convention=mesh_convention(reader))` to guarantee that the
 halo exchange uses the correct edge-to-edge connectivity table.
 """
-function mesh_convention(reader::CubedSphereBinaryReader)
-    conv = reader.header.panel_convention
+function mesh_convention(
+    reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
+)
+    conv = reader.header.geometry.panel_convention
     if conv === :gnomonic
         return GnomonicPanelConvention()
     elseif conv === :geos_native
@@ -514,20 +340,34 @@ function mesh_convention(reader::CubedSphereBinaryReader)
 end
 
 """
-    mesh_definition(reader::CubedSphereBinaryReader) -> CubedSphereDefinition
+    mesh_definition(reader) -> CubedSphereDefinition
 
 Return the full cubed-sphere geometry definition declared in the binary
 header. Binaries record `cs_coordinate_law`, `cs_center_law`,
 `panel_convention`, and `longitude_offset_deg` explicitly.
 """
-function mesh_definition(reader::CubedSphereBinaryReader)
-    h = reader.header
-    return CubedSphereDefinition(_cs_coordinate_law_from_symbol(h.coordinate_law),
-                                 _cs_center_law_from_symbol(h.center_law),
+function mesh_definition(
+    reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
+)
+    g = reader.header.geometry
+    return CubedSphereDefinition(_cs_coordinate_law_from_symbol(g.coordinate_law),
+                                 _cs_center_law_from_symbol(g.center_law),
                                  mesh_convention(reader);
-                                 longitude_offset_deg = h.longitude_offset_deg,
-                                 tag = h.cs_definition)
+                                 longitude_offset_deg = g.longitude_offset_deg,
+                                 tag = g.definition)
 end
 
-export CubedSphereBinaryReader, CubedSphereBinaryHeader
-export load_cs_window, load_surface_window!, cs_window_count, mesh_convention, mesh_definition
+function load_grid(
+    reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry};
+    FT::Type{<:AbstractFloat} = Float64,
+    arch = CPU(),
+    Hp::Int = 1,
+)
+    h = reader.header
+    g = h.geometry
+    vertical = HybridSigmaPressure(FT.(h.A_ifc), FT.(h.B_ifc))
+    mesh = CubedSphereMesh(; FT, Nc=g.Nc, Hp, definition=mesh_definition(reader))
+    return AtmosGrid(mesh, vertical, arch; FT)
+end
+
+export load_surface_window!, mesh_convention, mesh_definition

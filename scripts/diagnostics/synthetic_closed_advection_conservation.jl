@@ -15,7 +15,7 @@ function relerr(a, b)
 end
 
 function total_cs(panels, mesh, Nz)
-    Nc, Hp = mesh.Nc, mesh.Hp
+    Nc, Hp = mesh.geometry.Nc, mesh.Hp
     s = 0.0
     for p in 1:6
         s += sum(@view panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, 1:Nz])

@@ -12,8 +12,8 @@
 # cell are written so the consumer needs no grid library.
 # ---------------------------------------------------------------------------
 using AtmosTransport
-using AtmosTransport: CubedSphereBinaryReader, load_cs_window,
-                      load_flux_delta_window!, cs_window_count
+using AtmosTransport: TransportBinaryReader, load_window!,
+                      load_flux_delta_window!, window_count
 using AtmosTransport.Preprocessing: build_target_geometry, panel_cell_center_lonlat
 using NCDatasets, Printf
 
@@ -24,9 +24,9 @@ function main()
     abspath(inpath) == abspath(outpath) && error("output collides with input")
 
     FT = Float32
-    reader = CubedSphereBinaryReader(inpath; FT = FT)
+    reader = TransportBinaryReader(inpath; FT = FT)
     h = reader.header
-    Nc, Nz, np, nwin = h.Nc, h.nlevel, h.npanel, cs_window_count(reader)
+    Nc, Nz, np, nwin = h.geometry.Nc, h.nlevel, h.geometry.npanel, window_count(reader)
     has_dm = :dm in h.payload_sections
     @printf("in=%s  Nc=%d Nz=%d panels=%d windows=%d  dm=%s\n",
             basename(inpath), Nc, Nz, np, nwin, has_dm)
@@ -63,7 +63,7 @@ function main()
     vdm = has_dm ? defVar(ds, "dm", Float32, ("Xdim","Ydim","nf","lev","time")) : nothing
 
     for w in 1:nwin
-        win = load_cs_window(reader, w)
+        win = load_window!(reader, w)
         for p in 1:np
             vm[:, :, p, :, w]  = win.m[p]
             vps[:, :, p, w]    = win.ps[p]

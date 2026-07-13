@@ -22,13 +22,14 @@ include("SurfaceForcing.jl")
 include("TransportBinary.jl")
 include("ReplayContinuity.jl")
 include("TransportBinaryDriver.jl")
-include("CubedSphereBinaryReader.jl")
 include("CubedSphereTransportDriver.jl")
 include("ERA5/ERA5.jl")
 using .ERA5
 
 export TRANSPORT_BINARY_FORMAT_VERSION
 export TransportBinaryReader, TransportBinaryHeader, write_transport_binary
+export AbstractTransportBinaryGeometry, LatLonBinaryGeometry
+export ReducedGaussianBinaryGeometry, CubedSphereBinaryGeometry, binary_geometry
 export TransportBinaryContract, canonical_window_constant_contract,
        validate_transport_contract!, validate_cs_writer_contract!
 export StreamingTransportBinaryWriter
@@ -64,8 +65,7 @@ export verify_window_continuity, verify_window_continuity_ll, verify_window_cont
 export ERA5ReducedGaussianGeometry
 export read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh
 
-# Cubed-sphere binary reader
-export CubedSphereBinaryReader, CubedSphereBinaryHeader
-export load_cs_window, cs_window_count, mesh_convention, mesh_definition
+# Cubed-sphere geometry helpers
+export mesh_convention, mesh_definition
 
 end # module MetDrivers

@@ -10,9 +10,8 @@ the canonical transport-binary stack.
   interface mass flux from horizontal convergence and the hybrid-coordinate
   B increments.
 
-Transport binaries are read by the topology-generic readers in
-[`../TransportBinary.jl`](../TransportBinary.jl) and
-[`../CubedSphereBinaryReader.jl`](../CubedSphereBinaryReader.jl). ERA-specific
+Transport binaries are read by the geometry-dispatched v4 reader assembled in
+[`../TransportBinary.jl`](../TransportBinary.jl). ERA-specific
 runtime binary layouts and runtime moist-to-dry conversion are intentionally
 unsupported: preprocessing writes the current v4 dry-basis contract.
 

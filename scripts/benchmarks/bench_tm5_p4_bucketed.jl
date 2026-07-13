@@ -38,7 +38,7 @@ using Random
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader
+using .AtmosTransport.MetDrivers: TransportBinaryReader
 using .AtmosTransport.Operators: TM5Convection, TM5Workspace
 using .AtmosTransport.Operators.Convection: _tm5_build_conv1!,
                                               _tm5_diagnose_cloud_dims
@@ -50,7 +50,7 @@ const WG_SIZE = 32
 
 # Section helpers.
 function _section_elements(h, section::Symbol)
-    Nc, Nz, np = h.Nc, h.nlevel, h.npanel
+    Nc, Nz, np = h.geometry.Nc, h.nlevel, h.geometry.npanel
     section === :m     && return np * Nc * Nc * Nz
     section === :am    && return np * (Nc + 1) * Nc * Nz
     section === :bm    && return np * Nc * (Nc + 1) * Nz
@@ -75,7 +75,7 @@ end
 
 function _panel_view(reader, win::Int, section::Symbol, panel::Int)
     h = reader.header
-    Nc, Nz = h.Nc, h.nlevel
+    Nc, Nz = h.geometry.Nc, h.nlevel
     panel_elems = Nc * Nc * Nz
     sec_off = _section_offset(h, win, section)
     lo = sec_off + (panel - 1) * panel_elems + 1
@@ -518,10 +518,10 @@ function main()
         end
     end
     @info "Loading binary" bin win panel nt dt nrep
-    reader = CubedSphereBinaryReader(bin; FT = Float32)
+    reader = TransportBinaryReader(bin; FT = Float32)
     h = reader.header
     @assert h.nlevel == NZ_MAX
-    @info "Binary header" Nc=h.Nc Nz=h.nlevel npanel=h.npanel nwindow=h.nwindow
+    @info "Binary header" Nc=h.geometry.Nc Nz=h.nlevel npanel=h.geometry.npanel nwindow=h.nwindow
 
     entu = collect(_panel_view(reader, win, :entu, panel))
     detu = collect(_panel_view(reader, win, :detu, panel))

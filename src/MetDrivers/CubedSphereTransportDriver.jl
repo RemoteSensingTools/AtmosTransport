@@ -87,88 +87,15 @@ function Base.show(io::IO, driver::CubedSphereTransportDriver)
           "└── windows:       ", total_windows(driver))
 end
 
-window_count(reader::CubedSphereBinaryReader) = cs_window_count(reader)
-steps_per_window(reader::CubedSphereBinaryReader) = reader.header.steps_per_window
-steps_per_window(reader::CubedSphereBinaryReader, win::Integer) =
-    reader.header.steps_per_window_by_window[Int(win)]
-steps_per_window_schedule(reader::CubedSphereBinaryReader) =
-    copy(reader.header.steps_per_window_by_window)
-mass_basis(reader::CubedSphereBinaryReader) = reader.header.mass_basis
-grid_type(::CubedSphereBinaryReader) = :cubed_sphere
-horizontal_topology(::CubedSphereBinaryReader) = :structureddirectional
-A_ifc(reader::CubedSphereBinaryReader) = reader.header.A_ifc
-B_ifc(reader::CubedSphereBinaryReader) = reader.header.B_ifc
-has_qv(::CubedSphereBinaryReader) = false
-has_qv_endpoints(::CubedSphereBinaryReader) = false
-has_flux_delta(reader::CubedSphereBinaryReader) =
-    any(section in (:dam, :dbm, :dcm, :dm, :dhflux) for section in reader.header.payload_sections)
-has_cmfmc(reader::CubedSphereBinaryReader) = :cmfmc in reader.header.payload_sections
-has_surface(reader::CubedSphereBinaryReader) =
-    all(s in reader.header.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)
-has_vdiff_fields(reader::CubedSphereBinaryReader) =
-    all(s in reader.header.payload_sections for s in _GCHP_VDIFF_PAYLOAD_SECTIONS)
-has_tm5_convection(reader::CubedSphereBinaryReader) =
-    all(s in reader.header.payload_sections for s in (:entu, :detu, :entd, :detd))
-
-# `CubedSphereBinaryHeader` has no `grid_type` field; the reader type
-# encodes the topology. Mirror the LL/RG NamedTuple shape so callers
-# (DrivenRunner, inspect_binary, capability-intersection logic) are
-# reader-type-polymorphic.
-function binary_capabilities(reader::CubedSphereBinaryReader)
-    hdr = reader.header
-    return (
-        advection        = all(s in hdr.payload_sections for s in (:m, :am, :bm, :cm)),
-        replay_gate      = has_flux_delta(reader),
-        tm5_convection   = has_tm5_convection(reader),
-        cmfmc_convection = has_cmfmc(reader),
-        pbl_diffusion    = has_surface(reader),
-        gchp_vdiff       = has_surface(reader) && has_vdiff_fields(reader),
-        surface_pressure = :ps in hdr.payload_sections,
-        humidity         = has_qv(reader),
-        mass_basis       = hdr.mass_basis,
-        grid_type        = :cubed_sphere,
-        nlevel           = hdr.nlevel,
-        steps_per_window = hdr.steps_per_window,
-        variable_step_schedule = _has_variable_step_schedule(hdr.steps_per_window_by_window),
-        flux_kind = flux_kind(reader),
-        preprocessor_contract = get(hdr.raw_header, "preprocessor_contract", nothing),
-        vertical_Nz_output = get(hdr.raw_header, "vertical_Nz_output", nothing),
-        adaptive_substeps = get(hdr.raw_header, "adaptive_substeps", nothing),
-        payload_sections = hdr.payload_sections,
-    )
-end
-
 function uses_binary_substep_contract(driver::CubedSphereTransportDriver)
     hdr = driver.reader.header.raw_header
     contract = get(hdr, "runtime_substep_contract", nothing)
     return contract == "binary_schedule"
 end
 
-function _cs_header_symbol(reader::CubedSphereBinaryReader, key::AbstractString, default::Symbol)
-    value = get(reader.header.raw_header, key, String(default))
-    return Symbol(replace(lowercase(String(value)), '-' => '_', ' ' => '_'))
-end
-
-source_flux_sampling(reader::CubedSphereBinaryReader) = _cs_header_symbol(reader, "source_flux_sampling", :window_start_endpoint)
-air_mass_sampling(reader::CubedSphereBinaryReader) = _cs_header_symbol(reader, "air_mass_sampling", :window_start_endpoint)
-flux_sampling(reader::CubedSphereBinaryReader) = _cs_header_symbol(reader, "flux_sampling", :window_constant)
-flux_kind(reader::CubedSphereBinaryReader) = _cs_header_symbol(reader, "flux_kind", :substep_mass_amount)
-humidity_sampling(reader::CubedSphereBinaryReader) = _cs_header_symbol(reader, "humidity_sampling", :none)
-delta_semantics(reader::CubedSphereBinaryReader) = _cs_header_symbol(reader, "delta_semantics", :none)
-
-Base.close(reader::CubedSphereBinaryReader) = close(reader.io)
-
-function load_grid(reader::CubedSphereBinaryReader;
-                   FT::Type{<:AbstractFloat} = Float64,
-                   arch = CPU(),
-                   Hp::Int = 1)
-    vc = HybridSigmaPressure(FT.(A_ifc(reader)), FT.(B_ifc(reader)))
-    mesh = CubedSphereMesh(; FT=FT, Nc=reader.header.Nc, Hp=Hp,
-                            definition=mesh_definition(reader))
-    return AtmosGrid(mesh, vc, arch; FT=FT)
-end
-
-function _validate_replay_consistency_cs(reader::CubedSphereBinaryReader{FT}) where {FT}
+function _validate_replay_consistency_cs(
+    reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinaryGeometry},
+) where {FT, DiskFT}
     if get(ENV, "ATMOSTR_NO_REPLAY_CHECK", "0") == "1"
         return nothing
     end
@@ -182,7 +109,7 @@ function _validate_replay_consistency_cs(reader::CubedSphereBinaryReader{FT}) wh
     worst_idx = (0, 0, 0, 0)
 
     for k in 1:Nt
-        cur = load_cs_window(reader, k)
+        cur = load_window!(reader, k)
         steps = reader.header.steps_per_window_by_window[k]
         if flux_kind(reader) === :full_window_mass_amount
             scale = FT(1) / FT(2 * steps)
@@ -191,7 +118,7 @@ function _validate_replay_consistency_cs(reader::CubedSphereBinaryReader{FT}) wh
             _scale_cs_replay_panels!(cur.cm, scale)
         end
         m_target = if k < Nt
-            load_cs_window(reader, k + 1).m
+            load_window!(reader, k + 1).m
         elseif has_flux_delta(reader)
             deltas = load_flux_delta_window!(reader, k)
             if deltas === nothing || !haskey(deltas, :dm)
@@ -233,9 +160,10 @@ end
     return panels
 end
 
-function CubedSphereTransportDriver(reader::CubedSphereBinaryReader{FT};
-                                    arch = CPU(),
-                                    Hp::Int = 1) where {FT}
+function CubedSphereTransportDriver(
+    reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinaryGeometry};
+    arch = CPU(), Hp::Int = 1,
+) where {FT, DiskFT}
     grid = load_grid(reader; FT=FT, arch=arch, Hp=Hp)
     return CubedSphereTransportDriver{FT, typeof(reader), typeof(grid)}(reader, grid)
 end
@@ -245,7 +173,9 @@ function CubedSphereTransportDriver(path::AbstractString;
                                     arch = CPU(),
                                     Hp::Int = 1,
                                     validate_replay::Bool = false)
-    reader = CubedSphereBinaryReader(String(path); FT=FT)
+    reader = TransportBinaryReader(String(path); FT=FT)
+    grid_type(reader) === :cubed_sphere || throw(ArgumentError(
+        "CubedSphereTransportDriver requires a cubed-sphere binary; got $(grid_type(reader))"))
     replay_on = validate_replay || get(ENV, "ATMOSTR_REPLAY_CHECK", "0") == "1"
     replay_on && _validate_replay_consistency_cs(reader)
     return CubedSphereTransportDriver(reader; arch=arch, Hp=Hp)
@@ -305,7 +235,9 @@ function release_payload!(driver::CubedSphereTransportDriver)
     return nothing
 end
 
-@inline _cs_basis_type(reader::CubedSphereBinaryReader) =
+@inline _cs_basis_type(
+    reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
+) =
     mass_basis(reader) === :dry ? DryBasis : MoistBasis
 
 @inline function _pad_horizontal(a::AbstractArray{T, N}, Hp::Int) where {T, N}
@@ -345,7 +277,7 @@ function expected_air_mass!(dest::NTuple{6}, window::CubedSphereTransportWindow,
 end
 
 function load_transport_window(driver::CubedSphereTransportDriver, win::Int)
-    raw = load_cs_window(driver.reader, win)
+    raw = load_window!(driver.reader, win)
     Hp = driver.grid.horizontal.Hp
     panels_m = ntuple(p -> _pad_horizontal(raw.m[p], Hp), 6)
     panels_ps = raw.ps

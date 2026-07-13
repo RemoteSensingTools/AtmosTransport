@@ -32,7 +32,7 @@ using .AtmosTransport.Architectures: CPU
 using .AtmosTransport.Grids:
     n_levels, panel_cell_center_lonlat, panel_cell_local_tangent_basis
 using .AtmosTransport.MetDrivers:
-    CubedSphereBinaryReader, load_cs_window, load_grid
+    TransportBinaryReader, load_window!, load_grid
 using .AtmosTransport.Preprocessing:
     load_hybrid_coefficients,
     geos_native_to_face_flux!, recover_cs_cell_center_winds!,
@@ -286,20 +286,20 @@ function main()
     speed_threshold = parse(Float64, get(opts, "speed-threshold", "2.0"))
     geos_mass_flux_dt = parse(Float64, get(opts, "geos-mass-flux-dt", "450.0"))
 
-    reader = CubedSphereBinaryReader(bin_path; FT=Float32)
+    reader = TransportBinaryReader(bin_path; FT=Float32)
     h = reader.header
     assert_geos_l72_header!(h)
     windows = parse_index_spec(get(opts, "windows", "1:$(h.nwindow)"), h.nwindow)
     map_levels = parse_index_spec(get(opts, "map-levels", "1,12,24,36,48,60,72"), h.nlevel)
 
-    h.panel_convention === :geos_native ||
-        error("Expected GEOS-native panel convention, got $(h.panel_convention)")
-    h.cs_definition === :gmao_equal_distance ||
-        error("Expected GMAO CS definition, got $(h.cs_definition)")
-    h.coordinate_law === :gmao_equal_distance_gnomonic ||
-        error("Expected GMAO equal-distance coordinate law, got $(h.coordinate_law)")
-    h.center_law === :four_corner_normalized ||
-        error("Expected four-corner normalized centers, got $(h.center_law)")
+    h.geometry.panel_convention === :geos_native ||
+        error("Expected GEOS-native panel convention, got $(h.geometry.panel_convention)")
+    h.geometry.definition === :gmao_equal_distance ||
+        error("Expected GMAO CS definition, got $(h.geometry.definition)")
+    h.geometry.coordinate_law === :gmao_equal_distance_gnomonic ||
+        error("Expected GMAO equal-distance coordinate law, got $(h.geometry.coordinate_law)")
+    h.geometry.center_law === :four_corner_normalized ||
+        error("Expected four-corner normalized centers, got $(h.geometry.center_law)")
 
     geos_path = geos_ctm_path(root, date)
     mkpath(dirname(output))
@@ -307,7 +307,7 @@ function main()
     grid = load_grid(reader; FT=Float64, arch=CPU())
     mesh = grid.horizontal
     tangent_basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
-    Nc = h.Nc
+    Nc = h.geometry.Nc
     Nz = h.nlevel
     map_index = Dict(k => i for (i, k) in enumerate(map_levels))
 
@@ -415,7 +415,7 @@ function main()
                 dt_factor = Float32(AtmosTransport.MetDrivers.flux_application_seconds(
                 h.dt_met_seconds, steps, AtmosTransport.MetDrivers.flux_kind(reader)))
                 geos_flux_scale = Float32(Float64(dt_factor) / geos_mass_flux_dt) / GRAVITY
-                win = load_cs_window(reader, w)
+                win = load_window!(reader, w)
                 fill_dp_from_mass!(gen_dp, win.m, mesh.cell_areas, GRAVITY)
                 recover_cs_cell_center_winds!(gen_u_loc, gen_v_loc, win.am, win.bm,
                                               gen_dp, mesh.Δx, mesh.Δy,

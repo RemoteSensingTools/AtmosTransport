@@ -14,12 +14,10 @@ cubed-sphere-specific data paths.
   defines `AbstractMetDriver`, capability traits, and `current_time`
 - Module assembly and exports:
   [`MetDrivers.jl`](MetDrivers.jl)
-- Generic transport-binary reader:
+- Version-4 transport-binary reader:
   [`TransportBinary.jl`](TransportBinary.jl)
 - Generic runtime driver over transport-binary windows:
   [`TransportBinaryDriver.jl`](TransportBinaryDriver.jl)
-- Cubed-sphere binary reader:
-  [`CubedSphereBinaryReader.jl`](CubedSphereBinaryReader.jl)
 - Cubed-sphere runtime driver:
   [`CubedSphereTransportDriver.jl`](CubedSphereTransportDriver.jl)
 - Convection forcing container:
@@ -58,7 +56,9 @@ cubed-sphere-specific data paths.
     `canonical_window_constant_contract`, `validate_cs_writer_contract!`,
     `validate_transport_contract!`
   - `transport_binary/reader.jl` — `TransportBinaryReader` struct, accessors,
-    constructor, `load_grid`, and the per-window loaders
+    constructor, common accessors, and structured/face-indexed loaders
+  - `transport_binary/cubed_sphere_reader.jl` — panel-native `load_grid` and
+    window-loading specializations for the same reader type
   - `transport_binary/payload_sections.jl` — per-section element counts,
     window-field accessors, optional-section validators
   - `transport_binary/writer.jl` — eager `write_transport_binary` + packers
@@ -69,7 +69,6 @@ cubed-sphere-specific data paths.
     header peeking
 - [`TransportBinaryDriver.jl`](TransportBinaryDriver.jl) — structured and
   reduced-Gaussian runtime driver
-- [`CubedSphereBinaryReader.jl`](CubedSphereBinaryReader.jl) — CS window reader
 - [`CubedSphereTransportDriver.jl`](CubedSphereTransportDriver.jl) — CS runtime driver
 - [`ERA5/`](ERA5/README.md) — ERA5-specific readers, geometry, closure,
   and dry-flux building

@@ -8,7 +8,7 @@
 using Printf
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window, load_grid
+using .AtmosTransport.MetDrivers: TransportBinaryReader, load_window!, load_grid
 
 function _usage()
     println("""
@@ -98,14 +98,14 @@ function _max_layer_ratios(win, level::Int, cell_areas, conv_dt::Float64)
 end
 
 function diagnose_binary!(io, path::String)
-    reader = CubedSphereBinaryReader(path; FT = Float32)
+    reader = TransportBinaryReader(path; FT = Float32)
     try
         h = reader.header
         grid = load_grid(reader; FT = Float64, Hp = 0)
         cell_areas = grid.horizontal.cell_areas
         conv_dt = h.dt_met_seconds / h.steps_per_window
         for w in 1:h.nwindow
-            win = load_cs_window(reader, w)
+            win = load_window!(reader, w)
             for k in 1:h.nlevel
                 xr, yr, zr, cr, tr, xloc, yloc, zloc, cloc, tloc =
                     _max_layer_ratios(win, k, cell_areas, conv_dt)

@@ -19,7 +19,7 @@ using Statistics
 using Printf
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader
+using .AtmosTransport.MetDrivers: TransportBinaryReader
 
 # Tiny CSV parser tailored to diagnose_tm5_active_layers's fixed schema —
 # avoids pulling CSV.jl into Project.toml for a one-shot diagnostic.
@@ -88,7 +88,7 @@ function main()
     opts = _parse(ARGS)
 
     # Open header for vertical coordinates.
-    rdr = CubedSphereBinaryReader(opts.binary; FT = Float32)
+    rdr = TransportBinaryReader(opts.binary; FT = Float32)
     h = rdr.header
     Nz = h.nlevel
 

@@ -7,7 +7,7 @@ include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 
 using .AtmosTransport.Grids: CubedSphereMesh, LatLonMesh,
     panel_cell_local_tangent_basis
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader, mesh_definition
+using .AtmosTransport.MetDrivers: TransportBinaryReader, mesh_definition
 using .AtmosTransport.Regridding: build_regridder, apply_regridder!
 
 const GRAV = 9.80665
@@ -56,7 +56,7 @@ function parse_windows(spec::AbstractString, nwindow::Int)
 end
 
 function cs_section_elements(h, section::Symbol)
-    nc, nz, np = h.Nc, h.nlevel, h.npanel
+    nc, nz, np = h.geometry.Nc, h.nlevel, h.geometry.npanel
     section === :m && return np * nc * nc * nz
     section === :am && return np * (nc + 1) * nc * nz
     section === :bm && return np * nc * (nc + 1) * nz
@@ -82,9 +82,9 @@ function copy_panel_section!(panels, reader, offset::Int)
     return next
 end
 
-function load_mass_flux_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
+function load_mass_flux_window(reader::TransportBinaryReader{FT}, win::Int) where FT
     h = reader.header
-    nc, nz, np = h.Nc, h.nlevel, h.npanel
+    nc, nz, np = h.geometry.Nc, h.nlevel, h.geometry.npanel
     offset = (win - 1) * h.elems_per_window
     panels_m = nothing
     panels_am = nothing
@@ -117,7 +117,7 @@ function load_mass_flux_window(reader::CubedSphereBinaryReader{FT}, win::Int) wh
 end
 
 function source_mesh(reader)
-    return CubedSphereMesh(; FT = Float64, Nc = reader.header.Nc, Hp = 0,
+    return CubedSphereMesh(; FT = Float64, Nc = reader.header.geometry.Nc, Hp = 0,
         radius = R_EARTH_M, definition = mesh_definition(reader))
 end
 
@@ -142,7 +142,7 @@ function latlon_area_vector(mesh::LatLonMesh)
 end
 
 function cs_area_vector(mesh)
-    nc = mesh.Nc
+    nc = mesh.geometry.Nc
     area = Vector{Float64}(undef, 6 * nc * nc)
     for p in 1:6, j in 1:nc, i in 1:nc
         area[i + (j - 1) * nc + (p - 1) * nc * nc] = Float64(mesh.cell_areas[i, j])
@@ -151,7 +151,7 @@ function cs_area_vector(mesh)
 end
 
 function cs_edge_mask(mesh)
-    nc = mesh.Nc
+    nc = mesh.geometry.Nc
     mask = Vector{Bool}(undef, 6 * nc * nc)
     for p in 1:6, j in 1:nc, i in 1:nc
         edge = (i <= EDGE_BAND) || (i > nc - EDGE_BAND) ||
@@ -290,7 +290,7 @@ function face_normal_to_geographic(up, vp, basis, panel, i, j)
 end
 
 function speed_fields_at_pressures(window, mesh, basis, dt_factor, targets)
-    nc = mesh.Nc
+    nc = mesh.geometry.Nc
     nt = length(targets)
     fields = [Vector{Float64}(undef, 6 * nc * nc) for _ in targets]
     dx = getfield(mesh, DX_FIELD)
@@ -341,7 +341,7 @@ function speed_fields_at_pressures(window, mesh, basis, dt_factor, targets)
 end
 
 function cm_abs_rate_fields_at_pressures(window, mesh, dt_factor, targets)
-    nc = mesh.Nc
+    nc = mesh.geometry.Nc
     nt = length(targets)
     fields = [Vector{Float64}(undef, 6 * nc * nc) for _ in targets]
     for p in 1:6
@@ -397,10 +397,10 @@ function write_metadata(io, spec, date, path, reader)
     h = reader.header
     raw = h.raw_header
     @printf(io, "%s,%s,%s,%d,%d,%d,%g,%d,%s,%s,%s,%s,%s,%g,%s,%s,%s,%s\n",
-        spec.name, date, path, h.Nc, h.npanel, h.nlevel, h.dt_met_seconds,
-        h.steps_per_window, String(h.mass_basis), String(h.panel_convention),
-        String(h.cs_definition), String(h.coordinate_law), String(h.center_law),
-        h.longitude_offset_deg,
+        spec.name, date, path, h.geometry.Nc, h.geometry.npanel, h.nlevel, h.dt_met_seconds,
+        h.steps_per_window, String(h.mass_basis), String(h.geometry.panel_convention),
+        String(h.geometry.definition), String(h.geometry.coordinate_law), String(h.geometry.center_law),
+        h.geometry.longitude_offset_deg,
         String(get(raw, "flux_kind", "")),
         String(get(raw, "source_flux_sampling", "")),
         String(get(raw, "air_mass_sampling", "")),
@@ -408,9 +408,9 @@ function write_metadata(io, spec, date, path, reader)
 end
 
 function build_context(spec, sample_date, ll)
-    reader = CubedSphereBinaryReader(binary_path(spec, sample_date); FT = Float32)
+    reader = TransportBinaryReader(binary_path(spec, sample_date); FT = Float32)
     mesh = source_mesh(reader)
-    println("Building common-grid regridder for $(spec.name) $(reader.header.panel_convention) $(reader.header.cs_definition)")
+    println("Building common-grid regridder for $(spec.name) $(reader.header.geometry.panel_convention) $(reader.header.geometry.definition)")
     regridder = build_regridder(mesh, ll; normalize = false)
     basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
     area = cs_area_vector(mesh)
@@ -461,9 +461,9 @@ function main()
         worst = Dict{Int, NamedTuple}()
 
         for date in DATES
-            readers = Dict{String, CubedSphereBinaryReader{Float32}}()
+            readers = Dict{String, TransportBinaryReader{Float32}}()
             for spec in SOURCES
-                reader = CubedSphereBinaryReader(binary_path(spec, date); FT = Float32)
+                reader = TransportBinaryReader(binary_path(spec, date); FT = Float32)
                 readers[spec.name] = reader
                 write_metadata(metadata, spec, date, reader.path, reader)
             end

@@ -42,15 +42,15 @@ const GEOSIT_I3   = expanduser(
 const GRAV  = 9.80616   # m/s² (GEOS standard)
 const R_EARTH = 6.371e6 # m
 
-# --- Load ERA5 C90 binary (window 1) via CubedSphereBinaryReader -----------
+# --- Load ERA5 C90 binary (window 1) via TransportBinaryReader -----------
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 
 function load_era5_cs_window1(path)
-    reader = AtmosTransport.MetDrivers.CubedSphereBinaryReader(path; FT=Float64)
+    reader = AtmosTransport.MetDrivers.TransportBinaryReader(path; FT=Float64)
     h = reader.header
-    Nc, Nz, npanel = h.Nc, h.nlevel, h.npanel
+    Nc, Nz, npanel = h.geometry.Nc, h.nlevel, h.geometry.npanel
     @info @sprintf("ERA5 CS binary: C%d, %d levels, %d panels, mass_basis=%s",
                    Nc, Nz, npanel, h.mass_basis)
     @info @sprintf("  dt_met=%.0fs, window1 steps=%d, half_dt=%.0fs",

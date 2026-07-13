@@ -116,6 +116,26 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
         @test before[p] ≈ after[p] rtol=1e-13
     end
 
+    # Packed direct-dkg diffusion shares one factorization per column and must
+    # remain numerically identical to applying the single-tracer kernel to
+    # each tracer independently.
+    Nt = 3
+    packed = ntuple(_ -> abs.(randn(rng, FT, N, N, Nz, Nt)), np)
+    expected = ntuple(p -> copy(packed[p]), np)
+    for t in 1:Nt
+        tracer = ntuple(p -> @view(expected[p][:, :, :, t]), np)
+        apply_vertical_diffusion_vmr!(tracer, panels_m, op, ws, FT(300);
+                                      halo_width = Hp)
+    end
+    packed_ws = (
+        w_scratch = ntuple(_ -> zeros(FT, Nc, Nc, Nz), np),
+        dz_scratch = ws.dz_scratch,
+        diffusion_reference = ntuple(_ -> zeros(FT, Nc, Nc, Nt), np),
+    )
+    apply_vertical_diffusion_vmr!(packed, panels_m, op, packed_ws, FT(300);
+                                  halo_width = Hp)
+    @test packed == expected
+
     lambda = ntuple(p -> copy(y_seed[p]), np)
     backend = get_backend(lambda[1])
     kernel = _vertical_diffusion_cs_single_dkg_adjoint_kernel!(backend, (8, 8))

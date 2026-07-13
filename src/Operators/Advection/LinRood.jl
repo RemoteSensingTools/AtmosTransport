@@ -175,15 +175,17 @@ end
 
 function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
                                      FT::Type{<:AbstractFloat} = Float64,
-                                     array_type::Type{<:AbstractArray} = Array)
-    cs = CSAdvectionWorkspace(mesh, Nz; FT = FT, array_type = array_type)
+                                     array_type::Type{<:AbstractArray} = Array,
+                                     n_tracers::Integer = 0)
+    cs = CSAdvectionWorkspace(mesh, Nz; FT, array_type, n_tracers)
     lr = LinRoodWorkspace(mesh; FT = FT, Nz = Nz, array_type = array_type)
     return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(lr)}(cs, lr)
 end
 
 function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh,
-                                     prototype::AbstractArray{FT, 3}) where {FT <: AbstractFloat}
-    cs = CSAdvectionWorkspace(mesh, prototype)
+                                     prototype::AbstractArray{FT, 3};
+                                     n_tracers::Integer = 0) where {FT <: AbstractFloat}
+    cs = CSAdvectionWorkspace(mesh, prototype; n_tracers)
     lr = LinRoodWorkspace(mesh, prototype)
     return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(lr)}(cs, lr)
 end

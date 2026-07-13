@@ -128,6 +128,42 @@ end
     end
 end
 
+@testset "CS packed diffusion matches independent tracer solves" begin
+    for FT in (Float32, Float64)
+        Nc, Hp, Nz, Nt = 3, 1, 7, 4
+        N = Nc + 2 * Hp
+        panels_m = _build_air_mass_column(FT, Nc, Hp, Nz)
+        kz_field = _build_kz_field(FT, Nc, Hp, Nz)
+        dz_scratch = _build_dz_scratch(FT, Nc, Nz)
+        rng = MersenneTwister(1701)
+        packed = ntuple(_ -> abs.(randn(rng, FT, N, N, Nz, Nt)), 6)
+        expected = ntuple(p -> copy(packed[p]), 6)
+        op = ImplicitVerticalDiffusion(; kz_field)
+        single_workspace = (
+            w_scratch = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6),
+            dz_scratch,
+        )
+
+        for t in 1:Nt
+            tracer = ntuple(p -> @view(expected[p][:, :, :, t]), 6)
+            apply_vertical_diffusion_vmr!(tracer, panels_m, op,
+                                           single_workspace, FT(450);
+                                           halo_width = Hp)
+        end
+
+        packed_workspace = (
+            w_scratch = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6),
+            dz_scratch,
+            diffusion_reference =
+                ntuple(_ -> zeros(FT, Nc, Nc, Nt), 6),
+        )
+        apply_vertical_diffusion_vmr!(packed, panels_m, op, packed_workspace,
+                                       FT(450); halo_width = Hp)
+
+        @test packed == expected
+    end
+end
+
 @testset "CS mass-flux diffusion — adjoint identity ⟨y, L·x⟩ = ⟨Lᵀ·y, x⟩" begin
     FT = Float64
     Nc, Hp, Nz = 4, 1, 8

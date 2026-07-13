@@ -881,8 +881,10 @@ Pre-allocated cubed-sphere transport workspace.
   as structured grids.
 - `m_pp_buf`, `rm_4d_pp_buf` are full-panel spare buffers for the packed
   ping-pong path, avoiding the per-sweep copy-back kernels.
-- `w_scratch`, `dz_scratch` are panel-native column-operator workspaces
+- `w_scratch` and `dz_scratch` are panel-native column-operator workspaces
   with one structured `(Nc, Nc, Nz)` scratch array per panel.
+- `diffusion_reference` stores one cancellation-reducing reference value per
+  interior column and packed tracer, with shape `(Nc, Nc, Nt)` per panel.
 - `max_subcycles` tracks this workspace's high-water mark for CFL diagnostics;
   keeping it with the workspace prevents unrelated simulations sharing state.
 """
@@ -895,6 +897,7 @@ struct CSAdvectionWorkspace{FT, A <: AbstractArray{FT, 3},
     m_A        :: A
     w_scratch  :: S
     dz_scratch :: S
+    diffusion_reference :: S
     rm_4d_A    :: A4
     m_pp_buf   :: P3
     rm_4d_pp_buf :: P4
@@ -912,6 +915,7 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
     m_A  = array_type(zeros(FT, N, N, Nz))
     w_scratch = ntuple(_ -> array_type(zeros(FT, mesh.Nc, mesh.Nc, Nz)), 6)
     dz_scratch = ntuple(_ -> array_type(zeros(FT, mesh.Nc, mesh.Nc, Nz)), 6)
+    diffusion_reference = ntuple(_ -> array_type(zeros(FT, mesh.Nc, mesh.Nc, Nt)), 6)
     rm_4d_A = array_type(zeros(FT, N, N, Nz, Nt))
     m_pp_buf = Nt > 0 ? ntuple(_ -> array_type(zeros(FT, N, N, Nz)), 6) :
                          ntuple(_ -> m_A, 6)
@@ -920,7 +924,8 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
     return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf)}(
-        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A, m_pp_buf, rm_4d_pp_buf,
+        rm_A, m_A, w_scratch, dz_scratch, diffusion_reference,
+        rm_4d_A, m_pp_buf, rm_4d_pp_buf,
         Ref((1, 1, 1)))
 end
 
@@ -935,6 +940,7 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh,
     m_A = similar(prototype, FT, N, N, Nz)
     w_scratch = ntuple(_ -> similar(prototype, FT, mesh.Nc, mesh.Nc, Nz), 6)
     dz_scratch = ntuple(_ -> similar(prototype, FT, mesh.Nc, mesh.Nc, Nz), 6)
+    diffusion_reference = ntuple(_ -> similar(prototype, FT, mesh.Nc, mesh.Nc, Nt), 6)
     rm_4d_A = similar(prototype, FT, N, N, Nz, Nt)
     m_pp_buf = Nt > 0 ? ntuple(_ -> similar(prototype, FT, N, N, Nz), 6) :
                          ntuple(_ -> m_A, 6)
@@ -943,7 +949,8 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh,
     return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf)}(
-        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A, m_pp_buf, rm_4d_pp_buf,
+        rm_A, m_A, w_scratch, dz_scratch, diffusion_reference,
+        rm_4d_A, m_pp_buf, rm_4d_pp_buf,
         Ref((1, 1, 1)))
 end
 
@@ -952,13 +959,15 @@ function Adapt.adapt_structure(to, ws::CSAdvectionWorkspace{FT}) where FT
     m_A = Adapt.adapt(to, ws.m_A)
     w_scratch = Adapt.adapt(to, ws.w_scratch)
     dz_scratch = Adapt.adapt(to, ws.dz_scratch)
+    diffusion_reference = Adapt.adapt(to, ws.diffusion_reference)
     rm_4d_A = Adapt.adapt(to, ws.rm_4d_A)
     m_pp_buf = Adapt.adapt(to, ws.m_pp_buf)
     rm_4d_pp_buf = Adapt.adapt(to, ws.rm_4d_pp_buf)
     return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf)}(
-        rm_A, m_A, w_scratch, dz_scratch, rm_4d_A, m_pp_buf, rm_4d_pp_buf,
+        rm_A, m_A, w_scratch, dz_scratch, diffusion_reference,
+        rm_4d_A, m_pp_buf, rm_4d_pp_buf,
         Ref(ws.max_subcycles[]))
 end
 

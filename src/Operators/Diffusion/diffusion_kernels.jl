@@ -26,19 +26,10 @@
 # chain (the "broken transpose" concern was investigated and found to be
 # a false positive).
 #
-# Multi-tracer `w_scratch` race (benign, intentional):
-# The packed kernels (`_vertical_diffusion_kernel!`,
-# `_vertical_diffusion_kernel_mass_flux!`, `_vertical_diffusion_cs_kernel!`,
-# `_vertical_diffusion_face_kernel!`, `_vertical_diffusion_face_kernel_mass_flux!`)
-# use `(i, j, t)` (LL/CS) or `(c, t)` (RG) as the global thread index but
-# write Thomas factors to `w_scratch` *without* the tracer dimension. Two
-# threads in the same column with different `t` race on `w_scratch[..., k]`.
-# Because the Thomas coefficients depend only on `(Kz, dz, m)` — column
-# meteorology that is identical for every tracer — both racers write the
-# SAME float value. Concurrent stores of equal values are well-defined on
-# all supported backends (CUDA/Metal/CPU-KA). The alternative would be a
-# 4D `w_scratch` slab, which doubles or quadruples scratch memory for no
-# numerical gain. Keep the 3D layout; the race is intentional.
+# Packed tracers share one tridiagonal system per atmospheric column. Each
+# packed kernel therefore assigns one work item to a horizontal column,
+# computes every Thomas factor once, and advances all tracers inside that
+# work item. `w_scratch` remains tracer-independent without concurrent writes.
 #
 # Coefficients per level k (with `m_k = air_mass[..., k]`, `Kz` at cell
 # centers, `dz` thickness in meters):
@@ -185,8 +176,8 @@ end
                                                        kz_field,
                                                        @Const(dz),
                                                        w_scratch,
-                                                       dt, Nz::Int)
-    i, j, t = @index(Global, NTuple)
+                                                       dt, Nz::Int, Nt::Int)
+    i, j = @index(Global, NTuple)
     FT = eltype(q)
     @inbounds begin
         dt_ft = FT(dt)
@@ -195,7 +186,6 @@ end
         dz_prev = zero(FT)
         m_prev  = zero(FT)
         w_prev  = zero(FT)
-        g_prev  = zero(FT)
 
         Kz_k = field_value(kz_field, (i, j, 1))
         dz_k = dz[i, j, 1]
@@ -227,24 +217,24 @@ end
             a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
             c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
             b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
-            d_k = q[i, j, k, t]
-
             if k == 1
                 denom = b_k
                 w_k   = c_k / denom
-                g_k   = d_k / denom
             else
                 denom = b_k - a_k * w_prev
                 w_k   = c_k / denom
-                g_k   = (d_k - a_k * g_prev) / denom
             end
 
             w_scratch[i, j, k] = w_k
-            q[i, j, k, t]      = g_k
+            for t in 1:Nt
+                d_k = q[i, j, k, t]
+                g_k = k == 1 ? d_k / denom :
+                      (d_k - a_k * q[i, j, k - 1, t]) / denom
+                q[i, j, k, t] = g_k
+            end
 
             if k < Nz
                 w_prev  = w_k
-                g_prev  = g_k
                 Kz_prev = Kz_k
                 dz_prev = dz_k
                 m_prev  = m_k
@@ -254,8 +244,8 @@ end
             end
         end
 
-        for k in (Nz - 1):-1:1
-            q[i, j, k, t] = q[i, j, k, t] - w_scratch[i, j, k] * q[i, j, k + 1, t]
+        for k in (Nz - 1):-1:1, t in 1:Nt
+            q[i, j, k, t] -= w_scratch[i, j, k] * q[i, j, k + 1, t]
         end
     end
 end
@@ -423,19 +413,21 @@ end
 end
 
 """
-    _vertical_diffusion_cs_kernel!(q, kz_field, dz, w_scratch, dt, Nz, Hp)
+    _vertical_diffusion_cs_kernel!(q, air_mass, kz_field, dz, w_scratch,
+                                   reference_scratch, dt, Nz, Nt, Hp)
 
 Packed cubed-sphere diffusion kernel. `q` is one halo-padded panel
-`(Nc + 2Hp, Nc + 2Hp, Nz, Nt)`. One thread owns one `(ii, jj, tracer)`
-column; the tridiagonal coefficients are identical for all tracers in a
-column and are computed locally to keep the workspace rank unchanged.
+`(Nc + 2Hp, Nc + 2Hp, Nz, Nt)`. One work item owns one interior
+`(ii, jj)` column, computes its tracer-independent tridiagonal factors once,
+and advances all `Nt` tracers. `reference_scratch[:, :, t]` stores the
+per-tracer column offset used to limit Float32 cancellation.
 """
 @kernel function _vertical_diffusion_cs_kernel!(q, @Const(air_mass),
                                                 kz_field,
                                                 @Const(dz),
-                                                w_scratch,
-                                                dt, Nz::Int, Hp::Int)
-    ii, jj, t = @index(Global, NTuple)
+                                                w_scratch, reference_scratch,
+                                                dt, Nz::Int, Nt::Int, Hp::Int)
+    ii, jj = @index(Global, NTuple)
     FT = eltype(q)
     @inbounds begin
         i = ii + Hp
@@ -448,17 +440,19 @@ column and are computed locally to keep the workspace rank unchanged.
         # is the column min of THIS tracer slice. A column whose current min is
         # exactly 0 gives cref=0 (bit-identical to the plain solve); otherwise
         # it strictly improves F32 conservation.
-        cref = q[i, j, 1, t]
-        for k in 2:Nz
-            v = q[i, j, k, t]
-            cref = v < cref ? v : cref
+        for t in 1:Nt
+            cref = q[i, j, 1, t]
+            for k in 2:Nz
+                v = q[i, j, k, t]
+                cref = v < cref ? v : cref
+            end
+            reference_scratch[ii, jj, t] = cref
         end
 
         Kz_prev = zero(FT)
         dz_prev = zero(FT)
         m_prev  = zero(FT)
         w_prev  = zero(FT)
-        g_prev  = zero(FT)
 
         Kz_k = field_value(kz_field, (ii, jj, 1))
         dz_k = dz[ii, jj, 1]
@@ -490,24 +484,24 @@ column and are computed locally to keep the workspace rank unchanged.
             a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
             c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
             b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
-            d_k = q[i, j, k, t] - cref
-
             if k == 1
                 denom = b_k
                 w_k   = c_k / denom
-                g_k   = d_k / denom
             else
                 denom = b_k - a_k * w_prev
                 w_k   = c_k / denom
-                g_k   = (d_k - a_k * g_prev) / denom
             end
 
             w_scratch[ii, jj, k] = w_k
-            q[i, j, k, t]        = g_k
+            for t in 1:Nt
+                d_k = q[i, j, k, t] - reference_scratch[ii, jj, t]
+                g_k = k == 1 ? d_k / denom :
+                      (d_k - a_k * q[i, j, k - 1, t]) / denom
+                q[i, j, k, t] = g_k
+            end
 
             if k < Nz
                 w_prev  = w_k
-                g_prev  = g_k
                 Kz_prev = Kz_k
                 dz_prev = dz_k
                 m_prev  = m_k
@@ -517,32 +511,35 @@ column and are computed locally to keep the workspace rank unchanged.
             end
         end
 
-        for k in (Nz - 1):-1:1
-            q[i, j, k, t] = q[i, j, k, t] - w_scratch[ii, jj, k] * q[i, j, k + 1, t]
+        for k in (Nz - 1):-1:1, t in 1:Nt
+            q[i, j, k, t] -= w_scratch[ii, jj, k] * q[i, j, k + 1, t]
         end
 
         # restore the per-column reference removed before the solve
-        for k in 1:Nz
-            q[i, j, k, t] += cref
+        for k in 1:Nz, t in 1:Nt
+            q[i, j, k, t] += reference_scratch[ii, jj, t]
         end
     end
 end
 
 @kernel function _vertical_diffusion_cs_dkg_kernel!(q, @Const(air_mass),
                                                     dkg_field, w_scratch,
-                                                    dt, Nz::Int, Hp::Int)
-    ii, jj, t = @index(Global, NTuple)
+                                                    reference_scratch,
+                                                    dt, Nz::Int, Nt::Int, Hp::Int)
+    ii, jj = @index(Global, NTuple)
     FT = eltype(q)
     @inbounds begin
         i = ii + Hp
         j = jj + Hp
         dt_ft = FT(dt)
-        cref = q[i, j, 1, t]
-        for k in 2:Nz
-            cref = min(cref, q[i, j, k, t])
+        for t in 1:Nt
+            cref = q[i, j, 1, t]
+            for k in 2:Nz
+                cref = min(cref, q[i, j, k, t])
+            end
+            reference_scratch[ii, jj, t] = cref
         end
         w_prev = zero(FT)
-        g_prev = zero(FT)
         for k in 1:Nz
             dkg_above = k > 1  ? field_value(dkg_field, (ii, jj, k - 1)) : zero(FT)
             dkg_below = k < Nz ? field_value(dkg_field, (ii, jj, k))     : zero(FT)
@@ -551,25 +548,27 @@ end
             a_k = k > 1  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
             c_k = k < Nz ? -dt_ft * dkg_below * inv_m_k : zero(FT)
             b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
-            d_k = q[i, j, k, t] - cref
             if k == 1
                 w_k = c_k / b_k
-                g_k = d_k / b_k
+                denom = b_k
             else
                 denom = b_k - a_k * w_prev
                 w_k = c_k / denom
-                g_k = (d_k - a_k * g_prev) / denom
             end
             w_scratch[ii, jj, k] = w_k
-            q[i, j, k, t] = g_k
+            for t in 1:Nt
+                d_k = q[i, j, k, t] - reference_scratch[ii, jj, t]
+                g_k = k == 1 ? d_k / denom :
+                      (d_k - a_k * q[i, j, k - 1, t]) / denom
+                q[i, j, k, t] = g_k
+            end
             w_prev = w_k
-            g_prev = g_k
         end
-        for k in (Nz - 1):-1:1
+        for k in (Nz - 1):-1:1, t in 1:Nt
             q[i, j, k, t] -= w_scratch[ii, jj, k] * q[i, j, k + 1, t]
         end
-        for k in 1:Nz
-            q[i, j, k, t] += cref
+        for k in 1:Nz, t in 1:Nt
+            q[i, j, k, t] += reference_scratch[ii, jj, t]
         end
     end
 end
@@ -782,8 +781,8 @@ end
                                                              kz_field,
                                                              @Const(dz),
                                                              w_scratch,
-                                                             dt, Nz::Int)
-    c, t = @index(Global, NTuple)
+                                                             dt, Nz::Int, Nt::Int)
+    c = @index(Global, Linear)
     FT = eltype(q)
     @inbounds begin
         dt_ft = FT(dt)
@@ -792,7 +791,6 @@ end
         dz_prev = zero(FT)
         m_prev  = zero(FT)
         w_prev  = zero(FT)
-        g_prev  = zero(FT)
 
         Kz_k = field_value(kz_field, (c, 1))
         dz_k = dz[c, 1]
@@ -824,24 +822,24 @@ end
             a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
             c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
             b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
-            d_k = q[c, k, t]
-
             if k == 1
                 denom = b_k
                 w_k   = c_k / denom
-                g_k   = d_k / denom
             else
                 denom = b_k - a_k * w_prev
                 w_k   = c_k / denom
-                g_k   = (d_k - a_k * g_prev) / denom
             end
 
             w_scratch[c, k] = w_k
-            q[c, k, t]      = g_k
+            for t in 1:Nt
+                d_k = q[c, k, t]
+                g_k = k == 1 ? d_k / denom :
+                      (d_k - a_k * q[c, k - 1, t]) / denom
+                q[c, k, t] = g_k
+            end
 
             if k < Nz
                 w_prev  = w_k
-                g_prev  = g_k
                 Kz_prev = Kz_k
                 dz_prev = dz_k
                 m_prev  = m_k
@@ -851,8 +849,8 @@ end
             end
         end
 
-        for k in (Nz - 1):-1:1
-            q[c, k, t] = q[c, k, t] - w_scratch[c, k] * q[c, k + 1, t]
+        for k in (Nz - 1):-1:1, t in 1:Nt
+            q[c, k, t] -= w_scratch[c, k] * q[c, k + 1, t]
         end
     end
 end

@@ -402,6 +402,10 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
                                    halo_width::Integer) where {FT, A <: AbstractArray{FT, 4},
                                                                 KzF <: PrecomputedCSDkgField{FT}}
     w_scratch = getproperty(workspace, :w_scratch)
+    reference_scratch = getproperty(workspace, :diffusion_reference)
+    length(w_scratch) == 6 && length(reference_scratch) == 6 ||
+        throw(DimensionMismatch(
+            "cubed-sphere dkg workspace must provide 6 factor and reference panels"))
     update_field!(op.kz_field, _diffusion_time(FT, meteo))
     Hp = Int(halo_width)
     @inbounds for p in 1:6
@@ -413,11 +417,13 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
         Nt = size(panel_q, 4)
         size(w_scratch[p]) == (Nc, Ny, Nz) || throw(DimensionMismatch(
             "cubed-sphere dkg workspace panel $p has shape $(size(w_scratch[p])); expected $((Nc, Ny, Nz))"))
+        size(reference_scratch[p]) == (Nc, Ny, Nt) || throw(DimensionMismatch(
+            "cubed-sphere dkg reference panel $p has shape $(size(reference_scratch[p])); expected $((Nc, Ny, Nt))"))
         panel_dkg = panel_field(op.kz_field, p)
         backend = get_backend(panel_q)
-        kernel = _vertical_diffusion_cs_dkg_kernel!(backend, (8, 8, 1))
-        kernel(panel_q, panel_m, panel_dkg, w_scratch[p], FT(dt), Nz, Hp;
-               ndrange = (Nc, Ny, Nt))
+        kernel = _vertical_diffusion_cs_dkg_kernel!(backend, (8, 8))
+        kernel(panel_q, panel_m, panel_dkg, w_scratch[p], reference_scratch[p],
+               FT(dt), Nz, Nt, Hp; ndrange = (Nc, Ny))
         synchronize(backend)
     end
     return nothing
@@ -438,7 +444,8 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
     w_scratch = getproperty(workspace, :w_scratch)
     dz_scratch = getproperty(workspace, :dz_scratch)
     length(w_scratch) == 6 && length(dz_scratch) == 6 ||
-        throw(DimensionMismatch("cubed-sphere diffusion workspace must provide 6 panel scratch arrays"))
+        throw(DimensionMismatch(
+            "cubed-sphere diffusion workspace must provide 6 factor and geometry panels"))
 
     update_field!(op.kz_field, _diffusion_time(FT, meteo))
 
@@ -471,15 +478,18 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
                                    meteo = nothing;
                                    halo_width::Integer) where {FT, A <: AbstractArray{FT, 4},
                                                                 KzF <: AbstractCubedSphereField{FT}}
-    hasproperty(workspace, :w_scratch) && hasproperty(workspace, :dz_scratch) ||
+    hasproperty(workspace, :w_scratch) && hasproperty(workspace, :dz_scratch) &&
+        hasproperty(workspace, :diffusion_reference) ||
         throw(ArgumentError(
             "cubed-sphere diffusion requires a workspace with panel-native " *
-            "`w_scratch` and `dz_scratch` tuples"))
+            "`w_scratch`, `dz_scratch`, and `diffusion_reference` tuples"))
 
     w_scratch = getproperty(workspace, :w_scratch)
     dz_scratch = getproperty(workspace, :dz_scratch)
-    length(w_scratch) == 6 && length(dz_scratch) == 6 ||
-        throw(DimensionMismatch("cubed-sphere diffusion workspace must provide 6 panel scratch arrays"))
+    reference_scratch = getproperty(workspace, :diffusion_reference)
+    length(w_scratch) == 6 && length(dz_scratch) == 6 &&
+        length(reference_scratch) == 6 || throw(DimensionMismatch(
+            "cubed-sphere diffusion workspace must provide 6 factor, geometry, and reference panels"))
 
     update_field!(op.kz_field, _diffusion_time(FT, meteo))
 
@@ -495,12 +505,14 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
         Nz = size(panel_q, 3)
         Nt = size(panel_q, 4)
         _check_cs_diffusion_workspace_shape(dz_scratch[p], w_scratch[p], (Nc, Ny, Nz), p)
+        size(reference_scratch[p]) == (Nc, Ny, Nt) || throw(DimensionMismatch(
+            "cubed-sphere diffusion reference panel $p has shape $(size(reference_scratch[p])); expected $((Nc, Ny, Nt))"))
         panel_kz = panel_field(op.kz_field, p)
         backend = get_backend(panel_q)
-        kernel = _vertical_diffusion_cs_kernel!(backend, (8, 8, 1))
+        kernel = _vertical_diffusion_cs_kernel!(backend, (8, 8))
         kernel(panel_q, panel_m, panel_kz, dz_scratch[p], w_scratch[p],
-               FT(dt), Nz, Hp;
-               ndrange = (Nc, Ny, Nt))
+               reference_scratch[p], FT(dt), Nz, Nt, Hp;
+               ndrange = (Nc, Ny))
         synchronize(backend)
     end
     return nothing
@@ -691,9 +703,9 @@ function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 4},
         "match q_raw spatial shape $((Nx, Ny, Nz))"))
     update_field!(op.kz_field, _diffusion_time(FT, meteo))
     backend = get_backend(q_raw)
-    kernel = _vertical_diffusion_kernel_mass_flux!(backend, (8, 8, 1))
-    kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz;
-           ndrange = (Nx, Ny, Nt))
+    kernel = _vertical_diffusion_kernel_mass_flux!(backend, (8, 8))
+    kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz, Nt;
+           ndrange = (Nx, Ny))
     synchronize(backend)
     return nothing
 end
@@ -714,8 +726,8 @@ function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 3},
     update_field!(op.kz_field, _diffusion_time(FT, meteo))
     backend = get_backend(q_raw)
     kernel = _vertical_diffusion_face_kernel_mass_flux!(backend, 256)
-    kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz;
-           ndrange = (ncells, Nt))
+    kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz, Nt;
+           ndrange = ncells)
     synchronize(backend)
     return nothing
 end

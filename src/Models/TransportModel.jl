@@ -75,7 +75,8 @@ _cs_advection_workspace_for(::AbstractAdvectionScheme,
 _cs_advection_workspace_for(::LinRoodPPMScheme,
                             state::CubedSphereState,
                             grid::AtmosGrid{<:CubedSphereMesh}) =
-    CSLinRoodAdvectionWorkspace(grid.horizontal, state.air_mass[1])
+    CSLinRoodAdvectionWorkspace(grid.horizontal, state.air_mass[1];
+                                n_tracers = ntracers(state))
 
 # No advection → no scratch buffers (NoAdvection alone doesn't need any).
 # When the runtime stacks diffusion on top of NoAdvection (the

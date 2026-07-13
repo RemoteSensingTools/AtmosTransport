@@ -60,7 +60,7 @@ operator × topology matrix. CS chemistry is the one known gap.
 encodes real dependencies:
 
 - `Diffusion` is loaded before `Advection` because the transport
-  palindrome imports diffusion operator types and `apply_vertical_diffusion!`
+  palindrome imports diffusion operator types and `apply_vertical_diffusion_vmr!`
 - `SurfaceFlux` is loaded before `Advection` for the same reason
 - `Convection` is loaded before `Advection` for consistency, but is not
   consumed inside the current palindrome

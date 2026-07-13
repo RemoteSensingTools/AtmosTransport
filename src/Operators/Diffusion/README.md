@@ -17,7 +17,7 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
   provides `apply!(state, meteo, grid, op, dt; workspace)`
 - Array-level runtime entrypoint:
   [`operators.jl`](operators.jl)
-  provides `apply_vertical_diffusion!`
+  provides `apply_vertical_diffusion_vmr!`
 - Numerical reference pieces:
   [`thomas_solve.jl`](thomas_solve.jl)
   provides `solve_tridiagonal!` and `build_diffusion_coefficients`
@@ -45,7 +45,7 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
 - [`dz_helpers.jl`](dz_helpers.jl) — hydrostatic layer-thickness helper
   kernels and host wrappers shared by vertical diffusion paths
 - [`operators.jl`](operators.jl) — operator hierarchy, constructor
-  validation, state-level `apply!`, array-level `apply_vertical_diffusion!`
+  validation, state-level `apply!`, array-level `apply_vertical_diffusion_vmr!`
 
 ## Common Tasks
 
@@ -83,10 +83,6 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
   [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Topology status:
   [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)
-- Tests:
-  - [`../../../test/test_diffusion_kernels.jl`](../../../test/test_diffusion_kernels.jl)
-  - [`../../../test/test_diffusion_operator.jl`](../../../test/test_diffusion_operator.jl)
-  - [`../../../test/test_transport_model_diffusion.jl`](../../../test/test_transport_model_diffusion.jl)
-  - [`../../../test/test_diffusion_palindrome.jl`](../../../test/test_diffusion_palindrome.jl)
-  - [`../../../test/test_driven_simulation.jl`](../../../test/test_driven_simulation.jl)
-  - [`../../../test/test_cubed_sphere_runtime.jl`](../../../test/test_cubed_sphere_runtime.jl)
+- Tests: [`../../../test/core/test_diffusion_mass_flux_conservation.jl`](../../../test/core/test_diffusion_mass_flux_conservation.jl),
+  [`../../../test/core/test_precomputed_dkg_binary_payload.jl`](../../../test/core/test_precomputed_dkg_binary_payload.jl),
+  and [`../../../test/core/test_driven_simulation.jl`](../../../test/core/test_driven_simulation.jl)

@@ -201,7 +201,7 @@ post:      apply!(convection)   (convection is outside the palindrome)
            apply!(chemistry)    (chemistry is outside the palindrome)
 ```
 
-`V` is `apply_vertical_diffusion!` and `S` is `apply_surface_flux!`.
+`V` is `apply_vertical_diffusion_vmr!` and `S` is `apply_surface_flux!`.
 Splitting surface emissions across the diffusion half-steps (rather
 than emitting before or after the palindrome) is necessary to keep
 the operator second-order accurate and to allow the bottom-layer

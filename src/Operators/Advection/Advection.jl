@@ -31,10 +31,10 @@ import ..AbstractOperator, ..apply!
 using ...SectionTimer
 # Diffusion is loaded before Advection in Operators.jl so the palindrome
 # center of `strang_split_mt!` can dispatch on `AbstractDiffusion`
-# concretions. `NoDiffusion`'s `apply_vertical_diffusion!` method is
+# concretions. `NoDiffusion`'s `apply_vertical_diffusion_vmr!` method is
 # `= nothing`, keeping the default path bit-exact with the no-op behavior.
 using ..Diffusion: AbstractDiffusion, NoDiffusion,
-                   apply_vertical_diffusion!, apply_vertical_diffusion_vmr!,
+                   apply_vertical_diffusion_vmr!,
                    uses_diffusive_surface_flux_boundary
 # SurfaceFlux is loaded before Advection in Operators.jl so the palindrome
 # center can dispatch on `AbstractSurfaceFluxOperator`.

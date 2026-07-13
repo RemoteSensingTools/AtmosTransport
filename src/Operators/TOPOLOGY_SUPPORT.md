@@ -43,14 +43,14 @@ For each ✅ combination, the authoritative dispatch method:
 
 ### Diffusion
 
-Four valid `apply_vertical_diffusion!` dispatches + three error-
-branch methods in [`Diffusion/operators.jl`](Diffusion/operators.jl):
+The mass-conserving `apply_vertical_diffusion_vmr!` dispatches in
+[`Diffusion/operators.jl`](Diffusion/operators.jl) cover:
 
 - rank-4 (LatLon)
 - rank-3 (RG face-indexed, multi-tracer)
 - rank-2 (RG face-indexed, single-tracer)
 - `NTuple{6, Array{FT, 4}}` (CS packed production path)
-- `NTuple{6, Array{FT, 3}}` (CS scalar compatibility/reference path)
+- `NTuple{6, Array{FT, 3}}` (CS single-tracer reference path)
 
 ### Surface flux
 

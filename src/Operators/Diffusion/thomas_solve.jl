@@ -98,7 +98,7 @@ At the boundaries: `D_above = 0` at `k = 1`, `D_below = 0` at `k = Nz`.
 # Role: reference vs. production
 
 This function is the **reference** used in tests. The production
-kernel `_vertical_diffusion_kernel!` inlines the same
+mass-flux diffusion kernels inline the same
 formulas at each level (to avoid allocation and to read Kz through
 `field_value`). Tests verify the kernel's output matches the output
 of this reference on matched inputs.

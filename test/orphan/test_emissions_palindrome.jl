@@ -48,8 +48,8 @@ end
 
     @testset "NoSurfaceFlux default: palindrome bit-exact with pre-17" begin
         # With emissions_op = NoSurfaceFlux (default) the palindrome
-        # must take the original `apply_vertical_diffusion!(rm, op, ws, dt, meteo)`
-        # call, and the final state must equal the state produced by a
+        # must take the `apply_vertical_diffusion_vmr!` no-op call, and the
+        # final state must equal the state produced by a
         # call that omits emissions_op entirely.
         FT = Float64
         Nx, Ny, Nz = 3, 2, 3

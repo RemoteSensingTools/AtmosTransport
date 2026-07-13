@@ -24,7 +24,7 @@ include("AbstractOperators.jl")
 # Diffusion is included BEFORE Advection so `strang_split_mt!`
 # (palindrome integration) can import
 # `NoDiffusion`, `AbstractDiffusion`, and
-# `apply_vertical_diffusion!`. Diffusion has no dependency on
+# `apply_vertical_diffusion_vmr!`. Diffusion has no dependency on
 # Advection; reordering preserves correctness.
 include("Diffusion/Diffusion.jl")
 using .Diffusion
@@ -71,7 +71,7 @@ export solve_tridiagonal!, build_diffusion_coefficients
 export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
 export AbstractSurfaceFluxCoupling, SplitSurfaceFluxCoupling,
        DiffusiveSurfaceFluxBoundary, uses_diffusive_surface_flux_boundary
-export apply_vertical_diffusion!, apply_vertical_diffusion_vmr!
+export apply_vertical_diffusion_vmr!
 
 # SurfaceFlux data types + operator hierarchy
 export SurfaceFluxSource, AbstractSurfaceFluxSource, TimeVaryingSurfaceFluxSource,

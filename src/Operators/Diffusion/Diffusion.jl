@@ -9,18 +9,16 @@ Public surface:
   `[diffusion]` config section is present.
 - [`ImplicitVerticalDiffusion`](@ref) — Backward-Euler implicit
   diffusion driven by an `AbstractTimeVaryingField` Kz. Wired into
-  the Strang palindrome via [`apply_vertical_diffusion!`](@ref) and
+  the Strang palindrome via [`apply_vertical_diffusion_vmr!`](@ref) and
   installed into `TransportModel.diffusion` by the runtime recipe
   when `[diffusion] kind = "constant"`.
 
 Both subtype the global `AbstractDiffusion` declared in
 `src/Operators/AbstractOperators.jl`; concrete operator structs live in
-`operators.jl`. The KA kernel (`_vertical_diffusion_kernel!`) and the
-column-level Thomas solve (`solve_tridiagonal!`) are exposed for tests
-and downstream variants. The coefficient arithmetic is deliberately
-**not fused** into a pre-factored form: `(a, b, c)` are named locals
-at every level k so a future adjoint kernel can transpose them
-mechanically — see `thomas_solve.jl`.
+`operators.jl`. The column-level Thomas solve (`solve_tridiagonal!`) is
+exposed as the numerical reference. Production kernels name the tridiagonal
+coefficients `(a, b, c)` explicitly; the matching transpose lives in
+`src/Adjoints/DiffusionAdjoint.jl`.
 """
 module Diffusion
 
@@ -35,11 +33,10 @@ import ..apply!
 import ..AbstractDiffusion                # global root from src/Operators/AbstractOperators.jl
 
 export solve_tridiagonal!, build_diffusion_coefficients
-export _vertical_diffusion_kernel!
 export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
 export AbstractSurfaceFluxCoupling, SplitSurfaceFluxCoupling,
        DiffusiveSurfaceFluxBoundary, uses_diffusive_surface_flux_boundary
-export apply_vertical_diffusion!, apply_vertical_diffusion_vmr!
+export apply_vertical_diffusion_vmr!
 export fill_dz_hydrostatic_constT!, fill_dz_hydrostatic_virtualT!
 
 include("thomas_solve.jl")

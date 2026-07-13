@@ -499,7 +499,7 @@ using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
 # ---------------------------------------------------------------------------
 # Diffusion `dz_scratch` populator.
 #
-# `apply_vertical_diffusion!` divides by `dz` per cell — if the workspace's
+# `apply_vertical_diffusion_vmr!` uses `dz` per cell — if the workspace's
 # `dz_scratch` array is left at its default zeros (the allocator initializes
 # it that way), every diffusion step nukes the tracer field to NaN starting
 # from frame 2.  We refresh `dz_scratch` from the just-loaded window's

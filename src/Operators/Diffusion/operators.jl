@@ -72,9 +72,8 @@ Concrete examples:
 - `PrecomputedCSDkgField` bypasses Kz/geometry reconstruction and does not read
   `dz_scratch`; its interface exchange [kg s⁻¹] is already complete.
 - Uses `workspace.w_scratch` as Thomas-forward-elimination storage.
-- Launches a layout-specific diffusion kernel:
-  - structured: `_vertical_diffusion_kernel!` over `(Nx, Ny, Nt)`
-  - face-indexed: `_vertical_diffusion_face_kernel!` over `(ncells, Nt)`
+- Launches a topology-specific mass-flux kernel. Packed layouts factor each
+  atmospheric column once and advance every tracer with those factors.
 
 The operator is linear (Kz does not depend on tracer values), so
 a single `apply!(dt)` at the palindrome center is equivalent to two
@@ -158,7 +157,7 @@ end
 Apply one Backward-Euler implicit diffusion step to every tracer in
 `state.tracers_raw` using the column Kz field `op.kz_field` and the dz
 stored in `workspace.dz_scratch` (caller-filled). Delegates to
-[`apply_vertical_diffusion!`](@ref), which is the lower-level entry
+[`apply_vertical_diffusion_vmr!`](@ref), which is the array-level entry
 point consumed by both the structured multi-tracer palindrome and the
 face-indexed reduced-Gaussian transport block.
 
@@ -175,7 +174,7 @@ function apply!(state::CellState, meteo, grid,
     # wrapper: pre-scale tracer_mass → VMR, solve with mass-flux
     # coefficients, post-scale VMR → tracer_mass. Preserves `Σ m·q` to
     # roundoff for inert tracers, matching the CS path's conservation
-    # contract. See `memory/diffusion_full_pipeline_audit_2026_05_25.md`.
+    # contract.
     apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
                                    op, workspace, dt, meteo)
     return state
@@ -207,7 +206,8 @@ end
 # =========================================================================
 
 """
-    apply_vertical_diffusion!(q_raw, op, workspace, dt, meteo = nothing) -> nothing
+    apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt,
+                              meteo = nothing) -> nothing
 
 Low-level entry point. Applies one Backward-Euler diffusion step to a
 raw tracer buffer in any of the supported layouts:
@@ -222,38 +222,24 @@ uses it at its H → V → D → V → H center slot.
 
 `meteo` is threaded through to `update_field!(op.kz_field, t)` as
 `t = FT(current_time(meteo))` (or `zero(FT)` if `meteo === nothing`).
-`meteo` defaults to `nothing` so call sites that omit it
-(`apply_vertical_diffusion!(rm, op, ws, dt)`) continue to work unchanged.
+`air_mass` is mandatory because the solver conserves tracer mass, not the
+geometric integral of mixing ratio.
 
 `NoDiffusion` is a no-op: the method is `= nothing` so Julia's
 dispatch reduces the call site to a dead branch when
 `diffusion_op isa NoDiffusion`. This makes the palindrome
-integration bit-exact backward-compatible.
+integration compile to an identity.
 """
 function apply_vertical_diffusion! end
 function apply_vertical_diffusion_vmr! end
 
-apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 4},
-                          ::NoDiffusion, workspace, dt,
-                          meteo = nothing) = nothing
-apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 3},
-                          ::NoDiffusion, workspace, dt,
-                          meteo = nothing) = nothing
-apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 2},
-                          ::NoDiffusion, workspace, dt,
-                          meteo = nothing) = nothing
-apply_vertical_diffusion!(q_raw::NTuple{6}, ::NoDiffusion, workspace, dt,
-                          meteo = nothing; halo_width = 0) = nothing
-# CS-only mass-flux variant takes air_mass too; the no-op overload covers
-# the new dispatch.
 apply_vertical_diffusion!(q_raw::NTuple{6}, air_mass::NTuple{6},
                           ::NoDiffusion, workspace, dt,
                           meteo = nothing; halo_width = 0) = nothing
 apply_vertical_diffusion_vmr!(q_raw::NTuple{6}, air_mass::NTuple{6},
                               ::NoDiffusion, workspace, dt,
                               meteo = nothing; halo_width = 0) = nothing
-# LL/RG mass-flux NoDiffusion stubs (new VMR wrappers and the bare
-# air_mass-bearing apply variants must also no-op).
+# LL/RG mass-flux NoDiffusion stubs.
 apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 4},
                           air_mass::AbstractArray{<:Any, 3},
                           ::NoDiffusion, workspace, dt,
@@ -300,69 +286,6 @@ end
     size(dz_scratch) == expected_shape || throw(DimensionMismatch(
         "cubed-sphere workspace scratch arrays on panel $panel are $(size(dz_scratch)) " *
         "but the interior panel shape is $(expected_shape)"))
-    return nothing
-end
-
-function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 4},
-                                   op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace, dt,
-                                   meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 3}}
-    w_scratch  = workspace.w_scratch
-    dz_scratch = workspace.dz_scratch
-
-    Nx, Ny, Nz, Nt = size(q_raw)
-    _check_diffusion_workspace_shape(dz_scratch, w_scratch, (Nx, Ny, Nz),
-                                     "spatial")
-
-    update_field!(op.kz_field, _diffusion_time(FT, meteo))
-
-    backend = get_backend(q_raw)
-    kernel = _vertical_diffusion_kernel!(backend, (8, 8, 1))
-    kernel(q_raw, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz;
-           ndrange = (Nx, Ny, Nt))
-    synchronize(backend)
-    return nothing
-end
-
-function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 3},
-                                   op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace, dt,
-                                   meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
-    w_scratch  = workspace.w_scratch
-    dz_scratch = workspace.dz_scratch
-
-    ncells, Nz, Nt = size(q_raw)
-    _check_diffusion_workspace_shape(dz_scratch, w_scratch, (ncells, Nz),
-                                     "face-indexed")
-
-    update_field!(op.kz_field, _diffusion_time(FT, meteo))
-
-    backend = get_backend(q_raw)
-    kernel = _vertical_diffusion_face_kernel!(backend, 256)
-    kernel(q_raw, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz;
-           ndrange = (ncells, Nt))
-    synchronize(backend)
-    return nothing
-end
-
-function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 2},
-                                   op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace, dt,
-                                   meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
-    w_scratch  = workspace.w_scratch
-    dz_scratch = workspace.dz_scratch
-
-    ncells, Nz = size(q_raw)
-    _check_diffusion_workspace_shape(dz_scratch, w_scratch, (ncells, Nz),
-                                     "face-indexed")
-
-    update_field!(op.kz_field, _diffusion_time(FT, meteo))
-
-    backend = get_backend(q_raw)
-    kernel = _vertical_diffusion_face_single_kernel!(backend, 256)
-    kernel(q_raw, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz;
-           ndrange = ncells)
-    synchronize(backend)
     return nothing
 end
 
@@ -659,33 +582,9 @@ function apply_vertical_diffusion_vmr!(q_raw::NTuple{6, A},
     return nothing
 end
 
-function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 4},
-                                   op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace, dt,
-                                   meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
-    throw(ArgumentError(
-        "apply_vertical_diffusion!: rank-2 kz_field is incompatible with " *
-        "structured q_raw shape $(size(q_raw)); use a rank-3 field on " *
-        "(Nx, Ny, Nz) grids"))
-end
-
-function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 3},
-                                   op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace, dt,
-                                   meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 3}}
-    throw(ArgumentError(
-        "apply_vertical_diffusion!: rank-3 kz_field is incompatible with " *
-        "face-indexed q_raw shape $(size(q_raw)); use a rank-2 field on " *
-        "(ncells, Nz, Nt) grids"))
-end
-
 # ---------------------------------------------------------------------------
-# Mass-flux LL packed + face-indexed RG paths — opt-in via the
-# `apply_vertical_diffusion_vmr!` wrapper. These methods take `air_mass`
-# explicitly and dispatch to the mass-flux kernel variants. The legacy
-# geometric `apply_vertical_diffusion!` API (no `air_mass`) is preserved
-# above for backward compatibility — callers that haven't been
-# updated continue to get the leaky geometric behavior.
+# Mass-flux LL packed + face-indexed RG paths. These methods take `air_mass`
+# explicitly and dispatch to the topology-specific kernel variants.
 # ---------------------------------------------------------------------------
 
 function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 4},
@@ -851,14 +750,4 @@ function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 2},
     apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo)
     _face_scale_vmr_to_tracer_mass!(q_raw, air_mass)
     return nothing
-end
-
-function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 2},
-                                   op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace, dt,
-                                   meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 3}}
-    throw(ArgumentError(
-        "apply_vertical_diffusion!: rank-3 kz_field is incompatible with " *
-        "face-indexed q_raw shape $(size(q_raw)); use a rank-2 field on " *
-        "(ncells, Nz) tracer slices"))
 end

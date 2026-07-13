@@ -73,7 +73,7 @@ end
                        ::NoConvection, dt, workspace, grid) -> nothing
 
 Array-level no-op, parallels the
-`apply_vertical_diffusion!` / `apply_surface_flux!` pattern. Accepts any
+the diffusion and surface-flux `apply!` pattern. Accepts any
 shape of `q_raw` / `air_mass` — `NoConvection` doesn't inspect them.
 Returns `nothing`.
 

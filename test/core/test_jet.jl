@@ -71,7 +71,7 @@ const HOT_PATH_MODULES = (
 # compatible JET stack does not surface the two new kernel call sites.
 # Keep these at the expected counts so the snapshot remains a real gate.
 const JET_HOT_PATH_BASELINE_1_10 = 130
-const JET_HOT_PATH_BASELINE_1_12 = 181
+const JET_HOT_PATH_BASELINE_1_12 = 178
 const JET_HOT_PATH_BASELINE =
     VERSION >= v"1.12" ? JET_HOT_PATH_BASELINE_1_12 :
                          JET_HOT_PATH_BASELINE_1_10

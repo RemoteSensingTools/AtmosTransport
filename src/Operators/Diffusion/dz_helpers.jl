@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # Layer-thickness fill for the implicit-vertical-diffusion workspace.
 #
-# `apply_vertical_diffusion!` consumes `workspace.dz_scratch` as the current
+# `apply_vertical_diffusion_vmr!` consumes `workspace.dz_scratch` as the current
 # layer thickness in metres. The workspace allocator initializes that array
 # to zeros, so the runtime must populate it before each diffusion call —
 # otherwise the kernel divides by zero and the entire tracer field NaNs out

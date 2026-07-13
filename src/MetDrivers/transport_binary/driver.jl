@@ -139,7 +139,7 @@ function _validate_replay_consistency_ll(reader::TransportBinaryReader{FT}) wher
             "$(basename(reader.path)): rel=$(worst_rel) > tol=$(tol_rel) at window " *
             "$worst_win cell $worst_idx (abs=$worst_abs kg). Stored fluxes do not " *
             "integrate to stored m_next under palindrome continuity. Regenerate the " *
-            "binary with the plan-39 preprocessor fix (explicit-dm cm closure) or " *
+            "binary with explicit mass-delta continuity closure or " *
             "bypass with ENV[\"ATMOSTR_NO_REPLAY_CHECK\"]=\"1\" for diagnostic runs."
         ))
 
@@ -225,7 +225,7 @@ function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT}, grid
             "$(basename(reader.path)): rel=$(worst_rel) > tol=$(tol_rel) at window " *
             "$worst_win cell $worst_idx (abs=$worst_abs kg). Stored fluxes do not " *
             "integrate to stored m_next under palindrome continuity. Regenerate the " *
-            "binary with the plan-39 preprocessor fix (explicit-dm cm closure) or " *
+            "binary with explicit mass-delta continuity closure or " *
             "bypass with ENV[\"ATMOSTR_NO_REPLAY_CHECK\"]=\"1\" for diagnostic runs."
         ))
 
@@ -266,9 +266,9 @@ function _validate_runtime_semantics(
     if has_qv_endpoints(reader)
         h.humidity_sampling === :window_endpoints ||
             throw(ArgumentError("TransportBinaryDriver requires humidity_sampling = :window_endpoints when qv_start/qv_end are present, got $(h.humidity_sampling)"))
-    elseif has_qv(reader)
-        h.humidity_sampling in (:single_field, :none) ||
-            throw(ArgumentError("TransportBinaryDriver only supports humidity_sampling = :single_field for legacy qv payloads, got $(h.humidity_sampling)"))
+    else
+        h.humidity_sampling === :none ||
+            throw(ArgumentError("TransportBinaryDriver requires humidity_sampling = :none when humidity endpoints are absent, got $(h.humidity_sampling)"))
     end
 
     if has_flux_delta(reader)
@@ -361,7 +361,7 @@ function Base.show(io::IO, driver::TransportBinaryDriver)
           "├── timing:        dt=", window_dt(driver), " s, steps/window=",
               _steps_per_window_summary(steps_per_window(driver), steps_per_window_schedule(driver)), "\n",
           "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
-          "├── humidity:      ", has_qv_endpoints(reader) ? "qv_start/qv_end" : (has_qv(reader) ? "qv" : "none"), "\n",
+          "├── humidity:      ", has_qv_endpoints(reader) ? "qv_start/qv_end" : "none", "\n",
           "├── semantics:     air_mass=", h.air_mass_sampling, ", flux=", h.flux_sampling, "/", h.flux_kind, "\n",
           "└── windows:       ", total_windows(driver))
 end
@@ -445,14 +445,16 @@ steps_per_window(driver::TransportBinaryDriver, win::Integer) =
     driver.reader.header.steps_per_window_by_window[Int(win)]
 steps_per_window_schedule(driver::TransportBinaryDriver) =
     copy(driver.reader.header.steps_per_window_by_window)
+"""Return the binary's declared air-mass basis (`:dry` or `:moist`)."""
 air_mass_basis(driver::TransportBinaryDriver) = mass_basis(driver.reader)
-supports_moisture(driver::TransportBinaryDriver) = has_qv(driver.reader)
+supports_moisture(driver::TransportBinaryDriver) = has_qv_endpoints(driver.reader)
 supports_native_vertical_flux(::TransportBinaryDriver) = true
 supports_convection(driver::TransportBinaryDriver) =
     has_tm5_convection(driver.reader) || has_cmfmc(driver.reader)
 supports_diffusion(driver::TransportBinaryDriver) =
     _supports_runtime_diffusion(driver.reader)
 _supports_runtime_diffusion(::TransportBinaryReader) = false
+"""Return the grid reconstructed and owned by the runtime driver."""
 driver_grid(driver::TransportBinaryDriver) = driver.grid
 flux_interpolation_mode(driver::TransportBinaryDriver) =
     has_flux_delta(driver.reader) && driver.reader.header.flux_sampling !== :window_constant ? :interpolate : :constant

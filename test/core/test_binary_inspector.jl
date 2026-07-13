@@ -1,17 +1,5 @@
 #!/usr/bin/env julia
-# ---------------------------------------------------------------------------
-# test_binary_inspector.jl — plan 40 Commit 5
-#
-# Exercises `binary_capabilities(reader)` + `inspect_binary(path)` against
-# a tiny LL fixture written via `write_transport_binary`. Covers:
-#   - capability accessors return sensible booleans for m/am/bm/cm/ps/qv
-#   - `inspect_binary` prints a capability report and returns the NamedTuple
-#   - `has_tm5_convection` reported correctly when entu/detu/entd/detd
-#     are present vs absent
-#
-# CS fixture coverage is deferred to Commit 3's `regrid_ll_to_cs` script
-# (which will produce a CS binary we can inspect end-to-end).
-# ---------------------------------------------------------------------------
+# Binary capability and inspector contracts against a tiny lat-lon fixture.
 
 using Test
 
@@ -24,6 +12,7 @@ function _inspector_fixture_binary(path::AbstractString;
                                    FT::Type{<:AbstractFloat} = Float64,
                                    with_tm5::Bool = false,
                                    with_surface::Bool = false,
+                                   with_single_qv::Bool = false,
                                    flux_kind::Symbol = :substep_mass_amount)
     Nx, Ny, Nz = 4, 3, 5
     mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
@@ -54,6 +43,8 @@ function _inspector_fixture_binary(path::AbstractString;
             fill(FT(80), Nx, Ny), fill(FT(290), Nx, Ny))
         optional = merge(optional, (; surface))
     end
+    with_single_qv &&
+        (optional = merge(optional, (; qv = zeros(FT, Nx, Ny, Nz))))
     window = merge((; m, am, bm, cm, ps), optional)
 
     write_transport_binary(path, grid, [window];
@@ -68,7 +59,7 @@ function _inspector_fixture_binary(path::AbstractString;
     return nothing
 end
 
-@testset "plan 40 Commit 5 — binary_capabilities + inspect_binary" begin
+@testset "binary_capabilities + inspect_binary" begin
 
     @testset "one version-4 reader API" begin
         @test isdefined(AtmosTransport, :TransportBinaryReader)
@@ -85,6 +76,11 @@ end
     @testset "LL writer rejects unsupported full-window flux storage" begin
         @test_throws ArgumentError _inspector_fixture_binary(
             tempname(); flux_kind = :full_window_mass_amount)
+    end
+
+    @testset "LL writer rejects obsolete single-field humidity" begin
+        @test_throws ArgumentError _inspector_fixture_binary(
+            tempname(); with_single_qv = true)
     end
 
     @testset "basic LL fixture (no TM5)" begin

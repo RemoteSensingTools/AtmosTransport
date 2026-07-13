@@ -144,7 +144,7 @@ level. They are still part of the package namespace through their owning
 modules, so existing advanced code can use explicit qualification:
 
 ```julia
-AtmosTransport.MetDrivers.load_qv_window!(...)
+AtmosTransport.MetDrivers.load_qv_pair_window!(...)
 AtmosTransport.Preprocessing.process_day(...)
 AtmosTransport.Adjoints.cs_surface_emission_footprint(...)
 ```

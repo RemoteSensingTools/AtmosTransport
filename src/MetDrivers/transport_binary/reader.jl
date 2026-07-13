@@ -63,8 +63,7 @@ humidity_sampling(r::TransportBinaryReader) = r.header.humidity_sampling
 delta_semantics(r::TransportBinaryReader) = r.header.delta_semantics
 A_ifc(r::TransportBinaryReader) = r.header.A_ifc
 B_ifc(r::TransportBinaryReader) = r.header.B_ifc
-has_qv(r::TransportBinaryReader) =
-    :qv in r.header.payload_sections || has_qv_endpoints(r)
+"""Return `true` when both specific-humidity endpoint sections are present."""
 has_qv_endpoints(r::TransportBinaryReader) =
     :qv_start in r.header.payload_sections && :qv_end in r.header.payload_sections
 has_flux_delta(r::TransportBinaryReader) = any(section in (:dam, :dbm, :dcm, :dm, :dhflux) for section in r.header.payload_sections)
@@ -245,6 +244,13 @@ function _transport_make_fluxes(::Val{:moist}, hflux, cm)
     return FaceIndexedFluxState{MoistBasis}(hflux, cm)
 end
 
+"""
+    load_window!(reader, win; buffers...) -> (air_mass, surface_pressure, fluxes)
+
+Load the required transport state for one lat-lon or reduced-Gaussian window.
+Optional buffer keywords reuse caller-owned storage; omitted buffers are
+allocated with the reader's output element type.
+"""
 function load_window!(reader::TransportBinaryReader{FT}, win::Int;
                       m = nothing,
                       ps = nothing,
@@ -328,6 +334,12 @@ function load_window!(reader::TransportBinaryReader{FT}, win::Int;
     end
 end
 
+"""
+    load_flux_delta_window!(reader, win; buffers...) -> NamedTuple | nothing
+
+Load forward endpoint deltas for air mass and the topology's face fluxes.
+Returns `nothing` when the binary carries no delta sections.
+"""
 function load_flux_delta_window!(reader::TransportBinaryReader{FT}, win::Int;
                                  dam = nothing,
                                  dbm = nothing,
@@ -504,25 +516,13 @@ function load_surface_window!(reader::TransportBinaryReader{FT}, win::Int;
     return PBLSurfaceForcing(pblh, ustar, hflux, t2m)
 end
 
-function load_qv_window!(reader::TransportBinaryReader{FT}, win::Int;
-                         qv = nothing) where FT
-    h = reader.header
-    :qv in h.payload_sections || return nothing
-    qv = isnothing(qv) ? _transport_allocate_qv(reader) : qv
+"""
+    load_qv_pair_window!(reader, win; qv_start=nothing, qv_end=nothing)
 
-    o = _transport_window_offset(reader, win)
-    for section in h.payload_sections
-        n = _transport_section_elements(h, section)
-        if section === :qv
-            copyto!(qv, 1, reader.data, o + 1, n)
-            return qv
-        end
-        o += n
-    end
-
-    return nothing
-end
-
+Load the specific-humidity fields at the start and end of window `win`.
+Returns `(; qv_start, qv_end)` or `nothing` when humidity endpoints are absent.
+Caller-provided arrays are filled in place.
+"""
 function load_qv_pair_window!(reader::TransportBinaryReader{FT}, win::Int;
                               qv_start = nothing,
                               qv_end = nothing) where FT

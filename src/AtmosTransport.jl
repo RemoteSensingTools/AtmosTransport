@@ -146,7 +146,7 @@ using .MetDrivers: AbstractMetDriver,
                    TransportBinaryDriver, TransportWindow,
                    StructuredFluxDeltas, FaceIndexedFluxDeltas,
                    CubedSphereFluxDeltas,
-                   load_window!, load_qv_window!, load_flux_delta_window!,
+                   load_window!, load_flux_delta_window!,
                    load_qv_pair_window!, load_grid, load_transport_window,
                    driver_grid, air_mass_basis, has_humidity_endpoints,
                    interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!,
@@ -154,7 +154,7 @@ using .MetDrivers: AbstractMetDriver,
                    ConvectionForcing, has_convection_forcing,
                    copy_convection_forcing!, allocate_convection_forcing_like,
                    PBLSurfaceForcing, has_pbl_surface_forcing,
-                   window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc,
+                   window_count, has_qv_endpoints, has_flux_delta, has_cmfmc,
                    has_surface, has_vdiff_fields, has_tm5_convection,
                    grid_type, horizontal_topology,
                    source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics,
@@ -275,7 +275,7 @@ export TransportBinaryReader, TransportBinaryHeader, TransportBinaryDriver
 export load_transport_window, driver_grid
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export window_count, load_grid, mass_basis, air_mass_basis
-export has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
+export has_qv_endpoints, has_flux_delta, has_cmfmc
 export has_surface, has_vdiff_fields, has_tm5_convection, has_humidity_endpoints
 export delta_semantics
 export grid_type, horizontal_topology

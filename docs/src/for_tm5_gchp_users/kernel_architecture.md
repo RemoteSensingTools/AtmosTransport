@@ -189,7 +189,7 @@ GB. For a multi-year campaign this is real disk. Three mitigations:
    binaries are 50 MB / 250 MB / 800 MB per day respectively.
 3. **Drop optional sections you do not need.** A binary with just
    `:m`, `:am`, `:bm`, `:cm`, `:ps` is half the size of a binary
-   with `:dm`, `:qv`, `:cmfmc`, `:dtrain`.
+   with `:dm`, `:qv_start`, `:qv_end`, `:cmfmc`, `:dtrain`.
 
 The runtime always operates on uncompressed files; the
 mass-conservation contract is the same regardless of compression

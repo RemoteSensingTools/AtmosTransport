@@ -1,9 +1,4 @@
-# Eager (whole-array) transport-binary writer (write_transport_binary + packers).
-#
-# Part of the TransportBinary format implementation; included from
-# `TransportBinary.jl` into the `MetDrivers` module (shared namespace,
-# shared `using`s). Split out of the former 2658-line monolith — pure code
-# move, no behavior change.
+# Eager transport-binary writer and payload packers.
 
 @inline function _transport_copy_flat!(dest::Vector{FT}, offset::Int, src) where FT
     src_lin = vec(src)

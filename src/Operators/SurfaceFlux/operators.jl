@@ -33,8 +33,7 @@ the palindrome's S position is unoccupied.
 
 `NoSurfaceFlux`'s `apply!` is literally `= state` (and the array-level
 `apply_surface_flux!` is `= nothing`). Julia's dispatch turns the call
-site into a dead branch — zero floating-point work, bit-exact
-backward compatibility.
+site into a dead branch with zero floating-point work and a bit-exact no-op.
 """
 struct NoSurfaceFlux <: AbstractSurfaceFluxOperator end
 

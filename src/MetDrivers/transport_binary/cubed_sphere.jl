@@ -1,9 +1,4 @@
-# Cubed-sphere streaming writer (panel packing, geometry tags, open/write CS windows).
-#
-# Part of the TransportBinary format implementation; included from
-# `TransportBinary.jl` into the `MetDrivers` module (shared namespace,
-# shared `using`s). Split out of the former 2658-line monolith — pure code
-# move, no behavior change.
+# Cubed-sphere panel packing and streaming writer.
 
 """
     _cs_section_elements(Nc, npanel, nlevel, section) -> Int
@@ -115,6 +110,27 @@ function _validate_streaming_cs_window(writer::StreamingTransportBinaryWriter,
         "CS write requested Nc=$(Nc); writer expects Nc=$(expected_Nc)"))
     npanel == expected_npanel || throw(DimensionMismatch(
         "CS write requested npanel=$(npanel); writer expects npanel=$(expected_npanel)"))
+
+    for section in (:qv, :qv_start, :qv_end, :dam, :dbm, :dhflux, :dcm)
+        haskey(window, section) && throw(ArgumentError(
+            "CS transport-binary windows do not support section $(section)"))
+    end
+    actual_sections = Symbol[:m, :am, :bm, :cm, :ps]
+    haskey(window, :dm) && push!(actual_sections, :dm)
+    _transport_window_has_surface(window) &&
+        append!(actual_sections, _PBL_SURFACE_PAYLOAD_SECTIONS)
+    haskey(window, :cmfmc) && push!(actual_sections, :cmfmc)
+    haskey(window, :dtrain) && push!(actual_sections, :dtrain)
+    if haskey(window, :tm5_fields) && window.tm5_fields !== nothing
+        append!(actual_sections, (:entu, :detu, :entd, :detd))
+    end
+    _transport_window_has_vdiff_fields(window) &&
+        append!(actual_sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
+    haskey(window, :dkg) && push!(actual_sections, :dkg)
+    actual_sections == writer.payload_sections || throw(ArgumentError(
+        "CS transport-binary window payload sections $(actual_sections) do not match " *
+        "the writer contract $(writer.payload_sections)"))
+
     for (index, section) in pairs(writer.payload_sections)
         panels = _cs_window_section(window, section)
         length(panels) == npanel || throw(DimensionMismatch(

@@ -33,8 +33,9 @@ they are validated and normalized up front. The current reference path is:
 
 Humidity semantics:
 
-- `qv_start/qv_end` imply `humidity_sampling = "window_endpoints"`
-- legacy `qv` implies `humidity_sampling = "single_field"`
+- `qv_start` and `qv_end` appear together with
+  `humidity_sampling = "window_endpoints"`
+- binaries without humidity use `humidity_sampling = "none"`
 
 ## Provenance vs stored semantics
 

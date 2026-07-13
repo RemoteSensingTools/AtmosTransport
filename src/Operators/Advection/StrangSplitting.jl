@@ -179,16 +179,15 @@ end
 # Generic directional sweeps — generated via @eval
 # =========================================================================
 #
-# Ping-pong contract (post-refactor):
+# Ping-pong contract:
 #   - The 7-arg form `sweep_x!(rm_in, rm_out, m_in, m_out, flux, scheme, ws)`
 #     is the KERNEL entry point. It reads from (rm_in, m_in), writes to
 #     (rm_out, m_out), synchronizes the backend, and returns. NO copyto!.
 #     `strang_split!` uses this form and tracks parity so the output of
 #     one sweep becomes the input of the next.
-#   - The 5-arg form `sweep_x!(rm, m, flux, scheme, ws)` is a backward-
-#     compat wrapper used by callers that bypass the orchestrator (LinRood,
-#     CubedSphereStrang, direct tests). It kernels into `(ws.rm_B, ws.m_B)`
-#     then copies back to `(rm, m)`, preserving the pre-refactor semantics.
+#   - The 5-arg form `sweep_x!(rm, m, flux, scheme, ws)` is the in-place
+#     entry point. It kernels into `(ws.rm_B, ws.m_B)` and then copies back
+#     to `(rm, m)`.
 #   - The 6-arg / 8-arg `flux_scale` variants follow the same pattern.
 #
 # The three sweeps differ ONLY in:
@@ -219,9 +218,9 @@ for (sweep_fn, kernel_fn, dim) in (
         """
             $($sweep_fn)(rm, m, flux, scheme, ws)
 
-        Backward-compat wrapper: write into the workspace B pair, then
-        copy back to `rm` and `m`. New callers should use the 7-arg
-        ping-pong form instead.
+        In-place sweep. Writes into the workspace B pair, then copies the
+        result back to `rm` and `m`. Palindrome orchestration should use the
+        7-argument ping-pong form to avoid the copies.
         """
         function $sweep_fn(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                            flux::AbstractArray{FT,3},
@@ -387,7 +386,7 @@ end
 # These are used by the CFL-based subcycling wrappers to reapply the same
 # directional forcing in smaller conservative pieces. Same ping-pong
 # contract as the one(FT) variants above: the 8-arg form does the kernel
-# launch only (no copyto!); the 6-arg form is a backward-compat wrapper.
+# launch only (no `copyto!`); the 6-argument form is the in-place entry point.
 for (sweep_fn, kernel_fn, dim) in (
     (:sweep_x!, :_xsweep_kernel!, 1),
     (:sweep_y!, :_ysweep_kernel!, 2),
@@ -410,7 +409,7 @@ for (sweep_fn, kernel_fn, dim) in (
             return nothing
         end
 
-        # Backward-compat 6-arg wrapper.
+        # In-place entry point with explicit flux scaling.
         function $sweep_fn(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                            flux::AbstractArray{FT,3},
                            scheme::AbstractAdvectionScheme,
@@ -485,10 +484,6 @@ end
 # advection operates on 2D arrays (cell, level) with face connectivity
 # provided by the mesh object.
 #
-# Two versions exist:
-# - New hierarchy: accepts a `scheme::AbstractAdvectionScheme` argument
-# - Legacy: no scheme argument, uses hardcoded upwind flux
-
 """
     _horizontal_face_tendency!(rm_new, rm, m_new, m, horizontal_flux, mesh, scheme)
 
@@ -1598,9 +1593,9 @@ for (sweep_fn, kernel_fn, dim) in (
         """
             $($sweep_fn)(rm_4d, m, flux, scheme, ws[, flux_scale])
 
-        Backward-compat wrapper: write into workspace B buffers, then
-        copy back. New callers should use the 7-arg / 8-arg ping-pong
-        form instead.
+        In-place multi-tracer sweep. Writes into workspace B buffers, then
+        copies back. Palindrome orchestration should use the 7- or 8-argument
+        ping-pong form to avoid the copies.
         """
         function $sweep_fn(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
                            flux::AbstractArray{FT,3},

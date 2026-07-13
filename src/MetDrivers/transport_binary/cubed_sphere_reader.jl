@@ -45,7 +45,7 @@ function _cs_section_elements(h::TransportBinaryHeader{CubedSphereBinaryGeometry
     # TM5 convection — four layer-center fields.
     elseif section in (:entu, :detu, :entd, :detd)
         return np * Nc * Nc * Nz
-    elseif section in (:qv, :qv_start, :qv_end, :dm)
+    elseif section === :dm
         return np * Nc * Nc * Nz
     elseif section in (:dam,)
         return np * (Nc + 1) * Nc * Nz

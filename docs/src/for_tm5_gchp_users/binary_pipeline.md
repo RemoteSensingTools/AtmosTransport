@@ -28,7 +28,7 @@ flowchart LR
     subgraph Payload
         direction TB
         P1[per window: m, am, bm, cm, ps]
-        P2[+ optional: dm, qv, cmfmc, entu/detu/entd/detd, Kz, ...]
+        P2[+ optional: dm, qv_start/qv_end, cmfmc, entu/detu/entd/detd, dkg, ...]
     end
 ```
 
@@ -168,8 +168,8 @@ Three checkpoints in this pipeline are load-bearing for TM5 users:
   `mass_correction` routine performs.
 - **`recompute_cm_from_dm_target!`** runs *after* balance, not before.
   Initializing `cm` from `divergence(am, bm)` before balance is the
-  Plan-39 bug we used to ship; the post-balance order is the corrected
-  invariant.
+  wrong dependency order because balance changes the horizontal divergence;
+  post-balance closure is the required invariant.
 
 ### Path B — GEOS native CS
 
@@ -210,8 +210,8 @@ isn't present.
 
 | Section(s) | Operator unlocked |
 | --- | --- |
-| `:dm` (and `:dam`, `:dbm`, `:dcm`) | Plan-39 explicit-`dm` flux deltas → load-time replay gate |
-| `:qv` or `:qv_start`/`:qv_end` | Specific humidity for diagnostics, moist-bookkeeping helpers |
+| `:dm` (and `:dam`, `:dbm`, `:dcm`) | Endpoint mass/flux deltas → load-time replay gate |
+| `:qv_start`/`:qv_end` | Specific-humidity endpoints for interpolation and moist-bookkeeping helpers |
 | `:cmfmc` (+ optional `:dtrain`) | `CMFMCConvection` (GCHP-style) |
 | `:entu`, `:detu`, `:entd`, `:detd` (all four) | `TM5Convection` (TM5 four-field updraft/downdraft) |
 

@@ -153,9 +153,7 @@ function build_v4_header(date::Date,
     ncell = sizes.Nx * sizes.Ny
     nface_h = (sizes.Nx + 1) * sizes.Ny + sizes.Nx * (sizes.Ny + 1)
 
-    # Declare the self-describing transport-binary
-    # contract explicitly. LL uses the memo-37 canonical window_constant
-    # path (tracer drift = 0 for Upwind on uniform IC over 2 days).
+    # Declare the self-describing window-constant transport contract.
     contract = canonical_window_constant_contract(
         steps_per_window   = sizes.steps_per_met,
         humidity_sampling  = settings.include_qv ? :window_endpoints : :none,
@@ -179,10 +177,7 @@ function build_v4_header(date::Date,
         "payload_sections" => payload_sections,
         "elems_per_window" => counts.elems_per_window,
         "n_geometry_elems" => 0,
-        # The 6 semantic contract fields. If the LL daily writer emits
-        # only the 2 Poisson fields, the runtime parser silently defaults
-        # the missing ones to the pre-memo-37 :window_start_endpoint path,
-        # causing a TM5-convection blow-up. Declared explicitly here.
+        # Timing and sampling semantics are always explicit.
         "source_flux_sampling"            => String(contract.source_flux_sampling),
         "air_mass_sampling"               => String(contract.air_mass_sampling),
         "flux_sampling"                   => String(contract.flux_sampling),
@@ -191,7 +186,7 @@ function build_v4_header(date::Date,
         "humidity_sampling"               => String(contract.humidity_sampling),
         "window_bytes" => counts.bytes_per_window,
         "n_m" => counts.n_m, "n_am" => counts.n_am, "n_bm" => counts.n_bm,
-        "n_cm" => counts.n_cm, "n_ps" => counts.n_ps, "n_qv" => counts.n_qv,
+        "n_cm" => counts.n_cm, "n_ps" => counts.n_ps,
         "n_qv_start" => counts.n_qv_start, "n_qv_end" => counts.n_qv_end,
         "n_cmfmc" => 0,
         "n_entu" => counts.n_entu, "n_detu" => counts.n_detu,
@@ -201,7 +196,7 @@ function build_v4_header(date::Date,
         "n_temperature" => 0,
         "n_dam" => counts.n_dam, "n_dbm" => counts.n_dbm, "n_dcm" => counts.n_dcm, "n_dm" => counts.n_dm,
         "include_flux_delta" => true,
-        "include_qv" => false, "include_qv_endpoints" => settings.include_qv,
+        "include_qv_endpoints" => settings.include_qv,
         "include_cmfmc" => false,
         "include_tm5conv" => settings.tm5_convection_enable,
         "include_surface" => include_surface,
@@ -310,7 +305,6 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
     n_bm = Int64(Nx) * (Ny + 1) * Nz
     n_cm = Int64(Nx) * Ny * (Nz + 1)
     n_ps = Int64(Nx) * Ny
-    n_qv = Int64(0)
     n_qv_start = include_qv ? n_m : Int64(0)
     n_qv_end = include_qv ? n_m : Int64(0)
     n_tm5 = tm5_convection ? n_m : Int64(0)  # each of entu/detu/entd/detd is (Nx, Ny, Nz)
@@ -322,7 +316,6 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
         n_bm = n_bm,
         n_cm = n_cm,
         n_ps = n_ps,
-        n_qv = n_qv,
         n_qv_start = n_qv_start,
         n_qv_end = n_qv_end,
         n_dam = n_am,

@@ -100,8 +100,8 @@ The full list lives in `src/MetDrivers/TransportBinary.jl`.
 
 | Section(s) | Capability unlocked |
 |---|---|
-| `:dm` on CS, or `:dam` / `:dbm` / `:dcm` on LL | Plan-39 explicit flux deltas. Required for the strict load-time replay gate. |
-| `:qv`, or `:qv_start`/`:qv_end` | Specific-humidity input for diagnostics or moist-conversion bookkeeping. |
+| `:dm` on CS, or `:dam` / `:dbm` / `:dcm` on LL | Endpoint mass/flux deltas required by the strict load-time replay gate. |
+| `:qv_start`/`:qv_end` | Specific-humidity endpoints for interpolation and moist-conversion bookkeeping. |
 | `:cmfmc` (+ optional `:dtrain`) | `CMFMCConvection` operator (GCHP-style). |
 | `:entu`, `:detu`, `:entd`, `:detd` (all four) | `TM5Convection` operator (TM5 four-field). |
 | `:pblh`, `:ustar`, `:pbl_hflux`, `:t2m` | Surface payload — feeds the `WindowPBLKzField` runtime Kz path. |
@@ -132,13 +132,13 @@ returns a `NamedTuple`:
 | Field | Meaning |
 |---|---|
 | `advection :: Bool` | `true` iff structured `:m/:am/:bm/:cm` or face-indexed RG `:m/:hflux/:cm` sections are present |
-| `replay_gate :: Bool` | `true` iff the flux-delta sections needed for plan-39 replay are present |
+| `replay_gate :: Bool` | `true` iff the endpoint mass/flux deltas needed for replay are present |
 | `tm5_convection :: Bool` | `true` iff all four TM5 sections are present |
 | `cmfmc_convection :: Bool` | `true` iff `:cmfmc` is present (CS only) |
 | `pbl_diffusion :: Bool` | `true` iff the four PBL surface sections (`:pblh`, `:ustar`, `:pbl_hflux`, `:t2m`) are present (CS only) |
 | `gchp_vdiff :: Bool` | `true` iff all GCHP VDIFF fields and all four PBL surface fields are present (CS only) |
 | `surface_pressure :: Bool` | `true` iff `:ps` is present |
-| `humidity :: Bool` | `true` iff `:qv` (or the start/end pair) is present |
+| `humidity :: Bool` | `true` iff both `:qv_start` and `:qv_end` are present |
 | `mass_basis :: Symbol` | `:dry` or `:moist` (echoed from header) |
 | `grid_type :: Symbol` | `:latlon` / `:reduced_gaussian` / `:cubed_sphere` |
 | `flux_kind :: Symbol` | `:substep_mass_amount` or `:full_window_mass_amount` |
@@ -278,9 +278,8 @@ ATMOSTR_REPLAY_CHECK=1 julia --project=. scripts/run_transport.jl <cfg.toml>
 
 (Conversely, `ATMOSTR_NO_REPLAY_CHECK=1` silences the check even if
 `validate_replay = true`.) Failure throws an `ArgumentError` with the
-worst-cell location and tolerance margin, pointing the user at the
-plan-39 preprocessor fix or at the bypass env var for diagnostic
-runs.
+worst-cell location and tolerance margin, pointing the user at binary
+regeneration or at the bypass env var for diagnostic runs.
 
 The load-time gate is **off by default** because it doubles binary
 load time; it is the recommended sanity check for any new binary

@@ -5,6 +5,13 @@ using JSON3
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
+using .AtmosTransport.MetDrivers: TRANSPORT_BINARY_FORMAT_VERSION,
+    source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind,
+    humidity_sampling, load_window!, load_qv_pair_window!,
+    load_flux_delta_window!, load_surface_window!, interpolate_fluxes!,
+    expected_air_mass!, interpolate_qv!, open_streaming_transport_binary,
+    set_streaming_steps_per_window_schedule!, write_streaming_window!,
+    close_streaming_transport_binary!, PBLSurfaceForcing
 
 function rewrite_transport_header!(path::AbstractString;
                                    updates = Dict{String, Any}(),
@@ -130,7 +137,6 @@ end
         @test reader.header.steps_per_window_by_window == [2, 2]
         @test reader.header.poisson_balance_target_scale_by_window == [0.25, 0.25]
         @test mass_basis(reader) == :moist
-        @test has_qv(reader)
         @test has_qv_endpoints(reader)
         @test has_flux_delta(reader)
         @test source_flux_sampling(reader) == :window_start_endpoint
@@ -255,7 +261,6 @@ end
         @test horizontal_topology(reader) == :faceindexed
         @test window_count(reader) == 2
         @test mass_basis(reader) == :moist
-        @test has_qv(reader)
         @test has_qv_endpoints(reader)
         @test !has_flux_delta(reader)
         @test source_flux_sampling(reader) == :window_start_endpoint
@@ -475,7 +480,7 @@ end
     end
 end
 
-@testset "Plan 39 Commit D: writer fills poisson metadata by default" begin
+@testset "writer fills Poisson metadata by default" begin
     mktemp() do path, io
         close(io)
         write_test_transport_binary_latlon(path; FT=Float64, include_poisson_metadata=false)

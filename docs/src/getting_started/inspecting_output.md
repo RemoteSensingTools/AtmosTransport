@@ -25,19 +25,19 @@ TransportBinaryReader
 ├── storage:       Float32 on disk, load as Float32
 ├── basis:         dry
 ├── timing:        dt=3600.0 s, steps/window=8 (constant)
-├── payload:       m, am, bm, cm, ps, dam, dbm, dcm, qv
-├── humidity:      window-constant qv
+├── payload:       m, am, bm, cm, ps, dam, dbm, dcm, dm, qv_start, qv_end
+├── humidity:      qv_start/qv_end
 ├── semantics:     flux_sampling=window_constant, flux_kind=substep_mass_amount
 ├── poisson:       scale=1.0, target=continuity
 └── windows:       24
 Capabilities:
   ✓ advection         (m, am, bm, cm)
-  ✓ plan-39 replay    (dam, dbm, dcm, dm)
+  ✓ replay gate       (dam, dbm, dcm, dm)
   ✗ TM5 convection    (entu, detu, entd, detd)
   ✗ CMFMC convection  (cmfmc)
   ✗ PBL diffusion     (pblh, ustar, pbl_hflux, t2m)
   ✓ surface pressure  (ps)
-  ✓ humidity          (qv or qv_start/qv_end)
+  ✓ humidity          (qv_start, qv_end)
   mass_basis       = :dry
   grid_type        = :latlon
 ```

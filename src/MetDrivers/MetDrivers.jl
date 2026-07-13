@@ -39,7 +39,7 @@ export open_streaming_transport_binary, write_streaming_window!,
        set_transport_header_steps_per_window_schedule!
 export TransportBinaryDriver, TransportWindow
 export StructuredFluxDeltas, FaceIndexedFluxDeltas, CubedSphereFluxDeltas
-export load_window!, load_qv_window!, load_flux_delta_window!
+export load_window!, load_flux_delta_window!
 export load_tm5_convection_window!, has_tm5_convection
 export load_qv_pair_window!, load_grid, load_transport_window
 export driver_grid, air_mass_basis, has_humidity_endpoints
@@ -48,7 +48,7 @@ export load_surface_window!
 export ConvectionForcing, has_convection_forcing
 export copy_convection_forcing!, allocate_convection_forcing_like
 export PBLSurfaceForcing, has_pbl_surface_forcing
-export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
+export window_count, has_qv_endpoints, has_flux_delta, has_cmfmc
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export binary_capabilities, inspect_binary
 export has_surface, has_vdiff_fields

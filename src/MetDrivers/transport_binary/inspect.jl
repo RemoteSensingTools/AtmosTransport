@@ -1,24 +1,5 @@
 # Read-only capability inspection for every version-4 geometry.
 
-"""
-    binary_capabilities(reader) -> NamedTuple
-
-Summarise what operators this binary can drive. Geometry-specific advection
-requirements are selected through the reader's geometry type. Fields:
-
-- `advection :: Bool` — always `true` (m, am, bm, cm are required).
-- `replay_gate :: Bool` — dam/dbm/dcm/dm present.
-- `tm5_convection :: Bool` — entu/detu/entd/detd all present.
-- `cmfmc_convection :: Bool` — cmfmc present (CS only; LL/RG returns false).
-- `pbl_diffusion :: Bool` — complete runnable PBL forcing (CS only).
-- `gchp_vdiff :: Bool` — complete runnable GCHP VDIFF forcing (CS only).
-- `surface_pressure :: Bool` — ps present.
-- `humidity :: Bool` — qv or qv_start/qv_end present.
-- `mass_basis :: Symbol` — `:dry` or `:moist`.
-- `grid_type :: Symbol` — `:latlon` / `:reduced_gaussian` / `:cubed_sphere`.
-- `flux_kind :: Symbol` — stored mass-flux normalization contract.
-- `payload_sections :: Vector{Symbol}` — raw set for debugging.
-"""
 _required_advection_sections(::LatLonBinaryGeometry) = (:m, :am, :bm, :cm)
 _required_advection_sections(::ReducedGaussianBinaryGeometry) = (:m, :hflux, :cm)
 _required_advection_sections(::CubedSphereBinaryGeometry) = (:m, :am, :bm, :cm)
@@ -33,6 +14,25 @@ _supports_gchp_vdiff(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
 ) = has_surface(reader) && has_vdiff_fields(reader)
 
+"""
+    binary_capabilities(reader) -> NamedTuple
+
+Summarise what operators this binary can drive. Geometry-specific advection
+requirements are selected through the reader's geometry type. Fields:
+
+- `advection :: Bool` — always `true` (m, am, bm, cm are required).
+- `replay_gate :: Bool` — dam/dbm/dcm/dm present.
+- `tm5_convection :: Bool` — entu/detu/entd/detd all present.
+- `cmfmc_convection :: Bool` — cmfmc present (CS only; LL/RG returns false).
+- `pbl_diffusion :: Bool` — complete runnable PBL forcing (CS only).
+- `gchp_vdiff :: Bool` — complete runnable GCHP VDIFF forcing (CS only).
+- `surface_pressure :: Bool` — ps present.
+- `humidity :: Bool` — qv_start/qv_end present.
+- `mass_basis :: Symbol` — `:dry` or `:moist`.
+- `grid_type :: Symbol` — `:latlon` / `:reduced_gaussian` / `:cubed_sphere`.
+- `flux_kind :: Symbol` — stored mass-flux normalization contract.
+- `payload_sections :: Vector{Symbol}` — raw set for debugging.
+"""
 function binary_capabilities(reader::TransportBinaryReader)
     hdr = reader.header
     raw = hdr.raw_header
@@ -45,7 +45,7 @@ function binary_capabilities(reader::TransportBinaryReader)
         pbl_diffusion    = _supports_pbl_diffusion(reader),
         gchp_vdiff       = _supports_gchp_vdiff(reader),
         surface_pressure = :ps in hdr.payload_sections,
-        humidity         = has_qv(reader),
+        humidity         = has_qv_endpoints(reader),
         mass_basis       = hdr.mass_basis,
         grid_type        = grid_type(hdr),
         nlevel           = hdr.nlevel,
@@ -93,7 +93,7 @@ function _print_capability_rows(io::IO, reader)
     _print_cap(io, caps.cmfmc_convection, "CMFMC convection", "(cmfmc)")
     _print_cap(io, caps.pbl_diffusion,    "PBL diffusion",    "(pblh, ustar, pbl_hflux, t2m)")
     _print_cap(io, caps.surface_pressure, "surface pressure", "(ps)")
-    _print_cap(io, caps.humidity,         "humidity",         "(qv or qv_start/qv_end)")
+    _print_cap(io, caps.humidity,         "humidity",         "(qv_start, qv_end)")
     println(io, "  mass_basis       = ", caps.mass_basis)
     println(io, "  grid_type        = ", caps.grid_type)
 end

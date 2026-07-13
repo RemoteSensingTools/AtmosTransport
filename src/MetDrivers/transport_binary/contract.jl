@@ -1,10 +1,4 @@
-# Transport-binary write/read contracts and their validators
-# (TransportBinaryContract, canonical_window_constant_contract, validate_cs_writer_contract!, validate_transport_contract!).
-#
-# Part of the TransportBinary format implementation; included from
-# `TransportBinary.jl` into the `MetDrivers` module (shared namespace,
-# shared `using`s). Split out of the former 2658-line monolith — pure code
-# move, no behavior change.
+# Transport-binary contract construction and validation.
 
 # Header JSON is null-terminated inside the fixed-width header region. Read it
 # incrementally so metadata may exceed the historical 256 KiB probe without
@@ -50,9 +44,8 @@ are required — no defaults — so a writer cannot produce an ambiguous
 binary. Readers call [`validate_transport_contract!`](@ref) on the parsed
 header to decide whether the file is trustworthy.
 
-Canonical usage: construct via
-[`canonical_window_constant_contract`](@ref) for the memo-37 path
-(`tracer drift = 0` on uniform IC for Upwind over 2 days).
+Canonical usage: construct via [`canonical_window_constant_contract`](@ref)
+for window-constant, per-substep mass fluxes.
 
 Symbol fields are validated against the `_TRANSPORT_ALLOWED_*` tuples at
 construction time. Combinations are also checked:
@@ -60,7 +53,7 @@ construction time. Combinations are also checked:
   payload to carry `dm` (or `dm + dhflux`); the writer is responsible for
   honoring this.
 - `humidity_sampling === :window_endpoints` requires `qv_start` + `qv_end`
-  in the payload; `:single_field` requires `qv`; `:none` requires neither.
+  in the payload; `:none` requires neither.
 """
 struct TransportBinaryContract
     source_flux_sampling             :: Symbol
@@ -126,8 +119,8 @@ end
                                          source_flux_sampling = :window_start_endpoint,
                                          include_flux_delta = true) -> TransportBinaryContract
 
-Build the canonical contract for the validated memo-37 path
-(`flux_sampling = :window_constant`, per-substep mass amounts). The
+Build the canonical contract for window-constant, per-substep mass amounts.
+The
 Poisson target scale is `1 / (2 * steps_per_window)` — matching the TM5
 r1112 horizontal-sweep count of `2 * steps_per_window` per window.
 
@@ -169,7 +162,7 @@ const _TRANSPORT_STRUCTURAL_HEADER_KEYS = Set((
     "nlat", "latitudes", "nlon_per_ring",
     "panel_convention", "cs_definition", "cs_coordinate_law",
     "cs_center_law", "longitude_offset_deg",
-    "include_qv", "include_qv_endpoints", "include_flux_delta",
+    "include_qv_endpoints", "include_flux_delta",
 ))
 
 """Merge caller metadata without permitting it to rewrite the binary layout."""
@@ -252,6 +245,9 @@ function _validate_transport_layout!(header::AbstractDict)
         "Transport-binary contract violation — payload_sections must be a nonempty list"))
     length(unique(sections)) == length(sections) || throw(ArgumentError(
         "Transport-binary contract violation — payload_sections contains duplicates"))
+    :qv in sections && throw(ArgumentError(
+        "Transport-binary contract violation — single-field qv is obsolete; " *
+        "regenerate with qv_start/qv_end endpoints"))
 
     endpoint_humidity = (:qv_start in sections, :qv_end in sections)
     endpoint_humidity[1] == endpoint_humidity[2] || throw(ArgumentError(
@@ -385,8 +381,7 @@ function _validate_transport_layout!(header::AbstractDict)
     end
 
     humidity = _transport_normalize_symbol(header["humidity_sampling"])
-    expected_humidity = endpoint_humidity[1] ? :window_endpoints :
-                        (:qv in sections ? :single_field : :none)
+    expected_humidity = endpoint_humidity[1] ? :window_endpoints : :none
     humidity == expected_humidity || throw(ArgumentError(
         "Transport-binary contract violation — humidity_sampling=$(humidity) does not match payload sections"))
     has_delta = any(s -> s in sections, (:dam, :dbm, :dhflux, :dcm, :dm))
@@ -394,9 +389,6 @@ function _validate_transport_layout!(header::AbstractDict)
     (has_delta == (delta === :forward_window_endpoint_difference)) || throw(ArgumentError(
         "Transport-binary contract violation — delta_semantics=$(delta) does not match delta payload sections"))
 
-    include_qv = get(header, "include_qv", nothing)
-    include_qv isa Bool && include_qv == (:qv in sections) || throw(ArgumentError(
-        "Transport-binary contract violation — include_qv must match the qv payload section"))
     include_qv_endpoints = get(header, "include_qv_endpoints", nothing)
     include_qv_endpoints isa Bool && include_qv_endpoints == endpoint_humidity[1] ||
         throw(ArgumentError(
@@ -404,8 +396,7 @@ function _validate_transport_layout!(header::AbstractDict)
     include_flux_delta = get(header, "include_flux_delta", nothing)
     include_flux_delta isa Bool && include_flux_delta == has_delta || throw(ArgumentError(
         "Transport-binary contract violation — include_flux_delta must match delta payload sections"))
-    for (key, section) in (("n_qv", :qv), ("n_qv_start", :qv_start),
-                           ("n_qv_end", :qv_end))
+    for (key, section) in (("n_qv_start", :qv_start), ("n_qv_end", :qv_end))
         declared = _transport_required_int(header, key; positive=false)
         expected = section in sections ? ncell * nlevel : 0
         declared == expected || throw(ArgumentError(

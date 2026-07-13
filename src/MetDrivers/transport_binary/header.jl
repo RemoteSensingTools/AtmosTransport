@@ -167,13 +167,8 @@ end
     _transport_geometry_summary(h.geometry, h)
 
 @inline function _transport_qv_summary(h::TransportBinaryHeader)
-    if :qv_start in h.payload_sections && :qv_end in h.payload_sections
-        return "qv_start/qv_end"
-    elseif :qv in h.payload_sections
-        return "qv"
-    else
-        return "none"
-    end
+    return (:qv_start in h.payload_sections && :qv_end in h.payload_sections) ?
+           "qv_start/qv_end" : "none"
 end
 
 @inline function _transport_semantics_summary(h::TransportBinaryHeader)
@@ -264,8 +259,6 @@ end
 @inline function _transport_default_humidity_sampling(payload_sections::AbstractVector{Symbol})
     if (:qv_start in payload_sections) || (:qv_end in payload_sections)
         return :window_endpoints
-    elseif :qv in payload_sections
-        return :single_field
     else
         return :none
     end
@@ -276,21 +269,14 @@ end
            :forward_window_endpoint_difference : :none
 end
 
-# ===========================================================================
-# TransportBinaryContract — self-describing timing/basis semantics.
-#
-# Every writer must supply an explicit contract; every reader must validate
-# one. Silent defaults are how an LL+TM5 binary can land on disk without
-# declaring `flux_sampling=:window_constant`: the runtime parser would
-# default to `:window_start_endpoint` and run the pre-memo-37 bug class.
-# See docs/37_WINDOW_CONSTANT_FLUX_INTERPRETATION_BUG.
-# ===========================================================================
+# Accepted timing and sampling semantics. Writers declare these explicitly;
+# readers reject missing or unsupported values.
 
 const _TRANSPORT_ALLOWED_AIR_MASS_SAMPLINGS = (:window_start_endpoint,)
 const _TRANSPORT_ALLOWED_FLUX_SAMPLINGS     = (:window_start_endpoint, :window_constant, :window_mean)
 const _TRANSPORT_ALLOWED_FLUX_KINDS         = (:substep_mass_amount, :full_window_mass_amount)
 const _TRANSPORT_ALLOWED_DELTA_SEMANTICS    = (:forward_window_endpoint_difference, :none)
-const _TRANSPORT_ALLOWED_HUMIDITY_SAMPLINGS = (:window_endpoints, :single_field, :none)
+const _TRANSPORT_ALLOWED_HUMIDITY_SAMPLINGS = (:window_endpoints, :none)
 
 _transport_parse_grid_type(hdr) = Symbol(lowercase(string(hdr.grid_type)))
 _transport_parse_topology(hdr) = Symbol(lowercase(string(hdr.horizontal_topology)))
@@ -448,7 +434,6 @@ function _transport_common_header(grid_type::String,
                                   flux_kind::Symbol,
                                   humidity_sampling::Symbol,
                                   delta_semantics::Symbol)
-    n_qv = (:qv in payload_sections) ? ncell * nlevel : 0
     n_qv_start = (:qv_start in payload_sections) ? ncell * nlevel : 0
     n_qv_end = (:qv_end in payload_sections) ? ncell * nlevel : 0
     n_surface = (:pblh in payload_sections) ? ncell : 0
@@ -502,7 +487,6 @@ function _transport_common_header(grid_type::String,
         "poisson_balance_target_scale_by_window" => poisson_scale_schedule,
         "mass_basis" => String(mass_basis),
         "payload_sections" => String.(payload_sections),
-        "include_qv" => :qv in payload_sections,
         "include_qv_endpoints" => (:qv_start in payload_sections) || (:qv_end in payload_sections),
         "include_flux_delta" => any(section in (:dam, :dbm, :dcm, :dm, :dhflux) for section in payload_sections),
         "include_surface" => n_surface > 0,
@@ -510,7 +494,6 @@ function _transport_common_header(grid_type::String,
         "include_tm5conv" => n_tm5 > 0,
         "include_gchp_vdiff" => n_vdiff > 0,
         "gchp_vdiff_payload" => n_vdiff > 0 ? "u_v_t_qv_layer_center_v1" : "none",
-        "n_qv" => n_qv,
         "n_qv_start" => n_qv_start,
         "n_qv_end" => n_qv_end,
         "n_pblh" => n_surface,

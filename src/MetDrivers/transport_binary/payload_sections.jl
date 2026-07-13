@@ -1,12 +1,7 @@
-# Per-section element counts, window-field accessors, and optional-section validators.
-#
-# Part of the TransportBinary format implementation; included from
-# `TransportBinary.jl` into the `MetDrivers` module (shared namespace,
-# shared `using`s). Split out of the former 2658-line monolith — pure code
-# move, no behavior change.
+# Per-section element counts, window-field accessors, and payload validation.
 
 @inline function _transport_structured_section_elements(Nx::Int, Ny::Int, ncell::Int, nlevel::Int, section::Symbol)
-    if section === :m || section === :dm || section === :qv || section === :qv_start || section === :qv_end ||
+    if section === :m || section === :dm || section === :qv_start || section === :qv_end ||
        _is_gchp_vdiff_payload_section(section)
         return ncell * nlevel
     elseif section === :am || section === :dam
@@ -29,7 +24,7 @@
 end
 
 @inline function _transport_faceindexed_section_elements(ncell::Int, nface_h::Int, nlevel::Int, section::Symbol)
-    if section === :m || section === :dm || section === :qv || section === :qv_start || section === :qv_end ||
+    if section === :m || section === :dm || section === :qv_start || section === :qv_end ||
        _is_gchp_vdiff_payload_section(section)
         return ncell * nlevel
     elseif section === :hflux || section === :dhflux
@@ -68,11 +63,11 @@ const _FIELD_PRODUCER_HINT = Dict{Symbol, String}(
     :am => "Regenerate with x-direction mass fluxes enabled; `am` is required for lat-lon transport.",
     :bm => "Regenerate with y-direction mass fluxes enabled; `bm` is required for lat-lon transport.",
     :cm => "Regenerate with vertical continuity closure enabled so `cm` is written.",
-    :dam => "Regenerate with replay-gate flux deltas enabled; this section comes from the plan-39 continuity contract.",
-    :dbm => "Regenerate with replay-gate flux deltas enabled; this section comes from the plan-39 continuity contract.",
+    :dam => "Regenerate with replay-gate x-flux deltas enabled.",
+    :dbm => "Regenerate with replay-gate y-flux deltas enabled.",
     :dhflux => "Regenerate with replay-gate flux deltas enabled for reduced-Gaussian horizontal fluxes.",
-    :dcm => "Regenerate with replay-gate vertical-flux deltas enabled; this section comes from the plan-39 continuity contract.",
-    :dm => "Regenerate with replay-gate mass deltas enabled; this section comes from the plan-39 continuity contract.",
+    :dcm => "Regenerate with replay-gate vertical-flux deltas enabled.",
+    :dm => "Regenerate with replay-gate air-mass deltas enabled.",
     :tm5_fields => "Set `[preprocessing] include_convection = true` / TM5-enabled preprocessing when writing TM5 convection sections.",
     :vdiff => "Set `[preprocessing] include_vdiff_fields = true` when writing GCHP VDIFF sections.",
 )
@@ -215,8 +210,6 @@ function _transport_window_field(window, section::Symbol)
         return _transport_window_dm(window)
     elseif section === :ps
         return _transport_window_ps(window)
-    elseif section === :qv
-        return window.qv
     elseif section === :qv_start
         return window.qv_start
     elseif section === :qv_end
@@ -246,7 +239,9 @@ function _transport_window_field(window, section::Symbol)
 end
 
 function _transport_push_optional_sections!(sections::Vector{Symbol}, window)
-    haskey(window, :qv) && push!(sections, :qv)
+    haskey(window, :qv) && throw(ArgumentError(
+        "single-field qv is not part of the maintained version-4 contract; " *
+        "provide qv_start and qv_end"))
     haskey(window, :qv_start) && push!(sections, :qv_start)
     haskey(window, :qv_end) && push!(sections, :qv_end)
     haskey(window, :dam) && push!(sections, :dam)
@@ -297,11 +292,7 @@ function _transport_validate_basis(window, basis_sym::Symbol)
     return nothing
 end
 
-function _transport_validate_optional_qv(window, expected)
-    if haskey(window, :qv)
-        size(window.qv) == expected ||
-            throw(DimensionMismatch("window qv has size $(size(window.qv)), expected $(expected)"))
-    end
+function _transport_validate_humidity_endpoints(window, expected)
     if haskey(window, :qv_start)
         size(window.qv_start) == expected ||
             throw(DimensionMismatch("window qv_start has size $(size(window.qv_start)), expected $(expected)"))
@@ -389,7 +380,7 @@ function _transport_validate_structured_window(window,
     size(ps) == (Nx, Ny) ||
         throw(DimensionMismatch("window ps has size $(size(ps)), expected ($(Nx), $(Ny))"))
 
-    _transport_validate_optional_qv(window, (Nx, Ny, nlevel))
+    _transport_validate_humidity_endpoints(window, (Nx, Ny, nlevel))
     _transport_validate_optional_structured_deltas(window, Nx, Ny, nlevel)
     _transport_validate_optional_surface(window, (Nx, Ny))
     _transport_validate_optional_vdiff(window, (Nx, Ny, nlevel))
@@ -414,7 +405,7 @@ function _transport_validate_reduced_window(window,
     size(ps) == (ncell,) ||
         throw(DimensionMismatch("window ps has size $(size(ps)), expected ($(ncell),)"))
 
-    _transport_validate_optional_qv(window, (ncell, nlevel))
+    _transport_validate_humidity_endpoints(window, (ncell, nlevel))
     _transport_validate_optional_faceindexed_deltas(window, ncell, nface_h, nlevel)
     _transport_validate_optional_surface(window, (ncell,))
     _transport_validate_optional_vdiff(window, (ncell, nlevel))

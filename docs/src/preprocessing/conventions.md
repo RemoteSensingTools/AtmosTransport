@@ -87,7 +87,7 @@ schematic.
 | `:cm`       | **kg per substep** | matches header | extends `Nz` by 1 along the vertical axis |
 | `:ps`       | Pa | dry if `mass_basis = :dry` | `(Nx, Ny)` LL etc. |
 | `:dm`       | **kg per cell** | matches header | per-window mass tendency for the explicit-`dm` replay closure |
-| `:qv`       | kg / kg | (water-mass mixing ratio is basis-agnostic) | optional — set when `[output] include_qv = true` |
+| `:qv_start`/`:qv_end` | kg / kg | (water-mass mixing ratio is basis-agnostic) | optional endpoint pair — set when `[output] include_qv = true` |
 | `:cmfmc`    | kg / m² / s | dry-converted by the GEOS reader | NZ+1 interfaces |
 | `:dtrain`   | kg / m² / s | dry-converted by the GEOS reader | NZ centers |
 | `:entu`, `:detu`, `:entd`, `:detd` | kg / m² / s | dry | NZ centers, all four required together for `TM5Convection` |

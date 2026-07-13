@@ -17,7 +17,8 @@ end
 Parse humidity-related runtime choices from the TOML configuration.
 
 - `thermo_dir` is the directory containing daily ERA5 thermo NetCDF files.
-- `include_qv` controls whether merged `qv` is written into the output payload.
+- `include_qv` controls whether paired `qv_start`/`qv_end` endpoint fields are
+  written into the output payload.
 - `mass_basis` is `:moist` or `:dry` and determines whether native fields are
   converted to dry basis before vertical merging.
 

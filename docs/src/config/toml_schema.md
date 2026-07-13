@@ -356,7 +356,7 @@ descriptor schema details.
 [output]
 directory  = "~/data/AtmosTransport/met/.../preprocessed/"
 mass_basis = "dry"             # default: "dry"; "moist" supported but not recommended for the runtime
-include_qv = false             # LL spectral path only — controls writing the :qv payload.
+include_qv = false             # LL spectral path only — writes paired :qv_start/:qv_end endpoints.
                                # Native GEOS and CS/RG writers ignore this key today.
 ```
 

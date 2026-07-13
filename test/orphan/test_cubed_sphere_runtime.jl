@@ -280,7 +280,7 @@ end
         @test horizontal_topology(reader) == :structureddirectional
         @test window_count(reader) == 2
         @test mass_basis(reader) == :dry
-        @test !has_qv(reader)
+        @test !has_qv_endpoints(reader)
         @test !has_flux_delta(reader)
         @test !has_cmfmc(reader)
         @test !has_surface(reader)

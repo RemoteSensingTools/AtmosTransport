@@ -7,8 +7,8 @@ Ships the data types and helpers needed to apply per-tracer surface
 sources to a `CellState`:
 
 - `SurfaceFluxSource{RateT}` — single-tracer source + rate
-  array (kg/s per cell). The name is re-exported from the top-level
-  `AtmosTransport` module for backward compat.
+  array (kg/s per cell), also available from the top-level
+  `AtmosTransport` module.
 - `PerTracerFluxMap{S}` — NTuple-backed map of
   `SurfaceFluxSource`s, keyed by `tracer_name`. Ships with the
   `flux_for(map, :name)` lookup helper. Storage-bits-stable on GPU.

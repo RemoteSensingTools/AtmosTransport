@@ -113,6 +113,19 @@ end
             @test !ispath(writer.staging_path)
         end
 
+        @testset "generic windows retain the sample payload contract" begin
+            path = joinpath(dir, "rg-payload.bin")
+            writer, window = _open_rg(path)
+            qv = zeros(Float32, size(window.m))
+            @test_throws ArgumentError MD.write_streaming_window!(
+                writer, merge(window, (; qv)))
+            @test_throws ArgumentError MD.write_streaming_window!(
+                writer, merge(window, (; qv_start=qv, qv_end=qv)))
+            @test_throws ArgumentError MD.close_streaming_transport_binary!(writer)
+            @test !ispath(path)
+            @test !ispath(writer.staging_path)
+        end
+
         @testset "CS validates arguments, panel count, and every panel shape" begin
             path = joinpath(dir, "cs-shape.bin")
             Nc, npanel, Nz = 2, 6, 1
@@ -138,6 +151,32 @@ end
             @test !ispath(writer.staging_path)
         end
 
+        @testset "CS rejects undeclared humidity payloads" begin
+            path = joinpath(dir, "cs-payload.bin")
+            Nc, npanel, Nz = 2, 6, 1
+            vc = HybridSigmaPressure(Float32[0, 1000], Float32[0, 1])
+            writer = MD.open_streaming_cs_transport_binary(
+                path, Nc, npanel, Nz, 1, vc;
+                FT=Float32, header_bytes=4096, steps_per_window=1,
+                mass_basis=:dry,
+            )
+            window = (
+                m=ntuple(_ -> ones(Float32, Nc, Nc, Nz), npanel),
+                am=ntuple(_ -> zeros(Float32, Nc + 1, Nc, Nz), npanel),
+                bm=ntuple(_ -> zeros(Float32, Nc, Nc + 1, Nz), npanel),
+                cm=ntuple(_ -> zeros(Float32, Nc, Nc, Nz + 1), npanel),
+                ps=ntuple(_ -> fill(90_000f0, Nc, Nc), npanel),
+            )
+            qv = ntuple(_ -> zeros(Float32, Nc, Nc, Nz), npanel)
+            @test_throws ArgumentError MD.write_streaming_cs_window!(
+                writer, merge(window, (; qv)), Nc, npanel)
+            @test_throws ArgumentError MD.write_streaming_cs_window!(
+                writer, merge(window, (; qv_start=qv, qv_end=qv)), Nc, npanel)
+            @test_throws ArgumentError MD.close_streaming_transport_binary!(writer)
+            @test !ispath(path)
+            @test !ispath(writer.staging_path)
+        end
+
         @testset "extra metadata cannot rewrite structural fields" begin
             path = joinpath(dir, "override.bin")
             @test_throws ArgumentError _open_rg(path, 1; extra_header=Dict("ncell" => 999))
@@ -154,7 +193,6 @@ end
                                  ("mass_basis", "unknown"),
                                  ("elems_per_window", header["elems_per_window"] + 1),
                                  ("dt_met_seconds", Inf),
-                                 ("include_qv", true),
                                  ("nface_h", header["nface_h"] + 1))
                 bad = deepcopy(header)
                 bad[key] = value

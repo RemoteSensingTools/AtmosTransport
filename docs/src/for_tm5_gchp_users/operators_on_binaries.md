@@ -20,7 +20,8 @@ hand:
 - `cm` — vertical mass flux at level interfaces (closed against
   `dm` at write time),
 - `ps` — surface pressure per cell,
-- optionally `qv`, `cmfmc`/`dtrain`, the four TM5 fields.
+- optionally paired `qv_start`/`qv_end` endpoints, `cmfmc`/`dtrain`,
+  or the four TM5 fields.
 
 Operators consume these directly; no operator builds a flux field
 from raw winds at run time.

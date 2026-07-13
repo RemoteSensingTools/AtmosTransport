@@ -1,9 +1,4 @@
-# StreamingTransportBinaryWriter: incremental structured/reduced-Gaussian writer.
-#
-# Part of the TransportBinary format implementation; included from
-# `TransportBinary.jl` into the `MetDrivers` module (shared namespace,
-# shared `using`s). Split out of the former 2658-line monolith — pure code
-# move, no behavior change.
+# Incremental structured and reduced-Gaussian transport-binary writer.
 
 """
     StreamingTransportBinaryWriter{FT}
@@ -43,6 +38,14 @@ function _streaming_section_shapes(window, payload_sections::Vector{Symbol})
 end
 
 function _validate_streaming_window(writer::StreamingTransportBinaryWriter, window)
+    base_sections = :am in writer.payload_sections ?
+        Symbol[:m, :am, :bm, :cm, :ps] :
+        Symbol[:m, :hflux, :cm, :ps]
+    actual_sections = _transport_push_optional_sections!(base_sections, window)
+    actual_sections == writer.payload_sections || throw(ArgumentError(
+        "transport-binary window payload sections $(actual_sections) do not match " *
+        "the writer contract $(writer.payload_sections)"))
+
     for (index, section) in pairs(writer.payload_sections)
         field = _transport_window_field(window, section)
         actual = collect(size(field))

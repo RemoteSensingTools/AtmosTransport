@@ -31,10 +31,9 @@ using ...State: CellState, CubedSphereState
 using ...State: ntracers, tracer_index, tracer_names
 using ...State: AbstractTimeVaryingField, ConstantField, field_value, update_field!
 using ...MetDrivers: current_time
-import ..apply!
+import ..AbstractOperator, ..apply!
 
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
-export chemistry_block!
 
 include("chemistry_kernels.jl")
 
@@ -42,7 +41,7 @@ include("chemistry_kernels.jl")
 # Type hierarchy
 # =========================================================================
 
-abstract type AbstractChemistryOperator end
+abstract type AbstractChemistryOperator <: AbstractOperator end
 
 """
     NoChemistry()
@@ -296,11 +295,5 @@ function apply!(state::CubedSphereState, meteo, grid,
     end
     return state
 end
-
-# =========================================================================
-# chemistry_block! — step-level block composer
-# =========================================================================
-
-include("chemistry_block.jl")
 
 end # module Chemistry

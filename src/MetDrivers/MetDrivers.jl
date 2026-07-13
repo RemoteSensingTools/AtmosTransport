@@ -5,7 +5,6 @@ Meteorological data adapters for the basis-explicit transport architecture.
 
 Provides:
 - abstract driver types with capability traits;
-- mass-closure strategies;
 - topology-generic transport-binary readers; and
 - ERA5 native reduced-Gaussian GRIB geometry helpers.
 """

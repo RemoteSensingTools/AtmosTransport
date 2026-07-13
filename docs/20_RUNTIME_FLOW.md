@@ -111,7 +111,7 @@ function convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
                model.convection, dt;
                workspace = model.workspace.convection_ws)
     end
-    chemistry_block!(model.state, meteo, model.grid, model.chemistry, dt)
+    apply!(model.state, meteo, model.grid, model.chemistry, dt)
     return nothing
 end
 ```
@@ -142,7 +142,7 @@ Forcing refresh is upstream in `_refresh_forcing!`. The kernel consumes `convect
 
 ### 7. Chemistry block
 
-`chemistry_block!(state, meteo, grid, chemistry, dt)` dispatches on `typeof(chemistry)`. Operators: `ExponentialDecay` and `CompositeChemistry` support `CellState` (LatLon and RG) and `CubedSphereState`.
+`apply!(state, meteo, grid, chemistry, dt)` dispatches on `typeof(chemistry)`. Operators: `ExponentialDecay` and `CompositeChemistry` support `CellState` (LatLon and RG) and `CubedSphereState`.
 
 ### 8. Callbacks
 

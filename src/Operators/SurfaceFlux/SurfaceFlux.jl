@@ -31,7 +31,7 @@ using Adapt
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 using ...State: CellState, CubedSphereState, get_tracer, tracer_index, eachtracer
 using ...MetDrivers: current_time
-import ..apply!
+import ..AbstractOperator, ..apply!
 
 export SurfaceFluxSource, AbstractSurfaceFluxSource, TimeVaryingSurfaceFluxSource
 export AbstractFluxTemporalScheme, StepwiseFlux, LinearInterpFlux, ConservativeMeanFlux

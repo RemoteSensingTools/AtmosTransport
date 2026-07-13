@@ -142,7 +142,7 @@ cm = ds["co2_bl_column_mean"][:, :, end]   # last frame, (lon, lat)
 | Extreme CFL or NaNs | Vertical level ordering (preprocessor auto-detects but check the binary header), or stale binary. |
 | ~10 % mass loss per step | In-place sweep update bug; sweeps must ping-pong source/destination arrays. |
 | Surface emissions invisible in column means | Diffusion likely disabled. |
-| Uniform-tracer jump from 400 → ~535 ppm near the surface | Hybrid PE bug in vertical remap; should be direct `cumsum` PE. |
+| Uniform-tracer jump near the surface | Inconsistent pressure/mass geometry in preprocessing; verify layer pressure edges and stored vertical mass flux. |
 | Day-boundary continuity warnings | Regenerate the binary with the current preprocessor (the contract evolves). |
 
 The repository README carries the maintained Fast-Failure-Triage table.

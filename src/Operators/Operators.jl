@@ -62,7 +62,6 @@ export reconstruction_order, required_halo_width
 
 # Chemistry
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
-export chemistry_block!
 
 # Diffusion solver infrastructure + operator types
 export solve_tridiagonal!

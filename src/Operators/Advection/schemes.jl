@@ -64,7 +64,7 @@ scheme = SlopesScheme(MonotoneLimiter())
 strang_split!(state, fluxes, grid, scheme; workspace=ws)
 ```
 """
-abstract type AbstractAdvectionScheme end
+abstract type AbstractAdvectionScheme <: AbstractOperator end
 
 """
     AbstractConstantScheme <: AbstractAdvectionScheme

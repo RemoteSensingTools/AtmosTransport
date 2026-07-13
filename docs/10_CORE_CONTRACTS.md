@@ -14,7 +14,7 @@ The core does not advance concentrations directly.
 Mass basis is explicit in the type domain:
 
 - `CellState{DryBasis}` or `CellState{MoistBasis}`
-- `FluxState{DryBasis}` or `FluxState{MoistBasis}`
+- `AbstractFaceFluxState{DryBasis}` or `AbstractFaceFluxState{MoistBasis}`
 
 Rules:
 

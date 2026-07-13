@@ -127,5 +127,5 @@ All schemes use the same vertical advection: column-sequential upwind
 with double-buffering for mass conservation. The vertical sweep is
 independent of the horizontal scheme choice.
 
-For FV3-compatible transport, enable `vertical_remap = true` in the config
-to use conservative PPM remapping instead of explicit Z-advection.
+AtmosTransport currently uses explicit mass-flux Z-advection for every
+horizontal scheme; there is no runtime pressure-remap option.

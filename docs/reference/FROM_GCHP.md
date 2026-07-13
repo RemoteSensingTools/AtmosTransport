@@ -29,14 +29,14 @@ written in C180/C720 products.
 
 ### Moist vs dry basis
 GCHP runs on MOIST basis (`Use_Total_Air_Pressure > 0`). AtmosTransport
-supports both via `TransportPolicy`:
-- `mass_basis = :moist` — GCHP-compatible path
-- `mass_basis = :dry` — native dry-air transport
+represents this explicitly as `MoistBasis`; dry-air binaries use `DryBasis`.
+The state and face-flux basis tags must match.
 
-### Vertical remap
-GCHP's `map1_q2` conservative PPM remap is implemented in
-`src/Operators/Advection/vertical_remap.jl`. Uses direct cumsum PE
-(not hybrid formula) to avoid the 250 Pa mismatch between DELP and ak+bk*ps.
+### Vertical transport
+AtmosTransport consumes the vertical mass flux stored in the v4 binary and
+advects it in the Z sweep. It does not implement GCHP's runtime `map1_q2`
+pressure remap; any comparison must therefore distinguish horizontal-scheme
+parity from vertical-remap parity.
 
 ### No ESMF dependency
 GCHP uses ESMF for regridding and halo exchange. AtmosTransport uses:
@@ -94,7 +94,7 @@ mesh = CubedSphereMesh(Nc=90, Hp=3)  # for PPM
 | What | GCHP | AtmosTransport |
 |------|------|----------------|
 | Horizontal advection | `fv_tp_2d.F90` | `src/Operators/Advection/CubedSphereStrang.jl` |
-| Vertical remap | `fv_mapz.F90` | `src/Operators/Advection/vertical_remap.jl` |
+| Vertical transport | `fv_mapz.F90` | vertical mass-flux sweep in `StrangSplitting.jl` / `CubedSphereStrang.jl` |
 | Halo exchange | ESMF `halo` | `src/Operators/Advection/HaloExchange.jl` |
 | Panel connectivity | `CubedSphereGridComp` | `src/Grids/PanelConnectivity.jl` |
 | CS mesh geometry | FV3 grid generation | `src/Grids/CubedSphereMesh.jl` |

@@ -8,8 +8,8 @@ at kernel-launch time.
 
 The map is **NTuple-backed** rather than Dict-backed. Rationale:
 
-- Existing `DrivenSimulation.surface_sources::Tuple` storage is already
-  a tuple; the map type is a thin re-export with a lookup helper.
+- Runtime source construction naturally produces a small tuple; the map keeps
+  that storage and adds a lookup helper.
 - Tuples are bits-stable on GPU (captured by kernels without
   boxing / hashing); Dicts would require special Adapt handling and
   per-launch lookup cost.

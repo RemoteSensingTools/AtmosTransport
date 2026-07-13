@@ -22,7 +22,7 @@ Every concrete subtype implements two entry points:
   Used by the structured multi-tracer palindrome and the
   reduced-Gaussian face-indexed transport block.
 """
-abstract type AbstractSurfaceFluxOperator end
+abstract type AbstractSurfaceFluxOperator <: AbstractOperator end
 
 """
     NoSurfaceFlux()

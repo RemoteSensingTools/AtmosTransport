@@ -20,7 +20,7 @@ transport block → convection block → chemistry block.
 
 Defaults `chemistry = NoChemistry()`, `diffusion = NoDiffusion()`,
 `emissions = NoSurfaceFlux()`, `convection = NoConvection()` keep
-pre-refactor behaviour for callers that don't opt in.
+the inactive operator slots compile to no-op dispatches.
 
 # Convection fields
 
@@ -187,6 +187,25 @@ end
 
 @doc _TRANSPORT_MODEL_OVERVIEW TransportModel
 
+function _rebuild_model(model::TransportModel;
+                        state = model.state,
+                        fluxes = model.fluxes,
+                        grid = model.grid,
+                        advection = model.advection,
+                        workspace = model.workspace,
+                        chemistry = model.chemistry,
+                        diffusion = model.diffusion,
+                        emissions = model.emissions,
+                        convection = model.convection,
+                        convection_forcing = model.convection_forcing)
+    return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
+                          typeof(advection), typeof(workspace), typeof(chemistry),
+                          typeof(diffusion), typeof(emissions), typeof(convection),
+                          typeof(convection_forcing)}(
+        state, fluxes, grid, advection, workspace, chemistry, diffusion,
+        emissions, convection, convection_forcing)
+end
+
 function TransportModel(state::CellState{B},
                         fluxes::StructuredFaceFluxState{B},
                         grid::AtmosGrid{<:LatLonMesh},
@@ -276,14 +295,7 @@ model rather than held at the sim level, so this helper is primarily
 useful for tests that want to swap chemistry on a constructed model.
 """
 function with_chemistry(model::TransportModel, chemistry::AbstractChemistryOperator)
-    return TransportModel{typeof(model.state), typeof(model.fluxes),
-                          typeof(model.grid), typeof(model.advection),
-                          typeof(model.workspace), typeof(chemistry),
-                          typeof(model.diffusion), typeof(model.emissions),
-                          typeof(model.convection), typeof(model.convection_forcing)}(
-        model.state, model.fluxes, model.grid, model.advection,
-        model.workspace, chemistry, model.diffusion, model.emissions,
-        model.convection, model.convection_forcing)
+    return _rebuild_model(model; chemistry)
 end
 
 """
@@ -299,14 +311,7 @@ function with_diffusion(model::TransportModel, diffusion::AbstractDiffusion)
     workspace = TransportModelWorkspace(
         model.workspace.advection_ws, diffusion_ws;
         convection_ws = model.workspace.convection_ws)
-    return TransportModel{typeof(model.state), typeof(model.fluxes),
-                          typeof(model.grid), typeof(model.advection),
-                          typeof(workspace), typeof(model.chemistry),
-                          typeof(diffusion), typeof(model.emissions),
-                          typeof(model.convection), typeof(model.convection_forcing)}(
-        model.state, model.fluxes, model.grid, model.advection,
-        workspace, model.chemistry, diffusion, model.emissions,
-        model.convection, model.convection_forcing)
+    return _rebuild_model(model; workspace, diffusion)
 end
 
 """
@@ -321,14 +326,7 @@ model, so the palindrome's S slot runs at the right place in the
 transport block without sim-level post-step hacks.
 """
 function with_emissions(model::TransportModel, emissions::AbstractSurfaceFluxOperator)
-    return TransportModel{typeof(model.state), typeof(model.fluxes),
-                          typeof(model.grid), typeof(model.advection),
-                          typeof(model.workspace), typeof(model.chemistry),
-                          typeof(model.diffusion), typeof(emissions),
-                          typeof(model.convection), typeof(model.convection_forcing)}(
-        model.state, model.fluxes, model.grid, model.advection,
-        model.workspace, model.chemistry, model.diffusion, emissions,
-        model.convection, model.convection_forcing)
+    return _rebuild_model(model; emissions)
 end
 
 """
@@ -351,14 +349,7 @@ without disturbing the advection workspace.
 function with_convection(model::TransportModel, convection::AbstractConvection)
     workspace = _with_convection_workspace(
         model.workspace, _convection_workspace_for(convection, model.state, model.grid))
-    return TransportModel{typeof(model.state), typeof(model.fluxes),
-                          typeof(model.grid), typeof(model.advection),
-                          typeof(workspace), typeof(model.chemistry),
-                          typeof(model.diffusion), typeof(model.emissions),
-                          typeof(convection), typeof(model.convection_forcing)}(
-        model.state, model.fluxes, model.grid, model.advection,
-        workspace, model.chemistry, model.diffusion, model.emissions,
-        convection, model.convection_forcing)
+    return _rebuild_model(model; workspace, convection)
 end
 
 """
@@ -374,14 +365,7 @@ Also useful for tests that inject forcing directly without going
 through the sim's `_refresh_forcing!` path.
 """
 function with_convection_forcing(model::TransportModel, forcing::ConvectionForcing)
-    return TransportModel{typeof(model.state), typeof(model.fluxes),
-                          typeof(model.grid), typeof(model.advection),
-                          typeof(model.workspace), typeof(model.chemistry),
-                          typeof(model.diffusion), typeof(model.emissions),
-                          typeof(model.convection), typeof(forcing)}(
-        model.state, model.fluxes, model.grid, model.advection,
-        model.workspace, model.chemistry, model.diffusion, model.emissions,
-        model.convection, forcing)
+    return _rebuild_model(model; convection_forcing = forcing)
 end
 
 function Adapt.adapt_structure(to, model::TransportModel)
@@ -391,14 +375,8 @@ function Adapt.adapt_structure(to, model::TransportModel)
     diffusion          = Adapt.adapt(to, model.diffusion)
     emissions          = Adapt.adapt(to, model.emissions)
     convection_forcing = Adapt.adapt(to, model.convection_forcing)
-    return TransportModel{typeof(state), typeof(fluxes), typeof(model.grid),
-                          typeof(model.advection), typeof(workspace),
-                          typeof(model.chemistry), typeof(diffusion),
-                          typeof(emissions), typeof(model.convection),
-                          typeof(convection_forcing)}(
-        state, fluxes, model.grid, model.advection, workspace,
-        model.chemistry, diffusion, emissions,
-        model.convection, convection_forcing)
+    return _rebuild_model(model; state, fluxes, workspace, diffusion,
+                          emissions, convection_forcing)
 end
 
 """
@@ -431,7 +409,8 @@ chemistry block.
 """
 function convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
     _convection_block!(model.convection, model, dt)
-    SectionTimer.@section :chemistry chemistry_block!(model.state, meteo, model.grid, model.chemistry, dt)
+    SectionTimer.@section :chemistry apply!(model.state, meteo, model.grid,
+                                            model.chemistry, dt)
     return nothing
 end
 
@@ -455,7 +434,7 @@ block → chemistry block.
 With defaults `diffusion = NoDiffusion()`, `emissions = NoSurfaceFlux()`,
 `chemistry = NoChemistry()`, `convection = NoConvection()`, every live
 component is a dead branch and the call is bit-exact equivalent to
-pre-refactor advection.
+the advection-only path.
 
 `meteo` is optional and defaults to `nothing`; pass a real
 meteorology object (`AbstractMetDriver`) or a `DrivenSimulation`

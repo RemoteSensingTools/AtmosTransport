@@ -81,6 +81,15 @@ end
     @test occursin("face-indexed meshes supports UpwindScheme only", sprint(showerror, err))
 end
 
+@testset "physics families share AbstractOperator" begin
+    root = AtmosTransport.Operators.AbstractOperator
+    @test UpwindScheme() isa root
+    @test NoDiffusion() isa root
+    @test NoSurfaceFlux() isa root
+    @test NoConvection() isa root
+    @test NoChemistry() isa root
+end
+
 @testset "State and flux containers reject inconsistent storage" begin
     air = ones(Float64, 4, 3, 2)
     raw = zeros(Float64, 4, 3, 2, 1)

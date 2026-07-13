@@ -16,10 +16,10 @@
 #   structured mesh  → AbstractStructuredFaceFluxState  → cell-loop kernels
 #   unstructured mesh → AbstractUnstructuredFaceFluxState → face-loop kernels
 #
-# Per-physics roots are declared here; concrete subtypes live in
-# `src/Operators/<Physics>/operators.jl` and inherit from the matching root.
-# Each per-physics root exists exactly once — no parallel "operator"
-# vocabularies (e.g. there is no separate `AbstractDiffusionOperator`).
+# Diffusion and convection roots are declared here because those modules
+# extend them directly. Advection, chemistry, and surface-flux modules declare
+# their own family roots as subtypes of AbstractOperator. Each family has one
+# root and one apply! protocol.
 # ---------------------------------------------------------------------------
 
 """

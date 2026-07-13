@@ -24,7 +24,7 @@ concept mapping, workflow differences, and where to find familiar operations.
 
 ### No global arrays
 TM5 uses global `m(im,jm,lm)` and `rm(im,jm,lm,ntracerp)`. AtmosTransport
-passes explicit `CellState` + `FaceFluxState` objects through dispatch.
+passes explicit `CellState` + `AbstractFaceFluxState` objects through dispatch.
 
 ### Config-driven, no recompilation
 TM5 builds use `#ifdef` and Makefile options. AtmosTransport uses TOML configs:

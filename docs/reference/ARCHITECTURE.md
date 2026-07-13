@@ -1,171 +1,103 @@
-# AtmosTransport.jl — Architecture Guide
+# AtmosTransport architecture
 
-For the preprocessing-layer overview and the stable transport-binary target
-API, start with [PREPROCESSING_PHILOSOPHY.md](PREPROCESSING_PHILOSOPHY.md).
+AtmosTransport follows an Oceananigans-style composition model: grids,
+states, forcing drivers, and physics operators are concrete values, while
+Julia multiple dispatch selects topology- and backend-specific behavior.
 
-## Design Philosophy
+## Dependency direction
 
-AtmosTransport.jl follows the [Oceananigans.jl](https://github.com/CliMA/Oceananigans.jl)
-design philosophy: **physics operators are configuration objects, not stateful processors**.
-All behavior is determined by concrete types via Julia's multiple dispatch — no if/else
-branching on grid type or met source in hot paths.
-
-## Module Dependency Chain
-
-```
-Architectures  →  Parameters  →  Communications
+```text
+Architectures, Parameters
+          ↓
+Grids ── State
+   \      /
+    Operators
        ↓
-Grids  →  Fields
-       ↓
-Advection  →  Convection  →  Diffusion  →  Chemistry
-       ↓
-TimeSteppers  →  Adjoint  →  Callbacks
-       ↓
-Regridding  →  Diagnostics  →  Sources
-       ↓
-IO  →  Visualization  →  Models
+MetDrivers ── Preprocessing
+       \       /
+         Models
+           ↓
+Output, Footprint, Inversion, Visualization
 ```
 
-Each module may import from earlier modules but never from later ones. `Models`
-comes last because it depends on everything.
+The runtime core never reads raw meteorology. Preprocessing converts source
+data to the canonical v4 transport-binary contract; met drivers decode one
+forcing window at a time into basis-explicit state and face-flux containers.
 
-## Type Hierarchy
+## Core composition
 
-### Core Infrastructure
+- `AtmosGrid(horizontal, vertical, architecture)` combines mesh geometry,
+  hybrid pressure coordinates, and execution architecture.
+- `CellState{Basis}` stores packed tracer mass on lat-lon or face-indexed
+  reduced-Gaussian grids.
+- `CubedSphereState{Basis}` stores six halo-padded panels.
+- Face-flux state types mirror each topology and carry the same `DryBasis` or
+  `MoistBasis` tag as the prognostic state.
+- `TransportModel` owns concrete advection, diffusion, surface-flux,
+  convection, and chemistry operators plus independent workspaces.
+- `DrivenSimulation` owns the clock and the active met window; it refreshes
+  forcing and delegates numerical work to `TransportModel`.
 
-```
-AbstractArchitecture
-├── CPU                    # array_type → Array, device → KA.CPU()
-└── GPU                    # array_type → CuArray/MTLArray, device → CUDA/Metal backend
+## Operator hierarchy and step order
 
-AbstractGrid{FT, Arch}
-├── AbstractStructuredGrid{FT, Arch}
-│   ├── LatitudeLongitudeGrid    # ERA5, regular lat-lon
-│   └── CubedSphereGrid          # GEOS-FP C720, GEOS-IT C180
+All physics-family roots subtype `AbstractOperator` and use the shared
+`apply!` protocol. Concrete `No*` operators represent inactive slots.
 
-AbstractBufferingStrategy
-├── SingleBuffer           # sequential IO → compute → output
-└── DoubleBuffer           # overlapped IO + compute via async tasks
-```
-
-### Physics Operators
-
-Each operator type has a `No*` variant for pass-through and one or more implementations:
-
-```
-AbstractAdvectionScheme
-├── SlopesAdvection         # van Leer slopes, 2nd-order (lat-lon)
-└── PPMAdvection{ORD}       # Putman & Lin PPM, ORD ∈ {4,5,6,7} (cubed-sphere)
-
-AbstractConvection
-├── NoConvection
-├── TiedtkeConvection       # Tiedtke (1989) mass-flux scheme
-└── RASConvection           # Relaxed Arakawa-Schubert
-
-AbstractDiffusion
-├── NoDiffusion
-├── BoundaryLayerDiffusion  # static exponential Kz profile
-├── PBLDiffusion            # met-driven Kz (Beljaars & Viterbo 1998)
-└── NonLocalPBLDiffusion    # local + counter-gradient (Holtslag & Boville 1993)
-
-AbstractChemistry
-├── NoChemistry
-├── RadioactiveDecay        # exponential decay (e.g., ²²²Rn)
-└── CompositeChemistry      # multiple schemes combined
+```text
+transport palindrome
+  X → Y → Z → diffusion/surface center → Z → Y → X
+          ↓
+convection
+          ↓
+chemistry
 ```
 
-### Met Data Drivers
+Advection, diffusion, and convection own separate workspaces. Direct operator
+calls validate workspace topology, shape, element type, backend, and timestep
+before mutating state. Model constructors allocate the correct workspaces.
 
-```
-AbstractMetDriver{FT}
-├── ERA5MetDriver                  # reads raw winds, computes mass fluxes on-the-fly
-├── PreprocessedLatLonMetDriver    # reads preprocessed binary (lat-lon)
-└── GEOSFPCubedSphereMetDriver    # reads GEOS-FP/IT CS mass fluxes (binary or NetCDF)
-```
+## Supported topology/storage pairs
 
-### Emission Sources
+| Topology | State | Face fluxes | Advection |
+|---|---|---|---|
+| Lat-lon | `CellState` | `StructuredFaceFluxState` | upwind, slopes, PPM |
+| Reduced Gaussian | `CellState` | `FaceIndexedFluxState` | upwind |
+| Cubed sphere | `CubedSphereState` | `CubedSphereFaceFluxState` | split-sweep or Lin-Rood PPM |
 
-```
-AbstractSurfaceFlux
-├── SurfaceFlux{Layout}              # constant-in-time
-├── TimeVaryingSurfaceFlux{Layout}   # time-interpolated, optional cyclic wrapping
-├── EdgarSource                      # EDGAR v8.0 anthropogenic inventories
-├── CarbonTrackerSource              # CT-NRT biosphere/fire/ocean
-└── ...more inventory sources
-```
+Panel halos and topology-specific kernel layouts remain explicit because they
+encode real numerical ownership differences. The shared orchestration lives in
+the model/operator interfaces rather than flattening these representations.
 
-## Data Flow
+## Canonical binary boundary
 
-```
-TOML Config
-    │
-    ▼
-build_model_from_config()
-    │
-    ▼
-TransportModel{Arch, Grid, ...}
-    │
-    ▼
-run!(model)
-    │
-    ▼
-_run_loop!(model, grid, buffering)
-    │
-    ├── IOScheduler: load met data (CPU → GPU transfer)
-    ├── compute_air_mass_phase!: DELP × (1-QV) × area / g
-    ├── apply_emissions_phase!: surface flux injection
-    ├── advection_phase!: Strang split or Lin-Rood + vertical remap
-    ├── post_advection_physics!: convection, diffusion, chemistry
-    ├── apply_mass_correction!: global mass fixer
-    └── write_output!: binary or NetCDF output
-```
+Only format version 4 is supported. A header fully declares geometry,
+mass basis, sampling semantics, timestep schedule, payload sections, and
+floating-point storage. Contradictory or obsolete geometry is rejected rather
+than normalized through compatibility defaults.
 
-## Extension Points
+The preprocessing boundary owns physical conversions such as dry-air mass,
+convection entrainment/detrainment, exact TM5 `dkg`, and continuity closure.
+Runtime operators consume these prepared quantities without source-specific
+branches.
 
-| Want to add... | Subtype this | Implement these methods | Register in |
-|----------------|-------------|------------------------|-------------|
-| New grid type | `AbstractGrid{FT,Arch}` | `xnode`, `ynode`, `cell_area`, `Δx`, `Δy`, etc. | Phase functions in `physics_phases.jl` |
-| New advection | `AbstractAdvectionScheme` | `advect!`, `adjoint_advect!` + directional variants | `configuration.jl` |
-| New convection | `AbstractConvection` | `convect!`, `adjoint_convect!` | `configuration.jl` |
-| New diffusion | `AbstractDiffusion` | `diffuse!`, `adjoint_diffuse!` | `configuration.jl` |
-| New chemistry | `AbstractChemistry` | `apply_chemistry!`, `adjoint_apply_chemistry!` | `configuration.jl` |
-| New met source | `AbstractMetDriver` | `total_windows`, `load_transport_window`, etc. | driver implementation + TOML mapping |
-| New output | `AbstractOutputWriter` | `write_output!`, `finalize_output!` | `configuration.jl` |
-| New emissions | `AbstractSurfaceFlux` | `apply_surface_flux!` | `configuration.jl` |
+## Extension points
 
-## GPU Architecture
+| Add | Subtype or extend | Required interface |
+|---|---|---|
+| Horizontal mesh | `AbstractHorizontalMesh` | geometry, connectivity, flux topology |
+| Advection scheme | `AbstractAdvectionScheme` | topology-specific `apply!`/sweep methods |
+| Diffusion | `AbstractDiffusion` | `apply!` and workspace construction |
+| Surface flux | `AbstractSurfaceFluxOperator` | `apply!` / raw-buffer application |
+| Convection | `AbstractConvection` | forcing validation, workspace, `apply!` |
+| Chemistry | `AbstractChemistryOperator` | `apply!` |
+| Met driver | `AbstractMetDriver` | timing, grid, basis, window loading |
 
-All GPU kernels use KernelAbstractions.jl (`@kernel`, `@index`):
+Keep configuration parsing outside hot kernels. Runtime physics specs should
+materialize concrete operator values before model construction.
 
-```julia
-@kernel function my_kernel!(output, input, param)
-    i, j = @index(Global, NTuple)
-    @inbounds output[i, j] = input[i, j] * param
-end
+## GPU execution
 
-# Launch on any backend (CPU, CUDA, Metal)
-backend = get_backend(output)
-kernel! = my_kernel!(backend, 256)
-kernel!(output, input, param; ndrange=(Nx, Ny))
-```
-
-GPU extensions are loaded via weak dependencies (`ext/AtmosTransportCUDAExt.jl`,
-`ext/AtmosTransportMetalExt.jl`). The driven runtime selects the concrete
-backend from `[architecture].backend = "cpu" | "auto" | "cuda" | "metal"`;
-`"auto"` probes for a usable local GPU. Metal requires
-`[numerics] float_type = "Float32"`.
-
-## TransportPolicy
-
-Central configuration object (see `src/Models/transport_policy.jl`):
-
-```julia
-TransportPolicy(
-    vertical_operator = :continuity_cm,  # or :pressure_remap
-    pressure_basis    = :dry,            # or :moist
-    mass_balance_mode = :global_fixer    # or :none, :column
-)
-```
-
-Resolved from TOML config via `resolve_transport_policy(metadata)`, with backward
-compatibility for legacy boolean flags (`vertical_remap`, `dry_correction`, `mass_fixer`).
+Numerical kernels use KernelAbstractions and dispatch from the storage array's
+backend. CUDA and Metal support are loaded through package extensions. Backend
+adaptation moves state, forcing, and each operator workspace together; scalar
+GPU access is disabled in production runs.

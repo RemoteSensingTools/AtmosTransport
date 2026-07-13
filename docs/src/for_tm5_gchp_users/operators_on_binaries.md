@@ -33,7 +33,7 @@ diffusion, surface flux, convection, and chemistry:
 ```
 transport:  X → Y → Z → V(dt/2) → S(dt) → V(dt/2) → Z → Y → X
 convection: apply!(state, convection_forcing, grid, convection, dt)
-chemistry:  chemistry_block!(state, meteo, grid, chemistry, dt)
+chemistry:  apply!(state, meteo, grid, chemistry, dt)
 ```
 
 Where:

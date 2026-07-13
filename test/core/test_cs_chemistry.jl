@@ -172,16 +172,14 @@ for FT in (Float64, Float32)
 end # FT loop
 
 # =========================================================================
-# chemistry_block! dispatches cleanly to CubedSphereState via apply!
-# (it's topology-agnostic; no CS-specific method needed, but verify)
+# CompositeChemistry dispatches cleanly to CubedSphereState via apply!.
 # =========================================================================
-@testset "chemistry_block! on CubedSphereState" begin
+@testset "CompositeChemistry on CubedSphereState" begin
     state, _ = _make_cs_state(Float64)
     ops = (ExponentialDecay(Float64; Rn222 = RN222_HALF_LIFE),
            NoChemistry())
     dt = 3600.0
-    AtmosTransport.Operators.Chemistry.chemistry_block!(
-        state, nothing, nothing, ops, dt)
+    apply!(state, nothing, nothing, CompositeChemistry(ops), dt)
     expected = 2.0 * exp(-(log(2) / RN222_HALF_LIFE) * dt)
     for p in 1:6
         @test all(get_tracer(state, :Rn222)[p] .≈ expected)

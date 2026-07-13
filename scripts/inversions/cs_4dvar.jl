@@ -119,7 +119,7 @@ end
 function _build_covariance(cov_cfg, mesh, FT)
     kind = cov_cfg["kind"]
     sigma_value = FT(cov_cfg["sigma_value"])
-    sigma = ntuple(_ -> fill(sigma_value, mesh.geometry.Nc, mesh.geometry.Nc), 6)
+    sigma = ntuple(_ -> fill(sigma_value, mesh.Nc, mesh.Nc), 6)
     if kind == "diagonal"
         return AT.DiagonalCSCovariance(sigma)
     elseif kind == "isotropic_gaussian"
@@ -140,7 +140,7 @@ function _build_preconditioner(prec_cfg, covariance, mesh, FT)
     get(prec_cfg, "enabled", false) || return nothing
     optim_type = _optim_type(prec_cfg["optim_type"])
     bg_value = FT(prec_cfg["background_value"])
-    background = ntuple(_ -> fill(bg_value, mesh.geometry.Nc, mesh.geometry.Nc), 6)
+    background = ntuple(_ -> fill(bg_value, mesh.Nc, mesh.Nc), 6)
     return AT.CSSurfaceFluxPreconditioner(covariance, background, optim_type)
 end
 
@@ -177,7 +177,7 @@ end
 # ---------------------------------------------------------------------------
 
 function _build_synthetic_constant_problem(mesh, nsteps, FT)
-    N = mesh.geometry.Nc + 2mesh.Hp
+    N = mesh.Nc + 2mesh.Hp
     Nz = 3
     panels_m = ntuple(6) do p
         m = zeros(FT, N, N, Nz)
@@ -220,7 +220,7 @@ function _build_initial_control(cfg, mesh, prec, FT)
 
     initial = get(ctrl_cfg, "initial", "zeros")
     value = if initial == "zeros"
-        ntuple(_ -> zeros(FT, mesh.geometry.Nc, mesh.geometry.Nc), 6)
+        ntuple(_ -> zeros(FT, mesh.Nc, mesh.Nc), 6)
     elseif initial == "background"
         # "Start at background" means the PHYSICAL starting point
         # should be `x_b`. In unconditioned mode that's literally
@@ -232,7 +232,7 @@ function _build_initial_control(cfg, mesh, prec, FT)
         prec === nothing && throw(ArgumentError(
             "control.initial = \"background\" requires preconditioner.enabled = true " *
             "(unconditioned mode uses `initial = \"zeros\"` to start at 0)"))
-        ntuple(_ -> zeros(FT, mesh.geometry.Nc, mesh.geometry.Nc), 6)
+        ntuple(_ -> zeros(FT, mesh.Nc, mesh.Nc), 6)
     else
         throw(ArgumentError("unknown control.initial $(repr(initial)); " *
                             "expected 'zeros' or 'background'"))

@@ -207,7 +207,7 @@ function main()
         rows = NamedTuple[]
         for p in 1:6
             lons, lats = lonlat[p]
-            for j in 1:mesh.geometry.Nc, i in 1:mesh.geometry.Nc
+            for j in 1:mesh.Nc, i in 1:mesh.Nc
                 lon = Float64(lons[i, j])
                 lat = Float64(lats[i, j])
                 in_region(lon, lat, cfg.region) || continue

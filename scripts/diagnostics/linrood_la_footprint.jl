@@ -40,7 +40,7 @@ function _find_la_cell(mesh::AT.CubedSphereMesh)
     best_dist2 = Inf
     for p in 1:6
         lons, lats = AT.Grids.panel_cell_center_lonlat(mesh, p)
-        for j in 1:mesh.geometry.Nc, i in 1:mesh.geometry.Nc
+        for j in 1:mesh.Nc, i in 1:mesh.Nc
             dlon = lons[i, j] - la_lon
             dlon = mod(dlon + 180, 360) - 180  # wrap to [-180, 180]
             dlat = lats[i, j] - la_lat

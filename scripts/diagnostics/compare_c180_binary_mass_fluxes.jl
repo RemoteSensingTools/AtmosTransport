@@ -142,7 +142,7 @@ function latlon_area_vector(mesh::LatLonMesh)
 end
 
 function cs_area_vector(mesh)
-    nc = mesh.geometry.Nc
+    nc = mesh.Nc
     area = Vector{Float64}(undef, 6 * nc * nc)
     for p in 1:6, j in 1:nc, i in 1:nc
         area[i + (j - 1) * nc + (p - 1) * nc * nc] = Float64(mesh.cell_areas[i, j])
@@ -151,7 +151,7 @@ function cs_area_vector(mesh)
 end
 
 function cs_edge_mask(mesh)
-    nc = mesh.geometry.Nc
+    nc = mesh.Nc
     mask = Vector{Bool}(undef, 6 * nc * nc)
     for p in 1:6, j in 1:nc, i in 1:nc
         edge = (i <= EDGE_BAND) || (i > nc - EDGE_BAND) ||
@@ -290,7 +290,7 @@ function face_normal_to_geographic(up, vp, basis, panel, i, j)
 end
 
 function speed_fields_at_pressures(window, mesh, basis, dt_factor, targets)
-    nc = mesh.geometry.Nc
+    nc = mesh.Nc
     nt = length(targets)
     fields = [Vector{Float64}(undef, 6 * nc * nc) for _ in targets]
     dx = getfield(mesh, DX_FIELD)
@@ -341,7 +341,7 @@ function speed_fields_at_pressures(window, mesh, basis, dt_factor, targets)
 end
 
 function cm_abs_rate_fields_at_pressures(window, mesh, dt_factor, targets)
-    nc = mesh.geometry.Nc
+    nc = mesh.Nc
     nt = length(targets)
     fields = [Vector{Float64}(undef, 6 * nc * nc) for _ in targets]
     for p in 1:6

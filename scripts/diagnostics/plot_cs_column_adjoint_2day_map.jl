@@ -292,7 +292,7 @@ end
 function _demo_problem(; Nc::Int, Nz::Int=5, nsteps::Int, FT=Float32,
                        horizontal_cfl::Real=0.35, vertical_cfl::Real=0.05)
     mesh = CubedSphereMesh(Nc=Nc, Hp=3, FT=FT)
-    N = mesh.geometry.Nc + 2mesh.Hp
+    N = mesh.Nc + 2mesh.Hp
     Hp = mesh.Hp
     hcfl = FT(horizontal_cfl)
     vcfl = FT(vertical_cfl)
@@ -356,7 +356,7 @@ end
 
 function _demo_tm5_convection(mesh, panels_m)
     FT = eltype(panels_m[1])
-    Nc = mesh.geometry.Nc
+    Nc = mesh.Nc
     Nz = size(panels_m[1], 3)
     entu = ntuple(_ -> begin
         e = zeros(FT, Nc, Nc, Nz)
@@ -397,7 +397,7 @@ function _nearest_cs_cell(mesh, lon, lat)
     best = (dist=Inf, panel=1, i=1, j=1, lon=0.0, lat=0.0)
     for p in 1:6
         lons, lats = panel_cell_center_lonlat(mesh, p)
-        for j in 1:mesh.geometry.Nc, i in 1:mesh.geometry.Nc
+        for j in 1:mesh.Nc, i in 1:mesh.Nc
             d = _angular_distance_deg(lon, lat, lons[i, j], lats[i, j])
             if d < best.dist
                 best = (dist=d, panel=p, i=i, j=j,
@@ -418,14 +418,14 @@ function _aggregate_footprint(result)
 end
 
 function _flatten_map(mesh, panels)
-    n = 6 * mesh.geometry.Nc^2
+    n = 6 * mesh.Nc^2
     lons = Vector{Float64}(undef, n)
     lats = Vector{Float64}(undef, n)
     values = Vector{Float64}(undef, n)
     idx = 0
     for p in 1:6
         panel_lons, panel_lats = panel_cell_center_lonlat(mesh, p)
-        for j in 1:mesh.geometry.Nc, i in 1:mesh.geometry.Nc
+        for j in 1:mesh.Nc, i in 1:mesh.Nc
             idx += 1
             lons[idx] = _wrap_lon(panel_lons[i, j])
             lats[idx] = panel_lats[i, j]
@@ -550,7 +550,7 @@ function _mesh_panel_coords(mesh::CubedSphereMesh, lon::Real, lat::Real)
 end
 
 function _edge_coordinate_index(mesh::CubedSphereMesh, ξ::Real)
-    Nc = mesh.geometry.Nc
+    Nc = mesh.Nc
     law = coordinate_law(mesh)
     s = if law isa EquiangularGnomonic
         1.0 + (atan(ξ) + π / 4) * (2Nc / π)
@@ -674,10 +674,10 @@ function AtmosTransport.Adjoints._validate_objective(obj::_GridColumnMeanObjecti
     for receptor in obj.receptors
         1 <= receptor.panel <= 6 ||
             throw(ArgumentError("panel must be in 1:6, got $(receptor.panel)"))
-        1 <= receptor.i <= mesh.geometry.Nc ||
-            throw(ArgumentError("i must be in 1:$(mesh.geometry.Nc), got $(receptor.i)"))
-        1 <= receptor.j <= mesh.geometry.Nc ||
-            throw(ArgumentError("j must be in 1:$(mesh.geometry.Nc), got $(receptor.j)"))
+        1 <= receptor.i <= mesh.Nc ||
+            throw(ArgumentError("i must be in 1:$(mesh.Nc), got $(receptor.i)"))
+        1 <= receptor.j <= mesh.Nc ||
+            throw(ArgumentError("j must be in 1:$(mesh.Nc), got $(receptor.j)"))
     end
     return nothing
 end
@@ -781,11 +781,11 @@ function _copy_haloed_air_mass(window, mesh::CubedSphereMesh)
 end
 
 function _physical_air_mass(panel_m, mesh::CubedSphereMesh)
-    if size(panel_m, 1) == mesh.geometry.Nc && size(panel_m, 2) == mesh.geometry.Nc
+    if size(panel_m, 1) == mesh.Nc && size(panel_m, 2) == mesh.Nc
         return panel_m
     end
     Hp = mesh.Hp
-    return @view panel_m[Hp + 1:Hp + mesh.geometry.Nc, Hp + 1:Hp + mesh.geometry.Nc, :]
+    return @view panel_m[Hp + 1:Hp + mesh.Nc, Hp + 1:Hp + mesh.Nc, :]
 end
 
 function _validate_positive_air_mass!(panels_m::NTuple{6},
@@ -963,7 +963,7 @@ function _real_binary_problem(path::AbstractString; start_window::Int,
                                             driver.grid.vertical.A,
                                             driver.grid.vertical.B)
                 Nz = size(panels_m[1], 3)
-                kz_cache = ntuple(_ -> zeros(FT, mesh.geometry.Nc, mesh.geometry.Nc, Nz), 6)
+                kz_cache = ntuple(_ -> zeros(FT, mesh.Nc, mesh.Nc, Nz), 6)
                 if diffusion_kind === :tm5_beljaars_viterbo
                     diffusion_op = ImplicitVerticalDiffusion(;
                         kz_field = WindowPBLKzField(kz_cache))
@@ -1100,7 +1100,7 @@ function _column_footprint_checkpointed(mesh::CubedSphereMesh, chunks,
     AtmosTransport.Adjoints._seed_objective!(lambda_panels, objective,
                                              final_m_backend, mesh)
     reset_target_m = final_m_backend
-    total = ntuple(_ -> zeros(Float64, mesh.geometry.Nc, mesh.geometry.Nc), 6)
+    total = ntuple(_ -> zeros(Float64, mesh.Nc, mesh.Nc), 6)
     adv_scheme = _advection_scheme(scheme)
     storage = tape_storage === :pinned_host ?
         PinnedHostCSTapeStorage() :
@@ -1195,7 +1195,7 @@ function _plot_single(out::AbstractString; Nc::Int, days::Real, dt_hours::Real,
         checkpoint_chunks = problem.chunks
         final_m_checkpoint = problem.final_m
         reset_aware = problem.reset_aware
-        Nc = mesh.geometry.Nc
+        Nc = mesh.Nc
     end
     receptor = _nearest_cs_cell(mesh, receptor_lon, receptor_lat)
     kwargs = cs_binary === nothing ?

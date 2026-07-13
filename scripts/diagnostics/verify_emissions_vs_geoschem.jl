@@ -175,7 +175,7 @@ function main()
     driver = TransportBinaryDriver(BIN; FT = FT, arch = AtmosTransport.CPU())
     grid = driver_grid(driver)
     mesh = grid.horizontal
-    Nc = mesh.geometry.Nc
+    Nc = mesh.Nc
     @info "mesh" Nc
 
     # --- geometry alignment check vs GC ---

@@ -111,7 +111,7 @@ function _find_la_cell(mesh::CubedSphereMesh)
     best_dist2 = Inf
     for p in 1:6
         lons, lats = panel_cell_center_lonlat(mesh, p)
-        for j in 1:mesh.geometry.Nc, i in 1:mesh.geometry.Nc
+        for j in 1:mesh.Nc, i in 1:mesh.Nc
             dlon = lons[i, j] - la_lon
             dlon = mod(dlon + 180, 360) - 180
             dlat = lats[i, j] - la_lat

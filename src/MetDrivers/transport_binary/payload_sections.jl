@@ -238,17 +238,20 @@ function _transport_window_field(window, section::Symbol)
     end
 end
 
+@inline _transport_window_has_value(window, name::Symbol) =
+    haskey(window, name) && getfield(window, name) !== nothing
+
 function _transport_push_optional_sections!(sections::Vector{Symbol}, window)
     haskey(window, :qv) && throw(ArgumentError(
         "single-field qv is not part of the maintained version-4 contract; " *
         "provide qv_start and qv_end"))
-    haskey(window, :qv_start) && push!(sections, :qv_start)
-    haskey(window, :qv_end) && push!(sections, :qv_end)
-    haskey(window, :dam) && push!(sections, :dam)
-    haskey(window, :dbm) && push!(sections, :dbm)
-    haskey(window, :dhflux) && push!(sections, :dhflux)
-    haskey(window, :dcm) && push!(sections, :dcm)
-    haskey(window, :dm) && push!(sections, :dm)
+    _transport_window_has_value(window, :qv_start) && push!(sections, :qv_start)
+    _transport_window_has_value(window, :qv_end) && push!(sections, :qv_end)
+    _transport_window_has_value(window, :dam) && push!(sections, :dam)
+    _transport_window_has_value(window, :dbm) && push!(sections, :dbm)
+    _transport_window_has_value(window, :dhflux) && push!(sections, :dhflux)
+    _transport_window_has_value(window, :dcm) && push!(sections, :dcm)
+    _transport_window_has_value(window, :dm) && push!(sections, :dm)
     if _transport_window_has_surface(window)
         push!(sections, :pblh)
         push!(sections, :ustar)
@@ -293,11 +296,11 @@ function _transport_validate_basis(window, basis_sym::Symbol)
 end
 
 function _transport_validate_humidity_endpoints(window, expected)
-    if haskey(window, :qv_start)
+    if _transport_window_has_value(window, :qv_start)
         size(window.qv_start) == expected ||
             throw(DimensionMismatch("window qv_start has size $(size(window.qv_start)), expected $(expected)"))
     end
-    if haskey(window, :qv_end)
+    if _transport_window_has_value(window, :qv_end)
         size(window.qv_end) == expected ||
             throw(DimensionMismatch("window qv_end has size $(size(window.qv_end)), expected $(expected)"))
     end
@@ -325,19 +328,19 @@ function _transport_validate_optional_vdiff(window, expected)
 end
 
 function _transport_validate_optional_structured_deltas(window, Nx::Int, Ny::Int, nlevel::Int)
-    if haskey(window, :dam)
+    if _transport_window_has_value(window, :dam)
         size(window.dam) == (Nx + 1, Ny, nlevel) ||
             throw(DimensionMismatch("window dam has size $(size(window.dam)), expected $((Nx + 1, Ny, nlevel))"))
     end
-    if haskey(window, :dbm)
+    if _transport_window_has_value(window, :dbm)
         size(window.dbm) == (Nx, Ny + 1, nlevel) ||
             throw(DimensionMismatch("window dbm has size $(size(window.dbm)), expected $((Nx, Ny + 1, nlevel))"))
     end
-    if haskey(window, :dcm)
+    if _transport_window_has_value(window, :dcm)
         size(window.dcm) == (Nx, Ny, nlevel + 1) ||
             throw(DimensionMismatch("window dcm has size $(size(window.dcm)), expected $((Nx, Ny, nlevel + 1))"))
     end
-    if haskey(window, :dm)
+    if _transport_window_has_value(window, :dm)
         size(window.dm) == (Nx, Ny, nlevel) ||
             throw(DimensionMismatch("window dm has size $(size(window.dm)), expected $((Nx, Ny, nlevel))"))
     end
@@ -345,15 +348,15 @@ function _transport_validate_optional_structured_deltas(window, Nx::Int, Ny::Int
 end
 
 function _transport_validate_optional_faceindexed_deltas(window, ncell::Int, nface_h::Int, nlevel::Int)
-    if haskey(window, :dhflux)
+    if _transport_window_has_value(window, :dhflux)
         size(window.dhflux) == (nface_h, nlevel) ||
             throw(DimensionMismatch("window dhflux has size $(size(window.dhflux)), expected $((nface_h, nlevel))"))
     end
-    if haskey(window, :dcm)
+    if _transport_window_has_value(window, :dcm)
         size(window.dcm) == (ncell, nlevel + 1) ||
             throw(DimensionMismatch("window dcm has size $(size(window.dcm)), expected $((ncell, nlevel + 1))"))
     end
-    if haskey(window, :dm)
+    if _transport_window_has_value(window, :dm)
         size(window.dm) == (ncell, nlevel) ||
             throw(DimensionMismatch("window dm has size $(size(window.dm)), expected $((ncell, nlevel))"))
     end

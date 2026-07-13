@@ -124,6 +124,15 @@ end
             @test_throws ArgumentError MD.close_streaming_transport_binary!(writer)
             @test !ispath(path)
             @test !ispath(writer.staging_path)
+
+            empty_path = joinpath(dir, "rg-empty-optionals.bin")
+            empty_writer, empty_window = _open_rg(empty_path)
+            MD.write_streaming_window!(
+                empty_writer,
+                merge(empty_window, (; qv_start=nothing, qv_end=nothing, dm=nothing)),
+            )
+            MD.close_streaming_transport_binary!(empty_writer)
+            @test isfile(empty_path)
         end
 
         @testset "CS validates arguments, panel count, and every panel shape" begin
@@ -175,6 +184,23 @@ end
             @test_throws ArgumentError MD.close_streaming_transport_binary!(writer)
             @test !ispath(path)
             @test !ispath(writer.staging_path)
+
+            empty_path = joinpath(dir, "cs-empty-optionals.bin")
+            empty_writer = MD.open_streaming_cs_transport_binary(
+                empty_path, Nc, npanel, Nz, 1, vc;
+                FT=Float32, header_bytes=4096, steps_per_window=1,
+                mass_basis=:dry,
+            )
+            empty_optionals = (
+                cmfmc=nothing, dtrain=nothing, dkg=nothing,
+                surface=nothing, vdiff=nothing,
+                qv_start=nothing, qv_end=nothing,
+                dam=nothing, dbm=nothing, dhflux=nothing, dcm=nothing,
+            )
+            MD.write_streaming_cs_window!(
+                empty_writer, merge(window, empty_optionals), Nc, npanel)
+            MD.close_streaming_transport_binary!(empty_writer)
+            @test isfile(empty_path)
         end
 
         @testset "extra metadata cannot rewrite structural fields" begin
@@ -238,6 +264,29 @@ end
                 bad = deepcopy(header)
                 bad[key] = fill(first(bad[key]), length(bad[key]))
                 @test_throws ArgumentError MD.validate_transport_contract!(bad)
+            end
+        end
+
+        @testset "eager writers ignore empty optional slots" begin
+            cases = (
+                ("ll", _ll_fixture,
+                 (; qv_start=nothing, qv_end=nothing,
+                    dam=nothing, dbm=nothing, dcm=nothing, dm=nothing)),
+                ("rg", _rg_fixture,
+                 (; qv_start=nothing, qv_end=nothing,
+                    dhflux=nothing, dcm=nothing, dm=nothing)),
+            )
+            for (name, fixture, empty_optionals) in cases
+                path = joinpath(dir, "$(name)-eager-empty-optionals.bin")
+                grid, window = fixture()
+                MD.write_transport_binary(
+                    path, grid, [merge(window, empty_optionals)];
+                    FT=Float32, header_bytes=4096, steps_per_window=1,
+                    source_flux_sampling=:window_start_endpoint,
+                    humidity_sampling=:none, delta_semantics=:none,
+                    mass_basis=:dry,
+                )
+                @test isfile(path)
             end
         end
 

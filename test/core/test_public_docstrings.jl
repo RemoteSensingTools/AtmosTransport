@@ -38,14 +38,20 @@ const DOCUMENTED_MET_DRIVER_API = (
     :driver_grid,
 )
 
+function has_attached_doc(module_::Module, name::Symbol)
+    isdefined(module_, name) || return false
+    binding = Base.Docs.Binding(module_, name)
+    return haskey(Base.Docs.meta(binding.mod), binding)
+end
+
 @testset "core public API has attached docstrings" begin
     for name in DOCUMENTED_CORE_API
-        @test Base.Docs.hasdoc(AtmosTransport, name)
+        @test has_attached_doc(AtmosTransport, name)
     end
 end
 
 @testset "met-driver API has attached docstrings" begin
     for name in DOCUMENTED_MET_DRIVER_API
-        @test Base.Docs.hasdoc(AtmosTransport.MetDrivers, name)
+        @test has_attached_doc(AtmosTransport.MetDrivers, name)
     end
 end

@@ -982,7 +982,7 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                        grid::AtmosGrid{<:LatLonMesh},
                        scheme::AbstractAdvectionScheme;
                        workspace::AdvectionWorkspace,
-                       diffusion_workspace = workspace,
+                       diffusion_workspace = nothing,
                        cfl_limit::Real = one(eltype(state.air_mass)),
                        diffusion_op::AbstractDiffusion = NoDiffusion(),
                        emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
@@ -1122,12 +1122,13 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                        grid::AtmosGrid{<:CubedSphereMesh},
                        scheme::AbstractAdvectionScheme;
                        workspace,
-                       diffusion_workspace = workspace,
+                       diffusion_workspace = nothing,
                        cfl_limit::Real = 0.95,
                        diffusion_op::AbstractDiffusion = NoDiffusion(),
                        emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                        meteo = nothing,
                        dt::Union{Nothing, Real} = nothing) where {B <: AbstractMassBasis}
+    _require_diffusion_workspace(diffusion_op, diffusion_workspace)
     (!(diffusion_op isa NoDiffusion) || !(emissions_op isa NoSurfaceFlux)) &&
         dt === nothing && throw(ArgumentError(
             "cubed-sphere transport with diffusion or surface flux requires the step dt"))
@@ -1243,7 +1244,7 @@ function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                 grid::AtmosGrid{<:LatLonMesh},
                 scheme::AbstractAdvectionScheme, dt;
                 workspace::AdvectionWorkspace,
-                diffusion_workspace = workspace,
+                diffusion_workspace = nothing,
                 cfl_limit::Real = one(eltype(state.air_mass)),
                 diffusion_op::AbstractDiffusion = NoDiffusion(),
                 emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
@@ -1270,13 +1271,13 @@ end
                          grid::AtmosGrid{<:LatLonMesh},
                          ::NoAdvection, dt;
                          workspace = nothing,
-                         diffusion_workspace = workspace,
+                         diffusion_workspace = nothing,
                          cfl_limit::Real = one(eltype(state.air_mass)),
                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
     _noadvection_reject_emissions_op(emissions_op)
-    _noadvection_require_workspace(diffusion_workspace, diffusion_op)
+    _require_diffusion_workspace(diffusion_op, diffusion_workspace)
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion: skip the Strang half-step structure
         # entirely and apply a single V(dt) step on the LL state. The
@@ -1306,20 +1307,15 @@ end
     return nothing
 end
 
-# Workspace guard for the direct `apply!` API: when diffusion is active
-# the mass-flux VMR kernels require a dedicated `DiffusionWorkspace`. The production `TransportModel`
-# constructor allocates a workspace automatically when diffusion is on,
-# so this only trips when callers reach the public apply! directly with
-# `workspace = nothing`. Throw an ArgumentError pointing at the fix.
-@inline function _noadvection_require_workspace(diffusion_workspace,
-                                                diffusion_op::AbstractDiffusion)
-    if !(diffusion_op isa NoDiffusion) && diffusion_workspace === nothing
-        throw(ArgumentError(
-            "NoAdvection + diffusion requires `diffusion_workspace = " *
-            "DiffusionWorkspace(state)`, or a TransportModel that allocates " *
-            "the workspace automatically."))
-    end
-    return nothing
+# Validate the direct operator API before any advection sweep mutates state.
+# TransportModel supplies this workspace automatically; direct callers must
+# make the operator's storage ownership explicit.
+@inline _require_diffusion_workspace(::NoDiffusion, _) = nothing
+@inline _require_diffusion_workspace(::AbstractDiffusion, ::DiffusionWorkspace) = nothing
+function _require_diffusion_workspace(op::AbstractDiffusion, workspace)
+    throw(ArgumentError(
+        "$(typeof(op)) requires `diffusion_workspace = DiffusionWorkspace(state)`; " *
+        "got $(typeof(workspace))."))
 end
 
 function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
@@ -1333,7 +1329,7 @@ function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
                 grid::AtmosGrid{<:CubedSphereMesh},
                 scheme::AbstractAdvectionScheme, dt;
                 workspace,
-                diffusion_workspace = workspace,
+                diffusion_workspace = nothing,
                 cfl_limit::Real = 0.95,
                 diffusion_op::AbstractDiffusion = NoDiffusion(),
                 emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
@@ -1358,13 +1354,13 @@ end
                          grid::AtmosGrid{<:CubedSphereMesh},
                          ::NoAdvection, dt;
                          workspace = nothing,
-                         diffusion_workspace = workspace,
+                         diffusion_workspace = nothing,
                          cfl_limit::Real = 0.95,
                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
     _noadvection_reject_emissions_op(emissions_op)
-    _noadvection_require_workspace(diffusion_workspace, diffusion_op)
+    _require_diffusion_workspace(diffusion_op, diffusion_workspace)
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion on CS: single V(dt) step via the
         # mass-flux VMR wrapper. State carries `state.halo_width`.
@@ -1385,13 +1381,13 @@ end
                          grid::AtmosGrid{<:AbstractHorizontalMesh},
                          ::NoAdvection, dt;
                          workspace = nothing,
-                         diffusion_workspace = workspace,
+                         diffusion_workspace = nothing,
                          cfl_limit::Real = one(eltype(state.air_mass)),
                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
     _noadvection_reject_emissions_op(emissions_op)
-    _noadvection_require_workspace(diffusion_workspace, diffusion_op)
+    _require_diffusion_workspace(diffusion_op, diffusion_workspace)
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion on face-indexed RG: single V(dt) step.
         apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
@@ -1417,11 +1413,12 @@ for (scheme_type, h_sweep, v_sweep) in (
                           grid::AtmosGrid{<:AbstractHorizontalMesh},
                           scheme::$scheme_type, dt;
                           workspace::AdvectionWorkspace,
-                          diffusion_workspace = workspace,
+                          diffusion_workspace = nothing,
                           cfl_limit::Real = one(eltype(state.air_mass)),
                           diffusion_op::AbstractDiffusion = NoDiffusion(),
                           emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                           meteo = nothing) where {B <: AbstractMassBasis}
+        _require_diffusion_workspace(diffusion_op, diffusion_workspace)
         m = state.air_mass
         hflux, cm = fluxes.horizontal_flux, fluxes.cm
         cfl_limit_ft = convert(eltype(m), cfl_limit)
@@ -1571,12 +1568,13 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
                           ws::AdvectionWorkspace{FT};
                           cfl_limit::Real = one(FT),
                           diffusion_op::AbstractDiffusion = NoDiffusion(),
-                          diffusion_workspace = ws,
+                          diffusion_workspace = nothing,
                           emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                           tracer_names::Union{Nothing, Tuple} = nothing,
                           meteo = nothing,
                           grid = nothing,
                           dt::Union{Nothing, Real} = nothing) where FT
+    _require_diffusion_workspace(diffusion_op, diffusion_workspace)
     cfl_ft = convert(FT, cfl_limit)
 
     # CFL subcycling per direction (reuse single-tracer pilot on the 3D mass)

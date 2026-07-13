@@ -499,10 +499,9 @@ using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
 # ---------------------------------------------------------------------------
 # Diffusion layer-thickness refresh.
 #
-# `apply_vertical_diffusion_vmr!` uses `dz` per cell — if the workspace's
-# `layer_thickness` array is left at its default zeros (the allocator initializes
-# it that way), every diffusion step nukes the tracer field to NaN starting
-# from frame 2. We refresh it from the just-loaded window's
+# `apply_vertical_diffusion_vmr!` uses `dz` per cell. The workspace allocator
+# intentionally leaves `layer_thickness` undefined, so it must be refreshed
+# from the just-loaded window's
 # surface pressure + the grid's hybrid-σp coefficients each time the
 # simulation advances to a new met window.
 #
@@ -766,7 +765,6 @@ function _maybe_advance_window!(sim::DrivenSimulation)
         # `air_mass_reset_mode` controls whether the binary endpoint is still
         # treated as authoritative at window boundaries.
         invalidate_cmfmc_cache!(sim.model.workspace.convection_ws)
-        invalidate_tm5_cache!(sim.model.workspace.convection_ws)
         _start_window_prefetch!(sim, next_window + 1)
     end
     return nothing

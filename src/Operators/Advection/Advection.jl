@@ -19,7 +19,6 @@ Provides:
 
 **Infrastructure**:
 - `AdvectionWorkspace` + `strang_split!` — Strang splitting orchestrator
-- `diagnose_cm!` — vertical-flux diagnosis shim
 - CFL utilities for subcycling decisions
 """
 module Advection
@@ -33,7 +32,7 @@ using ...SectionTimer
 # center of `strang_split_mt!` can dispatch on `AbstractDiffusion`
 # concretions. `NoDiffusion`'s `apply_vertical_diffusion_vmr!` method is
 # `= nothing`, keeping the default path bit-exact with the no-op behavior.
-using ..Diffusion: AbstractDiffusion, NoDiffusion,
+using ..Diffusion: AbstractDiffusion, DiffusionWorkspace, NoDiffusion,
                    apply_vertical_diffusion_vmr!,
                    uses_diffusive_surface_flux_boundary
 # SurfaceFlux is loaded before Advection in Operators.jl so the palindrome
@@ -52,7 +51,7 @@ using ...Grids: AtmosGrid, AbstractHorizontalMesh, AbstractStructuredMesh,
     LatLonMesh, CubedSphereMesh, face_cells, nfaces,
     PanelConnectivity, reciprocal_edge,
     EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
-using ...MetDrivers: diagnose_cm_from_continuity!, uses_binary_substep_contract
+using ...MetDrivers: uses_binary_substep_contract
 using ...Architectures: _kahan_add
 
 # New scheme hierarchy (include before anything that references these types)
@@ -76,7 +75,6 @@ include("linrood_adjoint_kernels.jl")
 # Vertical remap (FV3-style conservative PPM, per-column)
 include("VerticalRemap.jl")
 
-include("Divergence.jl")
 include("StrangSplitting.jl")
 
 end # module Advection

@@ -21,9 +21,8 @@ the model-facing `apply!` entrypoints that the transport block calls.
 - Cubed-sphere halo support:
   [`HaloExchange.jl`](HaloExchange.jl)
   provides `fill_panel_halos!` and `copy_corners!`
-- Vertical mass-flux diagnosis:
-  [`Divergence.jl`](Divergence.jl)
-  provides `diagnose_cm!`
+- Vertical mass-flux diagnosis is provided by the meteorology contract as
+  `diagnose_cm_from_continuity!`.
 
 ## Runtime Shape
 
@@ -62,8 +61,6 @@ the model-facing `apply!` entrypoints that the transport block calls.
   Lin-Rood adjoint kernel helpers used by the CS reverse path
 - [`VerticalRemap.jl`](VerticalRemap.jl) — conservative vertical remap
   helpers used by CS/FV3-style paths
-- [`Divergence.jl`](Divergence.jl) — divergence and vertical-flux
-  diagnosis utilities
 
 ## Common Tasks
 
@@ -107,8 +104,8 @@ the model-facing `apply!` entrypoints that the transport block calls.
 - Runtime walkthrough:
   [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Tests:
-  - [`../../../test/test_advection_kernels.jl`](../../../test/test_advection_kernels.jl)
-  - [`../../../test/test_cubed_sphere_advection.jl`](../../../test/test_cubed_sphere_advection.jl)
-  - [`../../../test/test_basis_explicit_core.jl`](../../../test/test_basis_explicit_core.jl)
-  - [`../../../test/test_emissions_palindrome.jl`](../../../test/test_emissions_palindrome.jl)
+  - [`../../../test/core/test_advection_kernels.jl`](../../../test/core/test_advection_kernels.jl)
+  - [`../../../test/core/test_cubed_sphere_advection.jl`](../../../test/core/test_cubed_sphere_advection.jl)
+  - [`../../../test/core/test_basis_explicit_core.jl`](../../../test/core/test_basis_explicit_core.jl)
+  - [`../../../test/orphan/test_emissions_palindrome.jl`](../../../test/orphan/test_emissions_palindrome.jl)
   - [`../../../test/core/test_diffusion_palindrome_contract.jl`](../../../test/core/test_diffusion_palindrome_contract.jl)

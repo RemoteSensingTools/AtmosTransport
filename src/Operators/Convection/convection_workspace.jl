@@ -183,7 +183,7 @@ Constructed once at `DrivenSimulation` setup time via
 `Adapt.adapt_structure` adapts each array to the requested backend
 without reallocating on the host.
 """
-struct TM5Workspace{FT, M, P, C, F, A, CA, CM, CP, CV}
+struct TM5Workspace{FT, M, P, C, F, A, CA}
     conv1       :: M
     pivots      :: P
     cloud_dims  :: C
@@ -191,18 +191,6 @@ struct TM5Workspace{FT, M, P, C, F, A, CA, CM, CP, CV}
     amu_scratch :: A
     amd_scratch :: A
     cell_metrics :: CA
-    # Optional LU-factor cache fields (allocated only when the
-    # operator requests it). `cache_A` mirrors `conv1` per-grid-cell
-    # (so its leading dim is `Nz × Nz` matching `_tm5_build_conv1!`'s
-    # output), `cache_pivots` mirrors `pivots`, and `cache_valid` is a
-    # single host-side sentinel: `false` after window-advance, set to
-    # `true` by the miss kernel once the cache has been populated for
-    # the current met window. When the cache is disabled all three
-    # carry `nothing`; the dispatcher then falls through to the cache-
-    # free collaborative kernel without touching these fields.
-    cache_A     :: CM
-    cache_pivots:: CP
-    cache_valid :: CV   # Base.RefValue{Bool} or Nothing
 end
 
 # Topology-shape introspection helpers used by the tile workspace
@@ -296,8 +284,7 @@ Specifying both is an error.
 function TM5Workspace(air_mass;
                       tile_columns::Union{Integer, Nothing} = nothing,
                       tile_workspace_gib::Union{Real, Nothing} = nothing,
-                      cell_metrics = nothing,
-                      cache_columns::Union{Integer, Nothing} = nothing)
+                      cell_metrics = nothing)
     Nz          = _tm5_extract_Nz(air_mass)
     template    = _tm5_template(air_mass)
     FT          = eltype(template)
@@ -320,35 +307,12 @@ function TM5Workspace(air_mass;
     amu_scratch = similar(template, FT,  Nz + 1, B)
     amd_scratch = similar(template, FT,  Nz + 1, B)
     metrics = cell_metrics === nothing ? nothing : _cmfmc_metric_buffer(cell_metrics, FT)
-    # Optional LU-factor cache. `cache_columns` is the *total* per-topology
-    # cell count to allocate cache slots for; pass `nothing` (default)
-    # to disable the cache. The memory cost is `Nz² · cache_columns ·
-    # sizeof(FT) + Nz · cache_columns · sizeof(Int)` — at C180/L85
-    # Float32 that is ~5.6 GiB across all six CS panels, so the cache
-    # is opt-in by design (see `TM5Convection.use_collab_lu`).
-    cache_A, cache_pivots, cache_valid = if cache_columns === nothing
-        nothing, nothing, nothing
-    else
-        Int(cache_columns) > 0 ||
-            throw(ArgumentError("TM5Workspace: cache_columns must be > 0"))
-        # `cache_pivots` is `Int32` (matching the collab kernel's
-        # `@localmem piv_loc :: Int32`) so the upcoming hit-kernel
-        # can copy global → shared without a type-mismatch
-        # truncation. The legacy `pivots` field above stays `Int` for
-        # backwards compatibility with the per-thread LU.
-        (similar(template, FT,    Nz, Nz, Int(cache_columns)),
-         similar(template, Int32, Nz,     Int(cache_columns)),
-         Ref{Bool}(false))
-    end
     return TM5Workspace{FT,
                         typeof(conv1), typeof(pivots), typeof(cloud_dims),
                         typeof(f_scratch), typeof(amu_scratch),
-                        typeof(metrics),
-                        typeof(cache_A), typeof(cache_pivots),
-                        typeof(cache_valid)}(
+                        typeof(metrics)}(
         conv1, pivots, cloud_dims,
         f_scratch, amu_scratch, amd_scratch, metrics,
-        cache_A, cache_pivots, cache_valid,
     )
 end
 
@@ -361,42 +325,14 @@ function Adapt.adapt_structure(to, ws::TM5Workspace{FT}) where FT
     amu_scratch = Adapt.adapt(to, ws.amu_scratch)
     amd_scratch = Adapt.adapt(to, ws.amd_scratch)
     cell_metrics = ws.cell_metrics === nothing ? nothing : Adapt.adapt(to, ws.cell_metrics)
-    cache_A      = ws.cache_A      === nothing ? nothing : Adapt.adapt(to, ws.cache_A)
-    cache_pivots = ws.cache_pivots === nothing ? nothing : Adapt.adapt(to, ws.cache_pivots)
-    # `cache_valid` is a Ref{Bool} kept on the host even on GPU adapts —
-    # it controls dispatch, not arithmetic, so it never crosses to device.
-    cache_valid  = ws.cache_valid === nothing ? nothing : Ref{Bool}(ws.cache_valid[])
     return TM5Workspace{FT,
                         typeof(conv1), typeof(pivots), typeof(cloud_dims),
                         typeof(f_scratch), typeof(amu_scratch),
-                        typeof(cell_metrics),
-                        typeof(cache_A), typeof(cache_pivots),
-                        typeof(cache_valid)}(
+                        typeof(cell_metrics)}(
         conv1, pivots, cloud_dims,
         f_scratch, amu_scratch, amd_scratch, cell_metrics,
-        cache_A, cache_pivots, cache_valid,
     )
 end
 
-"""
-    invalidate_tm5_cache!(ws::TM5Workspace) -> nothing
-    invalidate_tm5_cache!(::Any) -> nothing
-
-Mark the LU-factor cache stale. Called on met-window advance by
-`DrivenSimulation._maybe_advance_window!` so the next `apply!` repopulates
-the cache from the new forcing fields. The polymorphic no-op default
-keeps the call site type-agnostic (the same way `invalidate_cmfmc_cache!`
-is structured).
-
-When the cache is disabled (`ws.cache_valid === nothing`) this is also a
-no-op — the workspace simply has nothing to invalidate.
-"""
-function invalidate_tm5_cache!(ws::TM5Workspace)
-    ws.cache_valid === nothing && return nothing
-    ws.cache_valid[] = false
-    return nothing
-end
-invalidate_tm5_cache!(::Any) = nothing
-
 export CMFMCWorkspace, invalidate_cmfmc_cache!
-export TM5Workspace, derive_tile_columns, invalidate_tm5_cache!
+export TM5Workspace, derive_tile_columns

@@ -430,8 +430,8 @@ end
     if HAS_CUDA_FOR_ADAPT
         model_gpu = Adapt.adapt(CUDA.CuArray, TransportModel(CellState(DryBasis, copy(m); CO2=copy(rm)),
                                                              deepcopy(fluxes), grid, UpwindScheme()))
-        @test model_gpu.workspace.face_left isa CUDA.CuArray{Int32, 1}
-        @test model_gpu.workspace.face_right isa CUDA.CuArray{Int32, 1}
+        @test model_gpu.workspace.advection_ws.face_left isa CUDA.CuArray{Int32, 1}
+        @test model_gpu.workspace.advection_ws.face_right isa CUDA.CuArray{Int32, 1}
 
         step!(model_gpu, FT(1800))
 
@@ -473,14 +473,14 @@ end
     model_host = Adapt.adapt(Array, model)
     @test model_host.state.air_mass isa Array{FT,3}
     @test model_host.fluxes.am isa Array{FT,3}
-    @test model_host.workspace.rm_A isa Array{FT,3}
+    @test model_host.workspace.advection_ws.rm_A isa Array{FT,3}
     @test model_host.grid === model.grid
 
     if HAS_CUDA_FOR_ADAPT
         model_gpu = Adapt.adapt(CUDA.CuArray, model)
         @test model_gpu.state.air_mass isa CUDA.CuArray{FT,3}
         @test model_gpu.fluxes.am isa CUDA.CuArray{FT,3}
-        @test model_gpu.workspace.rm_A isa CUDA.CuArray{FT,3}
+        @test model_gpu.workspace.advection_ws.rm_A isa CUDA.CuArray{FT,3}
         @test model_gpu.grid === model.grid
     end
 end

@@ -90,6 +90,6 @@ runs on the host and may refresh caches before an operator launch.
   this directory's field implementations and
   [`../../MetDrivers/README.md`](../../MetDrivers/README.md)
 - Tests:
-  - [`../../../test/test_fields.jl`](../../../test/test_fields.jl)
+  - [`../../../test/orphan/test_fields.jl`](../../../test/orphan/test_fields.jl)
   - [`../../../test/core/test_diffusion_mass_flux_conservation.jl`](../../../test/core/test_diffusion_mass_flux_conservation.jl)
-  - [`../../../test/test_current_time.jl`](../../../test/test_current_time.jl)
+  - [`../../../test/orphan/test_current_time.jl`](../../../test/orphan/test_current_time.jl)

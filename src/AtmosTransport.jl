@@ -188,10 +188,6 @@ using .Tape
 include("Adjoints/Adjoints.jl")
 using .Adjoints
 
-# ---- Kernel patterns ----
-include("Kernels/Kernels.jl")
-using .Kernels
-
 # ---- Offline regridding glue (CR.jl + JLD2) ----
 # Loaded before Models so `Models.InitialConditionIO` can
 # directly `using ..Regridding` and `using ..Preprocessing.CSHelpers` for the
@@ -248,7 +244,7 @@ export runtime_output_spec
 export GnomonicPanelConvention, GEOSNativePanelConvention
 
 # Common operator configuration
-export AdvectionWorkspace
+export AdvectionWorkspace, DiffusionWorkspace
 export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
 export NoDiffusion, ImplicitVerticalDiffusion
 export NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource,

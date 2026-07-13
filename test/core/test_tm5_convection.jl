@@ -26,7 +26,6 @@ using .AtmosTransport.Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh,
 using .AtmosTransport.Operators: AbstractConvection, NoConvection,
                                  CMFMCConvection, TM5Convection,
                                  CMFMCWorkspace, TM5Workspace,
-                                 invalidate_tm5_cache!,
                                  UpwindScheme
 using .AtmosTransport.Operators.Convection: apply_convection!
 using .AtmosTransport.MetDrivers: ConvectionForcing
@@ -803,34 +802,6 @@ end
     @test AtmosTransport.Operators.Convection._tm5_collab_supports(86, 2) == false
     @test AtmosTransport.Operators.Convection._tm5_collab_supports(91, 2) == false
     @test AtmosTransport.Operators.Convection._tm5_collab_supports(0,  2) == false
-end
-
-@testset "P6 cache: workspace fields + invalidation hook" begin
-    # The cache infrastructure (workspace fields + invalidation
-    # function) lands in this iteration so a follow-up can wire the
-    # hit/miss kernels without a workspace-shape change. Tests here
-    # only cover the storage / hook contract — the actual hit-kernel
-    # benchmark lives in `scripts/benchmarks/bench_tm5_p6_lu_cache.jl`
-    # and ships as a prototype, not a production code path yet.
-    Nx, Ny, Nz = 4, 3, 5
-    m = zeros(FT, Nx, Ny, Nz)
-    ws_off = TM5Workspace(m; cell_metrics = ones(FT, Ny))
-    @test ws_off.cache_A === nothing
-    @test ws_off.cache_pivots === nothing
-    @test ws_off.cache_valid === nothing
-    # `invalidate_tm5_cache!` is a no-op when the cache is disabled,
-    # so the call site can be unconditional regardless of opt-in.
-    @test invalidate_tm5_cache!(ws_off) === nothing
-    @test invalidate_tm5_cache!(nothing) === nothing
-
-    ws_on = TM5Workspace(m; cell_metrics = ones(FT, Ny),
-                          cache_columns = Nx * Ny)
-    @test size(ws_on.cache_A)      == (Nz, Nz, Nx * Ny)
-    @test size(ws_on.cache_pivots) == (Nz,     Nx * Ny)
-    @test ws_on.cache_valid[]      == false
-    ws_on.cache_valid[] = true
-    invalidate_tm5_cache!(ws_on)
-    @test ws_on.cache_valid[] == false
 end
 
 @testset "plan 23 Commit 4: _assert_tm5_forcing catches missing tm5_fields" begin

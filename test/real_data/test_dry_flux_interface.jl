@@ -21,7 +21,8 @@ using .AtmosTransport: Grids, State, Operators, MetDrivers
 using .AtmosTransport.Grids: FaceIndexedFluxTopology, StructuredFluxTopology,
                              cell_areas_by_latitude, cell_faces, face_cells,
                              face_length, face_normal, flux_topology, n_levels
-using .AtmosTransport.MetDrivers: DiagnoseVerticalFromHorizontal
+using .AtmosTransport.MetDrivers: DiagnoseVerticalFromHorizontal,
+                                   diagnose_cm_from_continuity!
 using .AtmosTransport.Operators: MonotoneLimiter, strang_split!
 using .AtmosTransport.State: AbstractFaceFluxState,
                              AbstractStructuredFaceFluxState,
@@ -475,7 +476,7 @@ end
     bt = FT[Grids.b_diff(grid.vertical, k) for k in 1:Nz]
 
     # Diagnose cm
-    Operators.Advection.diagnose_cm!(cm, am, bm, bt)
+    diagnose_cm_from_continuity!(cm, am, bm, bt, Nx, Ny, Nz)
 
     # Verify: cm[1] = 0 (TOA), cm[Nz+1] ≈ 0 (surface, if bt sums properly)
     for j in 1:Ny, i in 1:Nx

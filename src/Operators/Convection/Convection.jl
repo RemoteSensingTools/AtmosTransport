@@ -72,7 +72,7 @@ export AbstractConvection, NoConvection
 export CMFMCConvection
 export CMFMCWorkspace, invalidate_cmfmc_cache!
 export TM5Convection
-export TM5Workspace, invalidate_tm5_cache!
+export TM5Workspace
 export CMFMCMatrixConvection                    # GEOS-derived rates → TM5 LU (conservative CMFMC)
 export CMFMCMatrixWorkspace, invalidate_cmfmc_matrix_cache!
 export apply_convection!

@@ -275,7 +275,7 @@ function _build_model(case::BenchmarkCase)
     # convection cell areas live on the requested backend too.
     model = case.backend === :cpu ? model : Adapt.adapt(adapter, model)
     if !(diffusion isa NoDiffusion)
-        dz = model.workspace.advection_ws.dz_scratch
+        dz = model.workspace.diffusion_ws.layer_thickness
         if dz isa Tuple
             foreach(panel -> fill!(panel, FT(100.0)), dz)
         else

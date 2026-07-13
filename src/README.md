@@ -39,7 +39,6 @@ Geometry and topology decisions come from
   derived diagnostics for LL, RG, and CS runs
 - `Parameters/` — physical constants and planetary parameters
 - `Architectures.jl` — CPU/GPU adaptation helpers and backend utilities
-- `Kernels/` — lower-level kernel helpers shared outside the operator tree
 - `Regridding/` — conservative regridding and weight application
 - `Preprocessing/` — transport-binary and met-data preparation
 - `Downloads/` — data acquisition helpers

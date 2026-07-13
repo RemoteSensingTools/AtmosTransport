@@ -38,7 +38,6 @@ end
     repo = normpath(joinpath(@__DIR__, "..", ".."))
     files = [
         "src/Operators/Advection/VerticalRemap.jl",
-        "src/Kernels/ColumnKernels.jl",
         "src/MetDrivers/ERA5/VerticalClosure.jl",
         "src/Operators/Convection/cmfmc_kernels.jl",
     ]

@@ -9,7 +9,6 @@ Provides:
   `AbstractLinearScheme`, `AbstractQuadraticScheme` with concrete
   `UpwindScheme`, `SlopesScheme`, and structured-grid `PPMScheme`
 - Strang splitting orchestrator: `strang_split!`, `apply!`
-- Vertical flux diagnosis: `diagnose_cm!`
 """
 module Operators
 
@@ -53,7 +52,6 @@ using .Chemistry
 
 export AdvectionWorkspace, strang_split!, strang_split_mt!
 export TracerView
-export diagnose_cm!
 
 # Advection scheme hierarchy
 export AbstractAdvectionScheme
@@ -86,7 +84,7 @@ export AbstractConvection, NoConvection
 export CMFMCConvection
 export CMFMCWorkspace, invalidate_cmfmc_cache!
 export TM5Convection
-export TM5Workspace, invalidate_tm5_cache!
+export TM5Workspace
 export CMFMCMatrixConvection                    # GEOS rates → TM5 LU (conservative CMFMC)
 export CMFMCMatrixWorkspace, invalidate_cmfmc_matrix_cache!
 export apply_convection!

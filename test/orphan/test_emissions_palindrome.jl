@@ -23,7 +23,7 @@ using AtmosTransport: CellState, MoistBasis,
                       AdvectionWorkspace,
                       StructuredFaceFluxState, DryMassFluxBasis,
                       allocate_face_fluxes,
-                      NoDiffusion, ImplicitVerticalDiffusion,
+                      NoDiffusion, ImplicitVerticalDiffusion, DiffusionWorkspace,
                       SurfaceFluxSource, SurfaceFluxOperator, NoSurfaceFlux,
                       strang_split_mt!, strang_split!, apply!,
                       ConstantField
@@ -39,8 +39,6 @@ function _make_triple(FT, Nx, Ny, Nz; init_co2 = 1.0, init_sf6 = 0.1)
     bm = zeros(FT, Nx, Ny + 1, Nz)
     cm = zeros(FT, Nx, Ny, Nz + 1)
     ws = AdvectionWorkspace(air; n_tracers = 2)
-    # fill dz_scratch with a reasonable uniform layer thickness
-    fill!(ws.dz_scratch, FT(100.0))   # 100 m
     return state, am, bm, cm, ws
 end
 
@@ -94,8 +92,10 @@ end
         cm = zeros(FT, Nx, Ny, Nz + 1)
         ws_a = AdvectionWorkspace(air; n_tracers = 1)
         ws_b = AdvectionWorkspace(air; n_tracers = 1)
-        fill!(ws_a.dz_scratch, FT(100.0))
-        fill!(ws_b.dz_scratch, FT(100.0))
+        diffusion_ws_a = DiffusionWorkspace(state)
+        diffusion_ws_b = DiffusionWorkspace(state_b)
+        fill!(diffusion_ws_a.layer_thickness, FT(100.0))
+        fill!(diffusion_ws_b.layer_thickness, FT(100.0))
 
         kz = ConstantField{FT, 3}(1.0)
         dfop = ImplicitVerticalDiffusion(; kz_field = kz)
@@ -105,12 +105,14 @@ end
         # Path A: diffusion active, emissions absent (default NoSurfaceFlux)
         strang_split_mt!(state.tracers_raw, state.air_mass,
                          copy(am), copy(bm), copy(cm), scheme, ws_a;
-                         cfl_limit = 1.0, dt = dt, diffusion_op = dfop)
+                         cfl_limit = 1.0, dt = dt, diffusion_op = dfop,
+                         diffusion_workspace = diffusion_ws_a)
 
         # Path B: same, explicit NoSurfaceFlux
         strang_split_mt!(state_b.tracers_raw, state_b.air_mass,
                          copy(am), copy(bm), copy(cm), scheme, ws_b;
                          cfl_limit = 1.0, dt = dt, diffusion_op = dfop,
+                         diffusion_workspace = diffusion_ws_b,
                          emissions_op = NoSurfaceFlux())
 
         @test state.tracers_raw == state_b.tracers_raw
@@ -245,7 +247,8 @@ end
         bm = zeros(FT, Nx, Ny + 1, Nz)
         cm = zeros(FT, Nx, Ny, Nz + 1)
         ws = AdvectionWorkspace(air; n_tracers = 1)
-        fill!(ws.dz_scratch, FT(100.0))
+        diffusion_ws = DiffusionWorkspace(state)
+        fill!(diffusion_ws.layer_thickness, FT(100.0))
 
         kz = ConstantField{FT, 3}(10.0)   # strong Kz so mixing visible in 1 step
         dfop = ImplicitVerticalDiffusion(; kz_field = kz)
@@ -257,6 +260,7 @@ end
                          UpwindScheme(), ws;
                          cfl_limit = 1.0, dt = dt,
                          diffusion_op = dfop,
+                         diffusion_workspace = diffusion_ws,
                          emissions_op = op,
                          tracer_names = state.tracer_names)
 

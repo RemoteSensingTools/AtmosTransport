@@ -733,7 +733,7 @@ end
         model = TransportModel(state, fluxes, driver_grid(driver), UpwindScheme();
                                diffusion=diffusion)
         for p in 1:6
-            fill!(model.workspace.dz_scratch[p], 100.0)
+            fill!(model.workspace.diffusion_ws.layer_thickness[p], 100.0)
         end
 
         source = SurfaceFluxSource(:CO2, ntuple(_ -> fill(2.0, mesh.Nc, mesh.Nc), 6))
@@ -783,7 +783,7 @@ end
         diffusion = ImplicitVerticalDiffusion(; kz_field=kz)
         model = TransportModel(state, fluxes, grid, UpwindScheme(); diffusion=diffusion)
         for p in 1:6
-            fill!(model.workspace.dz_scratch[p], 100.0)
+            fill!(model.workspace.diffusion_ws.layer_thickness[p], 100.0)
         end
 
         step!(model, 600.0)
@@ -846,7 +846,7 @@ end
                                convection = TM5Convection())
         @test model.workspace.advection_ws isa CSLinRoodAdvectionWorkspace
         for p in 1:6
-            fill!(model.workspace.dz_scratch[p], FT(100.0))
+            fill!(model.workspace.diffusion_ws.layer_thickness[p], FT(100.0))
         end
 
         sim = DrivenSimulation(model, driver; start_window = 1, stop_window = 1)

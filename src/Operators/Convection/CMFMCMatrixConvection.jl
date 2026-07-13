@@ -171,14 +171,12 @@ function CMFMCMatrixWorkspace(air_mass;
                               tile_workspace_gib::Union{Real, Nothing} = nothing,
                               tile_columns::Union{Integer, Nothing} = nothing,
                               cell_metrics = nothing,
-                              cache_columns::Union{Integer, Nothing} = nothing,
                               halo_width::Integer = 0)
     FT = eltype(_tm5_template(air_mass))
     tm5_ws = TM5Workspace(air_mass;
                           tile_workspace_gib = tile_workspace_gib,
                           tile_columns = tile_columns,
-                          cell_metrics = cell_metrics,
-                          cache_columns = cache_columns)
+                          cell_metrics = cell_metrics)
     Hp = Int(halo_width)
     derived_entu = _cmfmc_matrix_rate_like(air_mass, FT, Hp)
     derived_detu = _cmfmc_matrix_rate_like(air_mass, FT, Hp)
@@ -219,22 +217,17 @@ end
 Mark the derived `(entu, detu)` cache stale so the next `apply!`
 re-derives from `forcing.cmfmc + forcing.dtrain`. Called on met-window
 advance from `DrivenSimulation._maybe_advance_window!` via the shared
-[`invalidate_cmfmc_cache!`](@ref) / [`invalidate_tm5_cache!`](@ref)
-dispatch (this workspace specialises both so a single advance event
-clears the derivation cache and the inner TM5 LU-factor cache in one go).
+[`invalidate_cmfmc_cache!`](@ref) dispatch.
 """
 function invalidate_cmfmc_matrix_cache!(ws::CMFMCMatrixWorkspace)
     ws.derived_valid[] = false
-    invalidate_tm5_cache!(ws.tm5_workspace)
     return nothing
 end
 invalidate_cmfmc_matrix_cache!(::Any) = nothing
 
-# Specialise the existing window-advance hooks so DrivenSimulation's
-# generic call site invalidates both halves of the derived workspace in
-# one go without learning about our new operator's type.
+# Specialise the window-advance hook so DrivenSimulation's generic call
+# site does not need to know the concrete convection operator.
 invalidate_cmfmc_cache!(ws::CMFMCMatrixWorkspace) = invalidate_cmfmc_matrix_cache!(ws)
-invalidate_tm5_cache!(ws::CMFMCMatrixWorkspace)   = invalidate_cmfmc_matrix_cache!(ws)
 
 # =========================================================================
 # Apply — per topology. Derives rates if stale, then dispatches into the

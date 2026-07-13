@@ -1019,7 +1019,7 @@ target pressure edge values directly from the hybrid coordinate definition.
 This is physically exact: pure-pressure levels get `PE = ak` (zero noise),
 hybrid levels vary smoothly with `PS_dry` via the bk coefficient.
 
-Unlike the cumsum approach followed by `fix_target_bottom_pe!`, this avoids
+Constructing consistent target edges directly avoids
 per-level QV fluctuations contaminating the target PE and eliminates all
 ad-hoc scaling. Reference: GCHP `DryPLE` computation in fvdycore.
 """
@@ -1674,101 +1674,3 @@ function gchp_calc_scaling_factor(rm_panels::NTuple{6}, dp_tgt_panels,
 end
 
 # ---------------------------------------------------------------------------
-# Legacy helpers (kept for backward compatibility)
-# ---------------------------------------------------------------------------
-
-"""
-    fix_target_bottom_pe!(ws_vr, m_src_panels, cell_areas, gravity, Nc::Int, Hp::Int, Nz::Int)
-
-Fix target PE to match source column pressure while preserving pure-pressure
-levels.  Pure-pressure levels (bk[k]==0 && bk[k+1]==0) get dp_tgt set from
-m_src directly (identity remap — no vertical transport where DELP is invariant).
-Only hybrid levels (bk > 0) are scaled to absorb the PS difference from
-horizontal mass divergence.  This eliminates a ~0.23 ppm/window noise floor
-that the old uniform-scaling approach applied to all levels.
-"""
-function fix_target_bottom_pe!(ws_vr::VerticalRemapWorkspace,
-                                 m_src_panels, cell_areas, gravity, Nc::Int, Hp::Int, Nz::Int)
-    FT = eltype(ws_vr.ak_dev)
-    ptop = FT(ws_vr.ak_dev[1])
-
-    for p in 1:6
-        be = get_backend(ws_vr.pe_tgt[p])
-        _fix_column_pe_kernel!(be, 256)(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], m_src_panels[p],
-           cell_areas, gravity, ws_vr.bk_dev, ptop, Hp, Nc, Nz;
-           ndrange=(Nc, Nc))
-    end
-    return nothing
-end
-
-@kernel function _fix_column_pe_kernel!(pe_tgt, dp_tgt, @Const(m_src),
-                                          @Const(area), g_val, @Const(bk),
-                                          ptop, Hp, Nc, Nz)
-    i, j = @index(Global, NTuple)
-    @inbounds begin
-        ii = Hp + i
-        jj = Hp + j
-        FT = eltype(pe_tgt)
-        a = FT(area[i, j])
-        g = FT(g_val)
-
-        # Find last pure-pressure level: bk[k] ≈ 0 && bk[k+1] ≈ 0.
-        # Use threshold to handle near-zero bk (e.g. 8e-9 at GEOS-IT k=42).
-        # These levels have fixed DELP regardless of surface pressure,
-        # so their target dp should equal source dp (identity remap).
-        bk_thr = FT(1e-6)
-        n_fixed = 0
-        for k in 1:Nz
-            if abs(bk[k]) < bk_thr && abs(bk[k + 1]) < bk_thr
-                n_fixed = k
-            else
-                break
-            end
-        end
-
-        # Source total dry pressure and pure-pressure subtotal
-        ps_src = FT(ptop)
-        ps_src_comp = zero(FT)
-        pe_fixed_src = FT(ptop)
-        pe_fixed_comp = zero(FT)
-        for k in 1:Nz
-            dp_src_k = m_src[ii, jj, k] * g / a
-            ps_src, ps_src_comp = _kahan_add(ps_src, ps_src_comp, dp_src_k)
-            if k <= n_fixed
-                pe_fixed_src, pe_fixed_comp = _kahan_add(pe_fixed_src, pe_fixed_comp, dp_src_k)
-            end
-        end
-
-        # Target hybrid subtotal (before fix)
-        pe_hybrid_raw = zero(FT)
-        pe_hybrid_comp = zero(FT)
-        for k in n_fixed + 1:Nz
-            pe_hybrid_raw, pe_hybrid_comp = _kahan_add(pe_hybrid_raw, pe_hybrid_comp, dp_tgt[i, j, k])
-        end
-
-        # Scale factor for hybrid levels only:
-        # hybrid dp must sum to (ps_src - pe_fixed_src)
-        ps_hybrid_target = ps_src - pe_fixed_src
-        scale = if pe_hybrid_raw > FT(100) * eps(FT)
-            ps_hybrid_target / pe_hybrid_raw
-        else
-            one(FT)
-        end
-
-        # Rebuild dp_tgt and pe_tgt:
-        #  - pure-pressure levels: dp from m_src (identity remap)
-        #  - hybrid levels: original dp_tgt × scale
-        pe_acc = FT(ptop)
-        pe_comp = zero(FT)
-        pe_tgt[i, j, 1] = pe_acc
-        for k in 1:Nz
-            if k <= n_fixed
-                dp_tgt[i, j, k] = m_src[ii, jj, k] * g / a
-            else
-                dp_tgt[i, j, k] *= scale
-            end
-            pe_acc, pe_comp = _kahan_add(pe_acc, pe_comp, dp_tgt[i, j, k])
-            pe_tgt[i, j, k + 1] = pe_acc
-        end
-    end
-end

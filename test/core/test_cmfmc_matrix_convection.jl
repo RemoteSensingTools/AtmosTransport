@@ -360,7 +360,7 @@ end
     @test ws.derived_valid[] == false
 
     # The DrivenSimulation window-advance hook calls invalidate_cmfmc_cache!
-    # and invalidate_tm5_cache! generically. Both must reach our workspace.
+    # generically. The hook must reach our workspace.
     ws.derived_valid[] = true
     invalidate_cmfmc_cache!(ws)
     @test ws.derived_valid[] == false

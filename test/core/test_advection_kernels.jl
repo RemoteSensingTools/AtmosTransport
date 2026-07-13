@@ -25,6 +25,7 @@ using .AtmosTransport: Operators, Grids
 using .AtmosTransport.Grids: cell_areas_by_latitude
 using .AtmosTransport.Operators: MonotoneLimiter, strang_split!, strang_split_mt!
 using .AtmosTransport.Operators.Advection: _xface_tracer_flux
+using .AtmosTransport.MetDrivers: diagnose_cm_from_continuity!
 using .AtmosTransport.State: StructuredFaceFluxState
 
 # Try to load CUDA; tests gracefully skip if unavailable
@@ -103,7 +104,7 @@ function build_test_problem(FT; Nx=36, Ny=18, Nz=4, cfl=FT(0.15))
 
     cm = zeros(FT, Nx, Ny, Nz + 1)
     bt = FT[Grids.b_diff(vc, k) for k in 1:Nz]
-    Operators.Advection.diagnose_cm!(cm, am, bm, bt)
+    diagnose_cm_from_continuity!(cm, am, bm, bt, Nx, Ny, Nz)
 
     return grid, m, rm_uniform, rm_gradient, am, bm, cm
 end
@@ -158,6 +159,27 @@ end
     flux_neg = _xface_tracer_flux(Int32(4), 1, 1, rm, m, -2.0, scheme, Int32(6))
     expected_neg = -α * (m0 * 4.0 - (1 - α) * (m0 * 0.5))
     @test flux_neg ≈ expected_neg
+end
+
+@testset "active diffusion is validated before advection mutates state" begin
+    FT = Float64
+    grid, m, rm, _, am, bm, cm = build_test_problem(FT; Nx=8, Ny=4, Nz=4)
+    state = CellState(copy(m); tracer=copy(rm))
+    fluxes = StructuredFaceFluxState(copy(am), copy(bm), copy(cm))
+    advection_ws = AdvectionWorkspace(state)
+    diffusion = ImplicitVerticalDiffusion(; kz_field=ConstantField{FT, 3}(one(FT)))
+    m_before = copy(state.air_mass)
+    rm_before = copy(state.tracers_raw)
+
+    @test_throws ArgumentError strang_split!(
+        state, fluxes, grid, UpwindScheme();
+        workspace=advection_ws,
+        diffusion_workspace=advection_ws,
+        diffusion_op=diffusion,
+        dt=FT(60),
+    )
+    @test state.air_mass == m_before
+    @test state.tracers_raw == rm_before
 end
 
 @testset "Advection kernels: {CPU,GPU} × {F32,F64}" begin

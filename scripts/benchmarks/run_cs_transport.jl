@@ -37,9 +37,8 @@ end
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.Architectures: runtime_backend_from_config, is_gpu_backend,
-    ensure_backend_runtime!, backend_array_adapter, backend_label,
-    assert_backend_float_type!
+using .AtmosTransport.Architectures: architecture_from_config, ensure_runtime!,
+    array_adapter, architecture_label, assert_float_type!
 using .AtmosTransport.Operators.Advection: fill_panel_halos!,
     strang_split_cs!, CSAdvectionWorkspace,
     LinRoodWorkspace, strang_split_linrood_ppm!,
@@ -49,17 +48,8 @@ using .AtmosTransport.Operators.Advection: fill_panel_halos!,
 # Architecture helpers
 # ---------------------------------------------------------------------------
 
-_runtime_backend(cfg) =
-    runtime_backend_from_config(get(cfg, "architecture", Dict{String,Any}()))
-
-function ensure_gpu!(cfg)
-    backend = _runtime_backend(cfg)
-    is_gpu_backend(backend) || return false
-    ensure_backend_runtime!(backend)
-    return true
-end
-
-array_type(cfg) = (ensure_gpu!(cfg); backend_array_adapter(_runtime_backend(cfg)))
+configured_architecture(cfg) =
+    architecture_from_config(get(cfg, "architecture", Dict{String,Any}()))
 
 # ---------------------------------------------------------------------------
 # Panel padding (zero-fill halo around raw binary arrays)
@@ -192,8 +182,10 @@ end
 
 function run_cs(cfg)
     FT = cfg_float_type(cfg)
-    assert_backend_float_type!(_runtime_backend(cfg), FT)
-    AT = array_type(cfg)
+    arch = configured_architecture(cfg)
+    assert_float_type!(arch, FT)
+    ensure_runtime!(arch)
+    AT = array_adapter(arch)
 
     input_cfg = get(cfg, "input", Dict{String,Any}())
     binary_paths = [expanduser(String(p)) for p in input_cfg["binary_paths"]]
@@ -227,7 +219,7 @@ function run_cs(cfg)
 
     println("="^60)
     @printf("CS transport  C%d × %d levels  Hp=%d  %s  %s\n",
-            Nc, Nz, Hp, _scheme_label(scheme), backend_label(cfg))
+            Nc, Nz, Hp, _scheme_label(scheme), architecture_label(arch))
     @printf("Tracers: %s   Binaries: %d   Output: %s\n",
             join(String.(keys(tracer_defs)), ", "), length(binary_paths), snap_file)
     println("="^60)

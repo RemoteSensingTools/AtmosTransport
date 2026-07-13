@@ -38,7 +38,7 @@ Geometry and topology decisions come from
 - `Output/` — topology-dispatched snapshot capture, NetCDF schema, and
   derived diagnostics for LL, RG, and CS runs
 - `Parameters/` — physical constants and planetary parameters
-- `Architectures.jl` — CPU/GPU adaptation helpers and backend utilities
+- `Architectures.jl` — unified CPU/vendor-specific GPU execution policies
 - `Regridding/` — conservative regridding and weight application
 - `Preprocessing/` — transport-binary and met-data preparation
 - `Downloads/` — data acquisition helpers

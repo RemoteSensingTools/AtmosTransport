@@ -2,8 +2,8 @@
 CUDA extension for AtmosTransport.
 
 Loaded automatically when `using CUDA` is called alongside AtmosTransport.
-Provides `array_type` and `device` overloads so `GPU()` selects `CuArray`
-and `CUDABackend()`.
+Provides `array_type` and `device` overloads so `GPU(:cuda)` selects
+`CuArray` and `CUDABackend()`.
 """
 module AtmosTransportCUDAExt
 
@@ -20,8 +20,9 @@ import AtmosTransport.Adjoints:
 using AtmosTransport.Architectures: GPU
 using CUDA: CuArray, CUDABackend
 
-AtmosTransport.Architectures.array_type(::GPU) = CuArray
-AtmosTransport.Architectures.device(::GPU)     = CUDABackend()
+AtmosTransport.Architectures.array_type(::GPU{:cuda}) = CuArray
+AtmosTransport.Architectures.device(::GPU{:cuda})     = CUDABackend()
+AtmosTransport.Architectures.architecture(::CUDA.AbstractGPUArray) = GPU(:cuda)
 AtmosTransport.Architectures._array_adapter_for(::CUDA.AbstractGPUArray) = CuArray
 
 function AtmosTransport.Architectures._reclaim_backend_pool!(::CUDA.AbstractGPUArray)

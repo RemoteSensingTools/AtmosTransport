@@ -50,7 +50,7 @@ end
 end
 
 @testset "configuration booleans are not numeric coercions" begin
-    @test_throws ArgumentError AT.Architectures.runtime_backend_from_config(
+    @test_throws ArgumentError AT.Architectures.architecture_from_config(
         Dict{String,Any}("use_gpu" => 1))
     @test_throws ArgumentError AT.Output.runtime_output_spec(
         Dict{String,Any}("enabled" => 1), Float64)

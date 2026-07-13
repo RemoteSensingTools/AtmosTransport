@@ -83,12 +83,11 @@ using ..Operators: LinRoodPPMScheme, PPMScheme, SlopesScheme, UpwindScheme,
                   AbstractConvection,
                   NoConvection, TM5Convection, CMFMCConvection,
                   CMFMCMatrixConvection
-using ..Architectures: CPU, GPU,
-                       runtime_backend_from_config, is_gpu_backend,
-                       ensure_backend_runtime!, backend_array_adapter,
-                       backend_label, backend_device_name, backend_name,
-                       synchronize_backend!, assert_backend_residency!,
-                       assert_backend_float_type!
+using ..Architectures: AbstractArchitecture, architecture_from_config,
+                       is_gpu, ensure_runtime!,
+                       array_adapter, architecture_label, device_name,
+                       backend_name, synchronize_architecture!,
+                       assert_residency!, assert_float_type!
 using ..MetDrivers: TransportBinaryDriver, CubedSphereTransportDriver,
                      load_transport_window, driver_grid, air_mass_basis,
                      total_windows, window_dt, binary_capabilities,
@@ -273,30 +272,11 @@ function _parse_tracer_specs(cfg)
 end
 
 # ===========================================================================
-# GPU runtime helpers (hoisted from run_transport_binary.jl:101-138)
+# Execution architecture
 # ===========================================================================
 
 @inline _cfg_architecture_section(cfg) = get(cfg, "architecture", Dict{String, Any}())
-@inline _cfg_runtime_backend(cfg) = runtime_backend_from_config(_cfg_architecture_section(cfg))
-@inline _cfg_use_gpu(cfg) = is_gpu_backend(_cfg_runtime_backend(cfg))
-
-function _ensure_gpu_runtime!(cfg)
-    backend = _cfg_runtime_backend(cfg)
-    is_gpu_backend(backend) || return false
-    ensure_backend_runtime!(backend)
-    return true
-end
-
-function _backend_array_adapter(cfg)
-    backend = _cfg_runtime_backend(cfg)
-    is_gpu_backend(backend) && _ensure_gpu_runtime!(cfg)
-    return backend_array_adapter(backend)
-end
-
-function _backend_label(cfg)
-    backend = _cfg_runtime_backend(cfg)
-    return backend_label(backend)
-end
+@inline _cfg_architecture(cfg) = architecture_from_config(_cfg_architecture_section(cfg))
 
 function _cfg_float_type(cfg)
     raw = get(get(cfg, "numerics", Dict{String, Any}()), "float_type", "Float64")
@@ -368,8 +348,8 @@ function validate_config(cfg::AbstractDict)
         ft_ref[] = _cfg_float_type(cfg)
     end
     _capture_config_error!(errors) do
-        backend = _cfg_runtime_backend(cfg)
-        ft_ref[] === nothing || assert_backend_float_type!(backend, ft_ref[])
+        arch = _cfg_architecture(cfg)
+        ft_ref[] === nothing || assert_float_type!(arch, ft_ref[])
     end
 
     tracers_cfg = get(cfg, "tracers", nothing)
@@ -560,28 +540,22 @@ function _flush_single_output!(partition::SingleOutputFile, timer, spec, frames,
                                  mass_basis = mass_basis)
 end
 
-function _synchronize_backend!(cfg)
-    synchronize_backend!(_cfg_runtime_backend(cfg))
-    return nothing
-end
-
 """
-    _assert_gpu_residency!(state, cfg)
+    _assert_gpu_residency!(state, arch)
 
 See `feedback_verify_gpu_runs_on_gpu`. When a GPU backend is
 selected, assert that `state.air_mass` lives on that backend. A silent CPU
 fallback aborts with a precise error. Called once after model construction,
 before the run loop.
 """
-function _assert_gpu_residency!(state, cfg)
-    backend = _cfg_runtime_backend(cfg)
-    is_gpu_backend(backend) || return nothing
-    backing = assert_backend_residency!(state.air_mass, backend; label = "state.air_mass")
+function _assert_gpu_residency!(state, arch)
+    is_gpu(arch) || return nothing
+    backing = assert_residency!(state.air_mass, arch; label = "state.air_mass")
     wrapper = Base.typename(typeof(backing)).wrapper
     @info @sprintf("[gpu verified] backend=%s backing=%s device=%s",
-                   String(backend_name(backend)),
+                   String(backend_name(arch)),
                    String(nameof(wrapper)),
-                   backend_device_name(backend))
+                   device_name(arch))
     return nothing
 end
 
@@ -622,7 +596,7 @@ function _make_structured_model(driver::TransportBinaryDriver;
                                 FT::Type{<:AbstractFloat},
                                 recipe,
                                 tracer_specs,
-                                cfg)
+                                arch)
     grid = driver_grid(driver)
     mesh = grid.horizontal
     window = load_transport_window(driver, 1)
@@ -650,7 +624,7 @@ function _make_structured_model(driver::TransportBinaryDriver;
                            diffusion = recipe.diffusion,
                            convection = recipe.convection,
                            chemistry = recipe.chemistry)
-    adaptor = _backend_array_adapter(cfg)
+    adaptor = array_adapter(arch)
     return adaptor === Array ? model : Base.invokelatest(Adapt.adapt, adaptor, model)
 end
 
@@ -778,6 +752,17 @@ directly. The handoff to physics happens inside the structured loop at
 `TransportModel.step!` / `transport_step!` / `convection_chemistry_step!`.
 """
 function run_driven_simulation(cfg::AbstractDict)
+    arch = _cfg_architecture(cfg)
+    ensure_runtime!(arch)
+    # Loading an optional GPU package adds its array and Adapt methods in a new
+    # Julia world. Enter the complete run implementation through `invokelatest`
+    # once, after that load, so every subsequent GPU operation sees those
+    # methods. This single startup trampoline keeps the hot loop on normal
+    # dispatch while making the library entry point safe without CLI preloading.
+    return Base.invokelatest(_run_driven_simulation, cfg, arch)
+end
+
+function _run_driven_simulation(cfg::AbstractDict, arch::AbstractArchitecture)
     ok, errors = validate_config(cfg)
     ok || throw(ArgumentError(
         "Invalid AtmosTransport run config:\n  - " * join(errors, "\n  - ")))
@@ -807,7 +792,7 @@ function run_driven_simulation(cfg::AbstractDict)
     # cleaned up, even if the run throws partway through.
     stager = InputStager(binary_paths, get(input_cfg, "staging", Dict{String, Any}()))
     result = try
-        _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg, stager)
+        _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg, stager, arch)
     finally
         cleanup_staging!(stager)
     end
@@ -827,13 +812,17 @@ function run_driven_simulation(cfg::AbstractDict)
     return result
 end
 
-_run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg, stager::InputStager) =
-    _run_driven_simulation_structured(binary_paths, cfg, stager)
-_run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg, stager::InputStager) =
-    _run_driven_simulation_structured(binary_paths, cfg, stager)
-_run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg, stager::InputStager) =
-    _run_driven_simulation_cs(binary_paths, cfg, stager)
-function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String}, _cfg, _stager::InputStager) where grid_type
+_run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg,
+                           stager::InputStager, arch::AbstractArchitecture) =
+    _run_driven_simulation_structured(binary_paths, cfg, stager, arch)
+_run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg,
+                           stager::InputStager, arch::AbstractArchitecture) =
+    _run_driven_simulation_structured(binary_paths, cfg, stager, arch)
+_run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg,
+                           stager::InputStager, arch::AbstractArchitecture) =
+    _run_driven_simulation_cs(binary_paths, cfg, stager, arch)
+function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String},
+                                    _cfg, _stager::InputStager, _arch) where grid_type
     throw(ArgumentError("Unsupported transport-binary grid_type=$(grid_type)."))
 end
 
@@ -861,9 +850,11 @@ function _surface_source_total_rate(source)
     end
 end
 
-function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, stager::InputStager)
+function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
+                                           stager::InputStager,
+                                           arch::AbstractArchitecture)
     FT = _cfg_float_type(cfg)
-    assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
+    assert_float_type!(arch, FT)
     run_cfg = get(cfg, "run", Dict{String, Any}())
     start_window = Int(get(run_cfg, "start_window", 1))
     stop_window_override = get(run_cfg, "stop_window", nothing)
@@ -879,14 +870,12 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
                                                   _copy_cfg_dict(init_cfg),
                                                   Dict{String, Any}()),))
 
-    _ensure_gpu_runtime!(cfg)
-
     # `stager` (rolling NVMe input staging) is created + torn down by the caller
     # `run_driven_simulation`; here we just route driver opens through it.
     # Open first driver, build recipe, validate capability, build model
     first_driver = TransportBinaryDriver(staged_path_for!(stager, 1);
                                           FT = FT,
-                                          arch = CPU())
+                                          arch = arch)
     output_cfg = get(cfg, "output", Dict{String, Any}())
     output_spec = runtime_output_spec(output_cfg, FT;
                                       default_cap_hours = _output_default_cap_hours(
@@ -904,8 +893,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
     # `DrivenSimulation.step!` below.
     model = _make_structured_model(first_driver;
                                     FT = FT, recipe = recipe,
-                                    tracer_specs = tracer_specs, cfg = cfg)
-    _assert_gpu_residency!(model.state, cfg)
+                                    tracer_specs = tracer_specs, arch = arch)
+    _assert_gpu_residency!(model.state, arch)
 
     grid_of_first = driver_grid(first_driver)
     surface_sources = build_surface_flux_sources(grid_of_first, tracer_specs, FT;
@@ -919,7 +908,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
                          mesh_label = summary(grid_of_first.horizontal),
                          levels = nlevels(grid_of_first),
                          halo_width = 0,
-                         backend = _backend_label(cfg),
+                         backend = architecture_label(arch),
                          FT = FT,
                          recipe = recipe,
                          driver = first_driver,
@@ -976,7 +965,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
         driver = idx == 1 ? first_driver :
                  timed_io_read!(timer,
                      () -> TransportBinaryDriver(staged_path_for!(stager, idx);
-                                                 FT = FT, arch = CPU()))
+                                                 FT = FT, arch = arch))
         validate_runtime_physics_recipe(recipe, driver)
         stop_window = stop_window_override === nothing ?
                       total_windows(driver) : Int(stop_window_override)
@@ -1012,7 +1001,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
                                                n_windows),
                              detail = "loading first window",
                              redraw = true)
-        _synchronize_backend!(cfg)
+        synchronize_architecture!(arch)
         t0 = time()
 
         if do_snapshots
@@ -1062,7 +1051,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
         end
 
         run_time_seconds += (stop_window - start_window + 1) * Float64(window_dt(driver))
-        _synchronize_backend!(cfg)
+        synchronize_architecture!(arch)
         set_progress_status!(timer;
                              status = @sprintf("finished %s", basename(path)),
                              detail = @sprintf("file wall %.2fs", time() - t0),
@@ -1130,18 +1119,11 @@ end
 # CS runner
 # ===========================================================================
 
-function _cfg_architecture(cfg)
-    if _cfg_use_gpu(cfg)
-        _ensure_gpu_runtime!(cfg)
-        return GPU()
-    end
-    return CPU()
-end
-
-function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::InputStager)
+function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
+                                   stager::InputStager,
+                                   arch::AbstractArchitecture)
     FT   = _cfg_float_type(cfg)
-    assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
-    arch = _cfg_architecture(cfg)
+    assert_float_type!(arch, FT)
 
     run_cfg = get(cfg, "run", Dict{String, Any}())
     advection = build_runtime_advection(cfg, CubedSphereRuntimeRecipeStyle())
@@ -1235,13 +1217,13 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
     # Adapt state + fluxes to the selected backend. `invokelatest` is required
     # because GPU packages may be loaded dynamically and their Adapt methods can
     # arrive in a newer world age than this function's compiled body.
-    adaptor = _backend_array_adapter(cfg)
+    adaptor = array_adapter(arch)
     if adaptor !== Array
         model  = Base.invokelatest(Adapt.adapt, adaptor, model)
         state  = model.state                           # rebind post-adapt
         fluxes = model.fluxes
     end
-    _assert_gpu_residency!(model.state, cfg)
+    _assert_gpu_residency!(model.state, arch)
 
     # Build surface-flux sources from the parsed tracer specs and log per-source
     # mass rates. Matches the LL/RG path; `DrivenSimulation`'s constructor
@@ -1262,7 +1244,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
                          mesh_label = @sprintf("C%d", mesh.Nc),
                          levels = Nz,
                          halo_width = Hp,
-                         backend = _backend_label(cfg),
+                         backend = architecture_label(arch),
                          FT = FT,
                          recipe = recipe,
                          driver = driver1,

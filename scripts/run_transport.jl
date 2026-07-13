@@ -50,13 +50,11 @@ if Threads.nthreads() == 1 &&
     exit(0)
 end
 
-# Preload the GPU backend BEFORE `AtmosTransport` gets included so the
-# whole stack compiles in a single world age. Doing the load dynamically
-# later (from `_ensure_gpu_runtime!`) means every CuArray method
-# (`size`, `getindex`, `Adapt.adapt_storage(CuArray, …)`) arrives in a
-# newer world than the function bodies that call it, and Julia refuses
-# to dispatch — `method too new to be called from this world context`.
-# Inspecting the config here is ~1 ms and avoids the whole problem.
+# Preload the GPU backend BEFORE `AtmosTransport` is imported so the
+# CLI stack compiles in a single world age. The library entry point also has a
+# one-time world-age trampoline for callers that load a backend on demand, but
+# resolving it here keeps CLI startup and optional profiling straightforward.
+# Inspecting the config costs about 1 ms.
 if !isempty(ARGS)
     _cfg_path = expanduser(ARGS[1])
     if isfile(_cfg_path)
@@ -88,8 +86,7 @@ if !isempty(ARGS)
     end
 end
 
-include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 
 function _quickstart_configs()
     dir = joinpath(@__DIR__, "..", "config", "runs", "quickstart")

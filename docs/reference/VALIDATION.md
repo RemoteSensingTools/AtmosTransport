@@ -190,7 +190,7 @@ fluxes from ERA5. The remaining step is running TM5 itself for direct comparison
 
 - **Status:** The full simulation loop runs on GPU via KernelAbstractions.jl: all advection directions (x, y, z) for both `SlopesAdvection` and `PPMAdvection`, boundary-layer diffusion (implicit Thomas solver), Tiedtke convection, source injection, air-mass bookkeeping, column-mean/surface/sigma-level diagnostics, and output regridding. Works on both lat-lon and cubed-sphere grids.
 - **Reduced grid on GPU:** TM5-style reduced grid for lat-lon advection runs on GPU, reducing CFL subcycling from ~7x to ~1x near the poles.
-- **Architecture:** Grid carries `architecture` field (`CPU()` or `GPU()`). Runtime arrays dispatch to `Array`, `CuArray`, or `MtlArray` based on `[architecture].backend`.
+- **Architecture:** Grid carries the concrete execution policy (`CPU()`, `GPU(:cuda)`, or `GPU(:metal)`). The same policy selects `Array`, `CuArray`, or `MtlArray` runtime storage.
 - **Testing:** Unit test suite runs on CPU. GPU path tested via `scripts/run_transport.jl` with `use_gpu = true` in the TOML config.
 - **Float32/Float64:** Model supports both precisions via `float_type` in the TOML config on CPU/CUDA. Metal requires `Float32`.
 

@@ -289,11 +289,10 @@ end
 
 ### GPU Extension Loading Order
 
-`using CUDA` or `using Metal` must appear **before** `using AtmosTransport` in
-custom run scripts to trigger the weakdep extension and avoid Julia world-age
-issues around GPU array methods. The canonical runner
-(`scripts/run_transport.jl`) handles this automatically based on
-`[architecture] use_gpu` and `backend`. Metal runs require
+Custom scripts may load `CUDA` or `Metal` before or after `AtmosTransport`;
+package extensions define distinct methods for `GPU(:cuda)` and `GPU(:metal)`.
+The canonical runner (`scripts/run_transport.jl`) resolves and loads the
+configured runtime on demand. Metal runs require
 `[numerics] float_type = "Float32"`.
 
 ### Cubed-Sphere Tracer Storage

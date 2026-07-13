@@ -4,7 +4,6 @@ using Adapt
 using ArgParse
 using Dates
 using JSON3
-using KernelAbstractions
 using Printf
 using Serialization
 using Statistics
@@ -15,8 +14,8 @@ using AtmosTransport: AtmosGrid, CubedSphereMesh, CubedSphereState,
     PPMScheme, LinRoodPPMScheme, MonotoneLimiter, NoDiffusion,
     ImplicitVerticalDiffusion, ConstantField, NoConvection, TM5Convection,
     ConvectionForcing, TransportModel, step!, fill_panel_halos!
-using AtmosTransport.Architectures: CPUBackend, CUDAGPUBackend, MetalGPUBackend,
-    backend_name, backend_label, backend_device_name
+using AtmosTransport.Architectures: CPU, GPU, backend_name, architecture_label,
+    device_name, ensure_runtime!, array_adapter, synchronize_architecture!
 using AtmosTransport.Adjoints: CSColumnMeanObjective, cs_surface_emission_footprint
 using AtmosTransport.Grids: GEOSNativePanelConvention
 using AtmosTransport.Operators.Advection: NoLimiter
@@ -61,34 +60,20 @@ function _canonical_backend(s::AbstractString)
 end
 
 function _adapter(backend::Symbol)
-    backend === :cpu && return Array
-    if backend === :cuda
-        isdefined(Main, :CUDA) || error("CUDA must be loaded before AtmosTransport for CUDA benchmarks")
-        return getproperty(Main.CUDA, :CuArray)
-    elseif backend === :metal
-        isdefined(Main, :Metal) || error("Metal must be loaded before AtmosTransport for Metal benchmarks")
-        return getproperty(Main.Metal, :MtlArray)
-    end
-    error("unsupported backend $(backend)")
+    arch = _architecture(backend)
+    ensure_runtime!(arch)
+    return array_adapter(arch)
 end
 
 function _sync(backend::Symbol)
-    backend === :cpu && return nothing
-    if backend === :cuda
-        return Base.invokelatest(getproperty(Main.CUDA, :synchronize))
-    elseif backend === :metal
-        if isdefined(Main.Metal, :synchronize)
-            return Base.invokelatest(getproperty(Main.Metal, :synchronize))
-        end
-        return KernelAbstractions.synchronize(getproperty(Main.Metal, :MetalBackend)())
-    end
+    synchronize_architecture!(_architecture(backend))
     return nothing
 end
 
-function _runtime_backend(backend::Symbol)
-    backend === :cpu && return CPUBackend()
-    backend === :cuda && return CUDAGPUBackend()
-    backend === :metal && return MetalGPUBackend()
+function _architecture(backend::Symbol)
+    backend === :cpu && return CPU()
+    backend === :cuda && return GPU(:cuda)
+    backend === :metal && return GPU(:metal)
     error("unsupported backend $(backend)")
 end
 
@@ -112,11 +97,11 @@ function _backend_class(backend::Symbol)
 end
 
 function _device_name(backend::Symbol)
-    rb = _runtime_backend(backend)
+    arch = _architecture(backend)
     try
-        return backend_device_name(rb)
+        return device_name(arch)
     catch err
-        return string(backend_name(rb), " device unavailable: ", sprint(showerror, err))
+        return string(backend_name(arch), " device unavailable: ", sprint(showerror, err))
     end
 end
 
@@ -229,7 +214,7 @@ function _build_model(case::BenchmarkCase)
     Hp = 3
     mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp,
                            convention = GEOSNativePanelConvention())
-    grid = AtmosGrid(mesh, _vertical_grid(FT, Nz), AtmosTransport.CPU(); FT = FT)
+    grid = AtmosGrid(mesh, _vertical_grid(FT, Nz), _architecture(case.backend); FT = FT)
 
     panels_m_cpu = ntuple(_ -> _haloed_panel(FT, Nc, Hp, Nz), 6)
     _fill_mass!(panels_m_cpu, mesh, FT)
@@ -502,7 +487,7 @@ function _metadata(case::BenchmarkCase)
         "julia_version" => string(VERSION),
         "commit" => _git_commit(),
         "backend_label" => try
-            backend_label(_runtime_backend(case.backend))
+            architecture_label(_architecture(case.backend))
         catch
             _backend_class(case.backend)
         end,

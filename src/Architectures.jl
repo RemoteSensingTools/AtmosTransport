@@ -1,11 +1,12 @@
 """
     Architectures
 
-Standalone architecture layer for `src`, following the same Oceananigans-style
-pattern as the production runtime without depending on `src/AtmosTransport.jl`.
+Execution architectures and their optional runtime integration.
 
-Only the small, generic CPU/GPU contract is defined here. Multi-GPU panel
-helpers stay in `src/` until cubed-sphere support is ported for real.
+An architecture is part of a grid's type-level model contract: `CPU()` selects
+host execution, while `GPU(:cuda)` and `GPU(:metal)` select a concrete GPU
+runtime. The same object controls array adaptation, device synchronization, and
+runtime validation, so grid metadata cannot diverge from model storage.
 """
 module Architectures
 
@@ -13,14 +14,11 @@ using DocStringExtensions
 using KernelAbstractions: KernelAbstractions as KA
 
 export AbstractArchitecture, CPU, GPU
-export array_type, device, architecture, _kahan_add
-export AbstractRuntimeBackend, AbstractGPURuntimeBackend
-export CPUBackend, CUDAGPUBackend, MetalGPUBackend
-export runtime_backend_from_config, autodetect_gpu_backend, is_gpu_backend
-export ensure_backend_runtime!, backend_array_adapter, backend_label
-export backend_device_name, backend_name, synchronize_backend!
-export array_adapter_for, assert_backend_residency!, assert_backend_float_type!
-export reclaim_backend_pool!
+export array_type, device, architecture, architecture_from_config
+export autodetect_gpu_architecture, is_gpu, ensure_runtime!, array_adapter
+export architecture_label, device_name, backend_name, synchronize_architecture!
+export array_adapter_for, assert_residency!, assert_float_type!
+export reclaim_backend_pool!, _kahan_add
 
 abstract type AbstractArchitecture end
 
@@ -34,44 +32,35 @@ struct CPU <: AbstractArchitecture end
 """
 $(TYPEDEF)
 
-GPU execution architecture placeholder. Concrete array/device support is added
-by adapter code or future extensions.
+GPU execution architecture for backend `B`.
+
+Construct with `GPU(:cuda)` or `GPU(:metal)`. Making the backend explicit keeps
+CUDA and Metal methods unambiguous when both optional packages are loaded.
 """
-struct GPU <: AbstractArchitecture end
+struct GPU{B} <: AbstractArchitecture end
+
+function GPU(backend::Symbol)
+    backend in (:cuda, :metal) || throw(ArgumentError(
+        "unsupported GPU backend $(repr(backend)); expected :cuda or :metal"))
+    return GPU{backend}()
+end
+
+GPU(backend::AbstractString) = GPU(_architecture_symbol(backend))
 
 array_type(::CPU) = Array
 device(::CPU) = KA.CPU()
 
-# GPU methods are supplied by the AtmosTransportCUDAExt / AtmosTransportMetalExt
-# extensions. Calling `array_type(GPU())` or `device(GPU())` without either
-# extension loaded throws a MethodError, which is the intended behavior.
+# GPU array and KernelAbstractions device methods live in the CUDA and Metal
+# package extensions. Without the corresponding optional package, calling
+# `array_type` or `device` for that architecture intentionally has no method.
 
 function architecture end
 
-# ---------------------------------------------------------------------------
-# Runtime backend selection
-#
-# The architecture marker above is intentionally small. The driven runtime also
-# needs to load optional GPU packages, pick an array adapter, verify residency,
-# and synchronize before/after timing. Keep those operations in one place so
-# adding another KernelAbstractions backend is a matter of adding a backend type
-# plus a few methods here instead of threading `if CUDA ...` checks through the
-# model runner.
-# ---------------------------------------------------------------------------
+is_gpu(::CPU) = false
+is_gpu(::GPU) = true
 
-abstract type AbstractRuntimeBackend end
-abstract type AbstractGPURuntimeBackend <: AbstractRuntimeBackend end
-
-struct CPUBackend <: AbstractRuntimeBackend end
-struct CUDAGPUBackend <: AbstractGPURuntimeBackend end
-struct MetalGPUBackend <: AbstractGPURuntimeBackend end
-
-is_gpu_backend(::AbstractRuntimeBackend) = false
-is_gpu_backend(::AbstractGPURuntimeBackend) = true
-
-backend_name(::CPUBackend) = :cpu
-backend_name(::CUDAGPUBackend) = :cuda
-backend_name(::MetalGPUBackend) = :metal
+backend_name(::CPU) = :cpu
+backend_name(::GPU{B}) where {B} = B
 
 const _RUNTIME_PACKAGE_IDS = (
     CUDA = Base.PkgId(Base.UUID("052768ef-5323-5732-b1bb-66c8b64840ba"), "CUDA"),
@@ -91,67 +80,68 @@ function _load_runtime_package!(name::Symbol)
     end
 end
 
-_backend_from_symbol(::Val{:cpu}) = CPUBackend()
-_backend_from_symbol(::Val{:cuda}) = CUDAGPUBackend()
-_backend_from_symbol(::Val{:metal}) = MetalGPUBackend()
-
-function _backend_symbol(raw)
-    s = lowercase(String(raw))
-    s = replace(s, '-' => '_', ' ' => '_')
-    if s in ("cpu", "host")
-        return :cpu
-    elseif s in ("cuda", "nvidia")
-        return :cuda
-    elseif s in ("metal", "apple", "apple_metal")
-        return :metal
-    elseif s in ("auto", "gpu")
-        return :auto
-    end
+function _architecture_symbol(raw)
+    name = replace(lowercase(String(raw)), '-' => '_', ' ' => '_')
+    name in ("cpu", "host") && return :cpu
+    name in ("cuda", "nvidia") && return :cuda
+    name in ("metal", "apple", "apple_metal") && return :metal
+    name in ("auto", "gpu") && return :auto
     throw(ArgumentError(
         "unknown architecture.backend = \"$(raw)\"; supported values are " *
         "\"cpu\", \"cuda\", \"metal\", and \"auto\"."))
 end
 
-function runtime_backend_from_config(arch_cfg)
-    use_gpu_raw = get(arch_cfg, "use_gpu", false)
-    use_gpu_raw isa Bool || throw(ArgumentError(
-        "[architecture].use_gpu must be true or false; got $(repr(use_gpu_raw))"))
-    use_gpu = use_gpu_raw
-    raw_backend = get(arch_cfg, "backend", nothing)
+_architecture(::Val{:cpu}) = CPU()
+_architecture(::Val{:cuda}) = GPU(:cuda)
+_architecture(::Val{:metal}) = GPU(:metal)
 
-    if raw_backend === nothing
-        return use_gpu ? autodetect_gpu_backend() : CPUBackend()
-    end
+"""
+    architecture_from_config(config) -> AbstractArchitecture
 
-    backend = _backend_symbol(raw_backend)
-    backend === :cpu && use_gpu &&
-        throw(ArgumentError("[architecture] use_gpu = true conflicts with backend = \"cpu\""))
-    backend === :auto && return autodetect_gpu_backend()
-    return _backend_from_symbol(Val(backend))
+Resolve an `[architecture]` configuration table to one concrete execution
+architecture. An omitted backend selects `CPU()` unless `use_gpu = true`, in
+which case a usable GPU runtime is detected.
+"""
+function architecture_from_config(config)
+    use_gpu = get(config, "use_gpu", false)
+    use_gpu isa Bool || throw(ArgumentError(
+        "[architecture].use_gpu must be true or false; got $(repr(use_gpu))"))
+    raw_backend = get(config, "backend", nothing)
+
+    raw_backend === nothing && return use_gpu ? autodetect_gpu_architecture() : CPU()
+
+    backend = _architecture_symbol(raw_backend)
+    backend === :cpu && use_gpu && throw(ArgumentError(
+        "[architecture] use_gpu = true conflicts with backend = \"cpu\""))
+    backend === :auto && return autodetect_gpu_architecture()
+    return _architecture(Val(backend))
 end
 
-function _try_backend!(backend::AbstractGPURuntimeBackend)
+function _try_architecture!(arch::GPU)
     try
-        ensure_backend_runtime!(backend)
+        ensure_runtime!(arch)
         return true, nothing
     catch err
         return false, err
     end
 end
 
-function autodetect_gpu_backend()
+"""
+    autodetect_gpu_architecture() -> GPU
+
+Return the first functional supported GPU architecture on this host.
+"""
+function autodetect_gpu_architecture()
     candidates = Sys.isapple() ?
-        (MetalGPUBackend(), CUDAGPUBackend()) :
-        (CUDAGPUBackend(), MetalGPUBackend())
+        (GPU(:metal), GPU(:cuda)) :
+        (GPU(:cuda), GPU(:metal))
 
     failures = String[]
-    for backend in candidates
-        if backend isa MetalGPUBackend && !Sys.isapple()
-            continue
-        end
-        ok, err = _try_backend!(backend)
-        ok && return backend
-        push!(failures, "$(backend_name(backend)): $(sprint(showerror, err))")
+    for arch in candidates
+        arch isa GPU{:metal} && !Sys.isapple() && continue
+        ok, err = _try_architecture!(arch)
+        ok && return arch
+        push!(failures, "$(backend_name(arch)): $(sprint(showerror, err))")
     end
 
     detail = isempty(failures) ? "No candidate backend was attempted." :
@@ -161,9 +151,9 @@ function autodetect_gpu_backend()
         "GPU backend is usable on this host. $(detail)"))
 end
 
-ensure_backend_runtime!(::CPUBackend) = true
+ensure_runtime!(::CPU) = true
 
-function ensure_backend_runtime!(::CUDAGPUBackend)
+function ensure_runtime!(::GPU{:cuda})
     CUDA = _load_runtime_package!(:CUDA)
     Base.invokelatest(getproperty(CUDA, :functional)) ||
         throw(ArgumentError("CUDA runtime is not functional on this host"))
@@ -172,7 +162,7 @@ function ensure_backend_runtime!(::CUDAGPUBackend)
     return true
 end
 
-function ensure_backend_runtime!(::MetalGPUBackend)
+function ensure_runtime!(::GPU{:metal})
     Sys.isapple() ||
         throw(ArgumentError("Metal backend requires macOS on Apple Silicon"))
     Metal = _load_runtime_package!(:Metal)
@@ -180,36 +170,35 @@ function ensure_backend_runtime!(::MetalGPUBackend)
         Base.invokelatest(getproperty(Metal, :functional)) ||
             throw(ArgumentError("Metal runtime is not functional on this host"))
     end
-    # `device()` is the lightweight availability probe Metal.jl exposes.
     isdefined(Metal, :device) && Base.invokelatest(getproperty(Metal, :device))
     isdefined(Metal, :allowscalar) &&
         Base.invokelatest(getproperty(Metal, :allowscalar), false)
     return true
 end
 
-backend_array_adapter(::CPUBackend) = Array
+array_adapter(::CPU) = Array
 
-function backend_array_adapter(backend::CUDAGPUBackend)
-    ensure_backend_runtime!(backend)
+function array_adapter(arch::GPU{:cuda})
+    ensure_runtime!(arch)
     return getproperty(_load_runtime_package!(:CUDA), :CuArray)
 end
 
-function backend_array_adapter(backend::MetalGPUBackend)
-    ensure_backend_runtime!(backend)
+function array_adapter(arch::GPU{:metal})
+    ensure_runtime!(arch)
     return getproperty(_load_runtime_package!(:Metal), :MtlArray)
 end
 
-backend_device_name(::CPUBackend) = "CPU"
+device_name(::CPU) = "CPU"
 
-function backend_device_name(backend::CUDAGPUBackend)
-    ensure_backend_runtime!(backend)
+function device_name(arch::GPU{:cuda})
+    ensure_runtime!(arch)
     CUDA = _load_runtime_package!(:CUDA)
     return string(Base.invokelatest(getproperty(CUDA, :name),
                                     Base.invokelatest(getproperty(CUDA, :device))))
 end
 
-function backend_device_name(backend::MetalGPUBackend)
-    ensure_backend_runtime!(backend)
+function device_name(arch::GPU{:metal})
+    ensure_runtime!(arch)
     Metal = _load_runtime_package!(:Metal)
     dev = isdefined(Metal, :device) ?
           Base.invokelatest(getproperty(Metal, :device)) :
@@ -218,20 +207,20 @@ function backend_device_name(backend::MetalGPUBackend)
     return hasproperty(dev, :name) ? string(getproperty(dev, :name)) : string(dev)
 end
 
-backend_label(::CPUBackend) = "CPU"
-backend_label(backend::CUDAGPUBackend) = "GPU (CUDA, $(backend_device_name(backend)))"
-backend_label(backend::MetalGPUBackend) = "GPU (Metal, $(backend_device_name(backend)))"
+architecture_label(::CPU) = "CPU"
+architecture_label(arch::GPU{:cuda}) = "GPU (CUDA, $(device_name(arch)))"
+architecture_label(arch::GPU{:metal}) = "GPU (Metal, $(device_name(arch)))"
 
-synchronize_backend!(::CPUBackend) = nothing
+synchronize_architecture!(::CPU) = nothing
 
-function synchronize_backend!(backend::CUDAGPUBackend)
-    ensure_backend_runtime!(backend)
+function synchronize_architecture!(arch::GPU{:cuda})
+    ensure_runtime!(arch)
     Base.invokelatest(getproperty(_load_runtime_package!(:CUDA), :synchronize))
     return nothing
 end
 
-function synchronize_backend!(backend::MetalGPUBackend)
-    ensure_backend_runtime!(backend)
+function synchronize_architecture!(arch::GPU{:metal})
+    ensure_runtime!(arch)
     Metal = _load_runtime_package!(:Metal)
     if isdefined(Metal, :synchronize)
         Base.invokelatest(getproperty(Metal, :synchronize))
@@ -253,9 +242,8 @@ _array_adapter_for(::Any) = Array
 """
     reclaim_backend_pool!(reference_array)
 
-Release backend allocator caches associated with `reference_array` after
-startup transients become unreachable. CPU arrays are a no-op; optional GPU
-extensions provide device-specific methods without inspecting `Main`.
+Release device allocator caches associated with `reference_array` after
+startup transients become unreachable. CPU arrays are a no-op.
 """
 function reclaim_backend_pool!(reference_array)
     ref = reference_array isa Tuple ? reference_array[1] : reference_array
@@ -264,32 +252,36 @@ end
 
 _reclaim_backend_pool!(::Any) = nothing
 
-_is_backend_array(::CPUBackend, backing) = backing isa Array
+_is_architecture_array(::CPU, backing) = backing isa Array
 
-function _is_backend_array(backend::CUDAGPUBackend, backing)
-    CuArray = backend_array_adapter(backend)
-    return backing isa CuArray
+function _is_architecture_array(arch::GPU{:cuda}, backing)
+    return backing isa array_adapter(arch)
 end
 
-function _is_backend_array(backend::MetalGPUBackend, backing)
-    MtlArray = backend_array_adapter(backend)
-    return backing isa MtlArray
+function _is_architecture_array(arch::GPU{:metal}, backing)
+    return backing isa array_adapter(arch)
 end
 
-function assert_backend_residency!(storage, backend::AbstractRuntimeBackend;
-                                   label::AbstractString = "storage")
-    is_gpu_backend(backend) ||
-        return storage isa Tuple ? parent(storage[1]) : parent(storage)
+"""
+    assert_residency!(storage, architecture; label="storage")
+
+Verify that an array or tuple of arrays is resident on `architecture`. CPU
+storage is returned directly; a GPU mismatch aborts rather than falling back
+silently to host execution.
+"""
+function assert_residency!(storage, arch::AbstractArchitecture;
+                           label::AbstractString = "storage")
     backing = storage isa Tuple ? parent(storage[1]) : parent(storage)
-    _is_backend_array(backend, backing) || throw(ErrorException(
-        "[gpu residency check] expected $(label) to live on $(backend_name(backend)) " *
+    is_gpu(arch) || return backing
+    _is_architecture_array(arch, backing) || throw(ErrorException(
+        "[gpu residency check] expected $(label) to live on $(backend_name(arch)) " *
         "but found $(typeof(backing)). CPU fallback aborted."))
     return backing
 end
 
-assert_backend_float_type!(::AbstractRuntimeBackend, ::Type{<:AbstractFloat}) = nothing
+assert_float_type!(::AbstractArchitecture, ::Type{<:AbstractFloat}) = nothing
 
-function assert_backend_float_type!(::MetalGPUBackend, ::Type{FT}) where {FT <: AbstractFloat}
+function assert_float_type!(::GPU{:metal}, ::Type{FT}) where {FT <: AbstractFloat}
     FT === Float32 || throw(ArgumentError(
         "Metal backend requires [numerics] float_type = \"Float32\"; got $(FT). " *
         "Apple Metal does not support Float64 kernels for this runtime."))

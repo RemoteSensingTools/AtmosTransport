@@ -83,11 +83,11 @@ backend = "auto"              # default: "auto" if use_gpu else "cpu"
 | `"cuda"` | NVIDIA CUDA via `CUDA.jl` (must be installed). |
 | `"metal"` | Apple Silicon Metal via `Metal.jl`. F32 only. |
 | `"auto"` | Auto-detects an available GPU backend (CUDA → Metal); errors if none is available. |
-| (omitted) | If `backend` is absent, the runtime picks `CPUBackend` when `use_gpu = false` and auto-detects a GPU backend when `use_gpu = true`. |
+| (omitted) | If `backend` is absent, the runtime picks `CPU()` when `use_gpu = false` and auto-detects `GPU(:cuda)` or `GPU(:metal)` when `use_gpu = true`. |
 
-The CLI eagerly loads a requested CUDA or Metal backend before AtmosTransport.
-The package runtime can also load an optional backend on demand without
-injecting modules into `Main`.
+The resolved `CPU()` or `GPU(:cuda|:metal)` architecture is stored on the grid
+and also controls model-array adaptation, synchronization, and runtime checks.
+Optional GPU packages load on demand without injecting modules into `Main`.
 
 ### `[numerics]` — precision
 

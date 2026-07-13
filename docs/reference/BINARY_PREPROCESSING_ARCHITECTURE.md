@@ -424,5 +424,3 @@ follow-up areas:
   preprocessing notes that this document is intended to supersede over time.
 - [`../src/preprocessing/overview.md`](../src/preprocessing/overview.md):
   Documenter overview for user-facing preprocessing docs.
-- [`../plans/41_UNIFIED_PREPROCESSOR/DESIGN.md`](../plans/41_UNIFIED_PREPROCESSOR/DESIGN.md):
-  typed-axis migration history.

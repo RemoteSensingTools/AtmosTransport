@@ -4,7 +4,7 @@
 # loads it with the runtime driver, runs a couple of advection steps,
 # and checks mass conservation — all without any external met data.
 # Everything here uses public API; the same pattern underlies
-# `test/test_driven_simulation.jl`.
+# `test/core/test_driven_simulation.jl`.
 #
 # Use this as a template when you want to:
 #

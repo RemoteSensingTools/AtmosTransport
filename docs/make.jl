@@ -54,6 +54,7 @@ const PAGES = [
     ],
     "Preprocessing" => [
         "preprocessing/overview.md",
+        "preprocessing/unified_binary_generation.md",
         "preprocessing/spectral_era5.md",
         "preprocessing/geos_native_cs.md",
         "preprocessing/regridding.md",
@@ -82,6 +83,11 @@ const PAGES = [
         "api/operators.md",
         "api/models.md",
         "api/preprocessing.md",
+        "api/downloads.md",
+        "api/regridding.md",
+        "api/output_visualization.md",
+        "api/adjoints.md",
+        "api/infrastructure.md",
     ],
     "About these docs" => "about.md",
 ]
@@ -98,11 +104,10 @@ makedocs(
         devurl        = "dev",
     ),
     pages    = PAGES,
-    # Phase 1 keeps the build permissive so missing-docstring / autodoc work
-    # in later phases is the trigger for stricter gates, not the infrastructure
-    # commit itself.
-    warnonly = true,
-    checkdocs = :none,
+    # Broken doctests/references and unpublished exported docstrings are
+    # release-blocking documentation defects.
+    warnonly = false,
+    checkdocs = :exports,
 )
 
 # DocumenterVitepress builds separate VitePress outputs under docs/build/1,

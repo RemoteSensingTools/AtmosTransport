@@ -110,7 +110,7 @@ done
 ### 1.2 Configuration
 
 The run config is already complete at
-[`config/runs/likely_legacy/geosit_c180_june2023.toml`](../config/runs/likely_legacy/geosit_c180_june2023.toml).
+[`config/runs/likely_legacy/geosit_c180_june2023.toml`](../../config/runs/likely_legacy/geosit_c180_june2023.toml).
 Verify `netcdf_dir` points to your data directory:
 
 ```toml
@@ -248,7 +248,7 @@ julia --project=. scripts/preprocessing/preprocess_transport_binary.jl \
 **Timing**: ~30–60 seconds per day × 30 days ≈ 15–30 minutes total on a
 modern CPU (dominated by the inverse SHT at T359).
 
-The config file [`config/preprocessing/likely_legacy/spectral_june2023.toml`](../config/preprocessing/likely_legacy/spectral_june2023.toml)
+The config file [`config/preprocessing/likely_legacy/spectral_june2023.toml`](../../config/preprocessing/likely_legacy/spectral_june2023.toml)
 specifies all parameters:
 ```toml
 [input]
@@ -328,7 +328,7 @@ Grid: 720 × 361 × 137
 ### 2.7 Configuration
 
 The run config is at
-[`config/runs/likely_legacy/era5_spectral_june2023.toml`](../config/runs/likely_legacy/era5_spectral_june2023.toml).
+[`config/runs/likely_legacy/era5_spectral_june2023.toml`](../../config/runs/likely_legacy/era5_spectral_june2023.toml).
 Verify `directory` matches your preprocessed output:
 
 ```toml

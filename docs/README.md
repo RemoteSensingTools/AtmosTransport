@@ -1,7 +1,10 @@
 # AtmosTransport Documentation
 
-Primary documentation for the basis-explicit transport architecture in
-[`../src/`](../src/).
+Documentation for the basis-explicit transport architecture in
+[`../src/`](../src/). The rendered user and API site is sourced from `src/`;
+the numbered documents and `reference/` provide extended repository-level
+design references. `resources/` and explicitly dated bug reports are archival,
+not statements of the current API.
 
 ## Structure
 
@@ -13,9 +16,7 @@ docs/
   20_RUNTIME_FLOW.md         -- End-to-end step! walkthrough
   30_BINARY_AND_DRIVERS.md   -- Transport binary format + driver API
   35_RUNTIME_STABILITY_AND_SUBCYCLING.md
-  36_POISSON_BALANCE_TARGET_BUG_2026-04-09.md
-  37_WINDOW_CONSTANT_FLUX_INTERPRETATION_BUG_2026-04-09.md
-  38_REDUCED_GAUSSIAN_THREADED_PREPROCESS_BUG_2026-04-09.md
+  36–39 *_BUG_*.md          -- Archival incident reports
   40_QUALITY_GATES.md
   reference/                 -- Shared reference docs (data layouts, APIs)
   memos/                     -- Design memos and debugging analyses
@@ -64,10 +65,22 @@ For a new contributor:
 | Basis-explicit transport design | [`memos/DESIGN_MEMO_BASIS_EXPLICIT_TRANSPORT.md`](memos/DESIGN_MEMO_BASIS_EXPLICIT_TRANSPORT.md) |
 | Advection kernel refactor | [`memos/advection_kernel_refactor_memo_update.md`](memos/advection_kernel_refactor_memo_update.md) |
 | Global mean ps fix | [`memos/GLOBAL_MEAN_PS_FIX.md`](memos/GLOBAL_MEAN_PS_FIX.md) |
-| RG instability root cause | [`memos/MEMO_REDUCED_GAUSSIAN_INSTABILITY_2026-04-10.md`](memos/MEMO_REDUCED_GAUSSIAN_INSTABILITY_2026-04-10.md) |
+| RG instability root cause (archived) | [`resources/bug_archive/MEMO_REDUCED_GAUSSIAN_INSTABILITY_2026-04-10.md`](resources/bug_archive/MEMO_REDUCED_GAUSSIAN_INSTABILITY_2026-04-10.md) |
 
 ## Quick Inspection
 
 ```bash
 julia --project=. scripts/diagnostics/inspect_transport_binary.jl path/to/file.bin
 ```
+
+## Build the rendered site
+
+From the repository root:
+
+```bash
+ATMOSTR_DOCS_BUILD_ONLY=true julia docs/build.jl
+```
+
+The bootstrap script installs the isolated docs environment and performs the
+same strict Documenter, doctest, Literate tutorial, and VitePress production
+build used by CI. Output is written under `docs/build/`.

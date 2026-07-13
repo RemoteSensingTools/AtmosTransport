@@ -29,16 +29,17 @@ model = run_driven_simulation(cfg)
 |---|---|
 | `inspect_binary(path)` | Print header/capability information and return capability flags. |
 | `binary_capabilities(reader)` | Summarize operator payload support for an open reader. |
-| `TransportBinaryReader`, `TransportBinaryHeader` | Read lat-lon and reduced-Gaussian transport binaries. |
-| `TransportBinaryDriver` | Runtime met driver for LL/RG transport binaries. |
+| `TransportBinaryReader`, `TransportBinaryHeader` | Read current version-4 binaries on any supported topology. |
+| `TransportBinaryDriver` | Runtime met driver shared by lat-lon, reduced-Gaussian, and cubed-sphere binaries. |
 | `load_transport_window(driver, i)` | Load a runtime forcing window. |
 | `write_transport_binary(...)` | Write synthetic or preprocessed LL/RG transport binaries. |
 | `total_windows`, `window_dt`, `steps_per_window`, `steps_per_window_schedule` | Inspect driver timing. |
 | `grid_type`, `horizontal_topology` | Inspect binary topology metadata. |
 | `supports_diffusion`, `supports_convection` | Check whether a driver can support requested physics. |
 
-Cubed-sphere readers and drivers are also available at the top level.
-Streaming writer helpers live there too because they are preprocessing internals.
+All three topologies share this reader, driver, and runtime-window API.
+Cubed-sphere preprocessing uses panel-aware streaming writer helpers; those
+helpers are advanced construction APIs rather than a second reader hierarchy.
 
 ## Work with grids and state
 
@@ -140,11 +141,19 @@ the actual operator ordering to `TransportModel.step!`.
 
 Internal tape records, checkpoint schedules, payload-section loaders, kernel
 variants, and preprocessing drivers are intentionally not exported at the top
-level. They are still part of the package namespace through their owning
-modules, so existing advanced code can use explicit qualification:
+level. Advanced workflows can use explicit qualification through the owning
+module:
 
 ```julia
 AtmosTransport.MetDrivers.load_qv_pair_window!(...)
 AtmosTransport.Preprocessing.process_day(...)
 AtmosTransport.Adjoints.cs_surface_emission_footprint(...)
+```
+
+## Top-level docstrings
+
+```@autodocs
+Modules = [AtmosTransport]
+Order   = [:module, :constant, :type, :function, :macro]
+Private = false
 ```

@@ -484,6 +484,25 @@ end
 #   CS: NTuple{6, Array{FT, 3}} of (Nc, Nc, Nz)
 # ---------------------------------------------------------------------------
 
+"""
+    build_initial_mixing_ratio(air_mass, mesh, cfg)
+    build_initial_mixing_ratio(air_mass, grid::AtmosGrid, cfg; surface_pressure=nothing)
+
+Construct the initial dry-air volume mixing ratio described by `cfg` on the
+horizontal topology and vertical layout of `air_mass`.
+
+Bare lat-lon and reduced-Gaussian meshes support the analytic `uniform`,
+`latitude_step`, and `gaussian_blob` modes; `bl_enhanced` is lat-lon only.
+Passing an `AtmosGrid` additionally enables file-backed modes (`file`,
+`netcdf`, `file_field`, and `catrine_co2`) with topology-aware horizontal
+mapping and log-pressure vertical interpolation. Cubed-sphere construction
+requires an `AtmosGrid` and also supports `pressure_layer` and `cs_native`.
+File-backed and pressure-layer construction require the transport window's
+`surface_pressure` where indicated by the selected mode.
+
+Returns an array shaped like `air_mass` for lat-lon and reduced-Gaussian grids,
+or an `NTuple{6}` of interior `(Nc, Nc, Nz)` arrays for cubed-sphere grids.
+"""
 function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::LatLonMesh{FT}, cfg) where FT
     kind = _init_kind(cfg)
     background = FT(get(cfg, "background", 4.0e-4))

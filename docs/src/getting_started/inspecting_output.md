@@ -150,5 +150,5 @@ The repository README carries the maintained Fast-Failure-Triage table.
 ## What's next
 
 - [Concepts](../concepts/grids.md) — the model architecture.
-- [Theory & Verification](#) — mass conservation, advection schemes,
-  validation results (Phase 6).
+- [Mass conservation](@ref), [Advection schemes](@ref), and
+  [Validation status](@ref) — theory and verification results.

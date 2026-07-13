@@ -289,5 +289,5 @@ configuration before running a long production simulation.
 
 - [Inspecting output](@ref) — programmatic and CLI access to both the
   binary and the snapshot NetCDF.
-- *Theory & Verification* — full mass-conservation derivation,
-  advection-scheme analysis, replay-gate proofs (Phase 6).
+- [Mass conservation](@ref) and [Advection schemes](@ref) — derivations,
+  scheme analysis, and replay-gate rationale.

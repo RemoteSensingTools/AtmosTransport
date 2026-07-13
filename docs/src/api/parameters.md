@@ -3,6 +3,6 @@
 
 ```@autodocs
 Modules = [AtmosTransport.Parameters]
-Order   = [:type, :function]
+Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```

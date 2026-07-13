@@ -8,6 +8,6 @@ per-source pages [ERA5 spectral path](@ref) and
 
 ```@autodocs
 Modules = [AtmosTransport.Preprocessing]
-Order   = [:type, :function]
+Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```

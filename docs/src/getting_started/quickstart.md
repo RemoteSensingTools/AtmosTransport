@@ -201,6 +201,7 @@ them as starting points:
   surface flux, `binary_mmap` output, rolling input staging, and the
   `geos_cm_closure` fingering cure.
 - [Inspecting output](@ref) — deeper coverage of the diagnostic tools.
-- [Concepts](#) — how the model is organized internally (Phase 3).
-- [Tutorials](#) — Literate-driven worked examples per topology
-  (Phase 4).
+- [Grids](@ref) and [Operators](@ref) — how the model is organized
+  internally.
+- [Tutorial: synthetic lat-lon end-to-end](@ref) — an executable Literate.jl
+  example.

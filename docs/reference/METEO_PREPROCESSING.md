@@ -169,7 +169,8 @@ variant in `proj/era5_met/src/tmm_mf_tm5_nc.F90`).
 3. ERA5 data downloaded as GRIB with spectral coefficients (not gridpoint NetCDF)
 4. CDS API access configured (`~/.cdsapirc`)
 
-See [TM5_LOCAL_SETUP.md](TM5_LOCAL_SETUP.md) for build instructions.
+See [TM5_LOCAL_SETUP.md](../resources/developer_notes/TM5_LOCAL_SETUP.md) for
+the archived local build instructions.
 
 ## Julia Model Meteorological Input
 

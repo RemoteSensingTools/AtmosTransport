@@ -131,5 +131,5 @@ If you are doing:
   ships.
 - [Conservation budgets](@ref) — the explicit `@test` assertions
   that anchor the verification claims above.
-- *Phase 7: Configuration & Runtime* — TOML schema for the run
-  configs that drive the validation work above.
+- [TOML schema](@ref) — configuration reference for the runs that drive
+  the validation work above.

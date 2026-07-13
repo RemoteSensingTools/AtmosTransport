@@ -54,7 +54,7 @@ the split. Slopes are computed from concentration `c = rm/m` (not from `rm` dire
 to preserve uniform fields, then scaled by `m`.
 
 See [MASS_FLUX_EVOLUTION.md](MASS_FLUX_EVOLUTION.md) for the design history and
-[Advection Theory](../literated/advection_theory.md) for the mathematical framework.
+[Advection Theory](../src/theory/advection_schemes.md) for the mathematical framework.
 
 ## Mass-flux advection validation
 
@@ -148,7 +148,8 @@ TM5 builds successfully with `ifx`, ecCodes, and full ERA5+GRIB support.
 - **Executable:** `/tmp/tm5_cfranken/var4d/dummy_tr/nam1x1/ml137/tropo25a/tm5-var4d.x`
 - **Linked against:** ecCodes 2.34.0, NetCDF-Fortran, MKL, OpenMPI
 
-See [TM5_LOCAL_SETUP.md](TM5_LOCAL_SETUP.md) for full build instructions.
+See [TM5_LOCAL_SETUP.md](../resources/developer_notes/TM5_LOCAL_SETUP.md) for
+the archived local build instructions.
 
 ### Remaining steps for end-to-end comparison
 

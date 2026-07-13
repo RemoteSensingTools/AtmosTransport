@@ -34,9 +34,13 @@ Concrete invariants and file-level pointers live in the repository
 ## Build the docs locally
 
 ```bash
-julia --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
-julia --project=docs docs/make.jl
+ATMOSTR_DOCS_BUILD_ONLY=true julia docs/build.jl
 ```
+
+`docs/build.jl` activates and instantiates the isolated documentation
+environment, develops the checkout in place, executes the tutorial and
+doctests, and renders the production VitePress site. The build fails on broken
+references, doctests, or exported docstrings omitted from the manual.
 
 The rendered VitePress site lands in `docs/build/`. To serve it
 locally for live preview:

@@ -204,5 +204,7 @@ Two diagnostic lines worth watching for:
 
 - [Inspecting output](@ref) — verify the snapshot NetCDF and the input
   binary.
-- [Configuration & Runtime](#) — the full TOML schema (Phase 7).
-- [Tutorials](#) — Literate-driven topology examples (Phase 4).
+- [TOML schema](@ref) — the full runtime and preprocessing configuration
+  reference.
+- [Tutorial: synthetic lat-lon end-to-end](@ref) — an executable Literate.jl
+  example.

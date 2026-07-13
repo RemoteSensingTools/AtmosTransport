@@ -103,6 +103,12 @@ unit conversion. Convection forcing arrays (`:cmfmc`, `:dtrain`,
 native per-area-per-second units; the operator handles the
 multiplication by `dt` at apply time.
 
+!!! note "Current format only"
+    Maintained writers emit transport-binary version 4 and maintained readers
+    reject earlier formats. A few configuration or dataset filenames still
+    contain historical `_v2` labels; those names do not select an older binary
+    contract.
+
 ## Replay tolerances
 
 | FT | `replay_tolerance(FT)` |

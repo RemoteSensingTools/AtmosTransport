@@ -6,6 +6,6 @@ see the narrative [Grids](@ref) page under Concepts.
 
 ```@autodocs
 Modules = [AtmosTransport.Grids]
-Order   = [:type, :function]
+Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```

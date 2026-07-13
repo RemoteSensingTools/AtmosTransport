@@ -472,30 +472,75 @@ function _makie_missing()
         "`using CairoMakie; using AtmosTransport`, then call the visualization API."))
 end
 
+"""
+    mapplot(field; kwargs...) -> Figure
+
+Render one topology-aware [`HorizontalField`](@ref) as a lon-lat map. Load a
+Makie backend such as CairoMakie before calling this function. Cubed-sphere
+fields are conservatively rasterized and may reuse a [`SnapshotRegridCache`](@ref).
+"""
 function mapplot(args...; kwargs...)
     _makie_missing()
 end
 
+"""
+    mapplot!(axis, field; kwargs...)
+
+Render a topology-aware field into an existing Makie axis and return the plot
+object. A Makie backend must be loaded.
+"""
 function mapplot!(args...; kwargs...)
     _makie_missing()
 end
 
+"""
+    snapshot_grid(snapshot, variable; kwargs...) -> Figure
+
+Render one snapshot variable at several output times in a shared figure. A
+Makie backend must be loaded.
+"""
 function snapshot_grid(args...; kwargs...)
     _makie_missing()
 end
 
+"""
+    movie(snapshot, variable, output_path; kwargs...) -> String
+
+Render one snapshot variable to an animation and return `output_path`. A Makie
+backend must be loaded.
+"""
 function movie(args...; kwargs...)
     _makie_missing()
 end
 
+"""
+    movie_grid(snapshot, specs, output_path; kwargs...) -> String
+
+Render several [`PlotSpec`](@ref) panels to one animation and return
+`output_path`. A Makie backend must be loaded.
+"""
 function movie_grid(args...; kwargs...)
     _makie_missing()
 end
 
+"""
+    catrine_map_curtains(at_path, gc_dir; kwargs...) -> NamedTuple
+
+Create the CATRINE AtmosTransport/GEOS-Chem column-map and pressure-curtain
+comparison product. Output is controlled by the `out_dir` keyword. This
+specialized visualization requires a Makie backend.
+"""
 function catrine_map_curtains(args...; kwargs...)
     _makie_missing()
 end
 
+"""
+    catrine_map_curtains_3way(at_geos_path, at_era5_path, gc_dir; kwargs...) -> NamedTuple
+
+Compare GEOS-Chem with AtmosTransport runs driven by GEOS-IT and ERA5 in one
+CATRINE column-map and pressure-curtain product. Output is controlled by the
+`out_dir` keyword. This specialized visualization requires a Makie backend.
+"""
 function catrine_map_curtains_3way(args...; kwargs...)
     _makie_missing()
 end

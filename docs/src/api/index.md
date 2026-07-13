@@ -22,6 +22,11 @@ depend on later ones:
 | [Operators](@ref Operators-API) | Advection / Convection / Diffusion / SurfaceFlux. |
 | [Models](@ref Models-API) | `TransportModel`, `DrivenSimulation`, the runtime stepper. |
 | [Preprocessing](@ref Preprocessing-API) | `process_day` and the source/target dispatch. |
+| [DataDownloads](@ref DataDownloads-API) | Verified source/protocol download pipeline. |
+| [Regridding](@ref Regridding-API) | Conservative offline regridding and persistence. |
+| [Output and visualization](@ref Output-and-visualization-API) | Snapshot output, field views, and plotting. |
+| [Adjoints and checkpointing](@ref Adjoints-and-checkpointing-API) | Footprints, 4D-Var, tape storage, and schedules. |
+| [Infrastructure](@ref Infrastructure-API) | Quantity traits and opt-in section timing. |
 
 ### A note on the public surface
 
@@ -33,10 +38,7 @@ either means (a) you're doing something the public API supports
 through a higher-level entry, or (b) the public API has a gap; in
 the latter case, an issue / PR is welcome.
 
-The API reference does NOT yet have curated narrative for every
-symbol — that's the natural follow-on to a full docstring audit
-across the codebase. The pages below are the canonical entry
-points; the **Concepts** chapter (start at [Grids](@ref)) and the
-**Theory & Verification** chapter (start at [Mass conservation](@ref))
-are where you'll find narrative descriptions of what each type
-does and how it fits.
+The generated pages below are the canonical symbol reference. The
+**Concepts** chapter (start at [Grids](@ref)) and the **Theory &
+Verification** chapter (start at [Mass conservation](@ref)) provide the
+narrative explanation of how those types and functions fit together.

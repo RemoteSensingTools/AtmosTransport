@@ -6,7 +6,7 @@ tracer accessor surface, see [State & basis](@ref).
 
 ```@autodocs
 Modules = [AtmosTransport.State]
-Order   = [:type, :function]
+Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```
 
@@ -17,6 +17,6 @@ profile fields, PBL parameters, …).
 
 ```@autodocs
 Modules = [AtmosTransport.State.Fields]
-Order   = [:type, :function]
+Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```

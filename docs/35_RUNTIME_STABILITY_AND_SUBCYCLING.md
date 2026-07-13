@@ -65,10 +65,10 @@ amounts**, not as endpoint states to interpolate toward the next hour.
 Relevant source:
 
 - spectral mass-flux construction uses `half_dt` in
-  [spectral_synthesis.jl](/home/cfranken/code/gitHub/AtmosTransportModel/scripts/preprocessing/preprocess_spectral_v4_binary/spectral_synthesis.jl#L190)
+  [`spectral_synthesis.jl`](../src/Preprocessing/spectral_synthesis.jl)
 - the runtime then applies these prepared sweep fluxes through the Strang
   sequence in
-  [StrangSplitting.jl](/home/cfranken/code/gitHub/AtmosTransportModel/src/Operators/Advection/StrangSplitting.jl#L631)
+  [`StrangSplitting.jl`](../src/Operators/Advection/StrangSplitting.jl)
 
 So the right reading of the current ERA5 lat-lon contract is:
 
@@ -103,9 +103,12 @@ TM5 does not rely only on one global subdivision factor.
 In the newer MPI transport:
 
 - x transport uses evolving-mass local `nloop(j,l)` in
-  [advectx__slopes.F90](/home/cfranken/code/gitHub/AtmosTransportModel/deps/tm5-mp-r1112/tm5-moguntia-r1112-revised/base/advectx__slopes.F90#L441)
+  `deps/tm5-mp-r1112/tm5-moguntia-r1112-revised/base/advectx__slopes.F90`
 - y transport uses evolving-mass local `nloop(l)` in
-  [advecty__slopes.F90](/home/cfranken/code/gitHub/AtmosTransportModel/deps/tm5-mp-r1112/tm5-moguntia-r1112-revised/base/advecty__slopes.F90#L236)
+  `deps/tm5-mp-r1112/tm5-moguntia-r1112-revised/base/advecty__slopes.F90`
+
+Those comparison sources live in the optional, git-ignored `deps/` checkout;
+they are not part of the AtmosTransport source distribution.
 
 Important implications:
 

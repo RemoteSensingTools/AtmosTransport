@@ -10,7 +10,7 @@
 ## Status tracker
 
 Single source of truth for what is production-ready, what is preview /
-experimental, and what is planned. Updated `2026-07-11`. Items move out
+experimental, and what is planned. Updated `2026-07-13`. Items move out
 of "experimental" only after a passing CPU+GPU regression suite and a
 documented validation run.
 
@@ -122,7 +122,7 @@ documented validation run.
 | Preprocessing reference | 🟡 | Current contract docs are being consolidated |
 | Theory (mass conservation, advection) | ✅ | |
 | Tutorials | 🟡 | Synthetic LL only; real-data tutorials planned |
-| API reference (auto-generated) | 🟡 | Docstrings incomplete in several modules |
+| API reference (auto-generated) | ✅ | Strictly checked against every exported docstring |
 | Validation campaigns / inter-comparison | 📐 | Not yet a top-level page |
 
 ### Known broken
@@ -140,13 +140,11 @@ with a clean separation between offline preprocessing and runtime stepping.
 
 ### Column-Mean CO₂ Transport (ERA5 + EDGAR, GPU)
 
-![Column-mean CO₂ animation](docs/src/assets/column_mean_animation_small.gif)
-
-*One-month forward simulation (June 2024) of anthropogenic CO₂ transport on a
+One-month forward simulation (June 2024) of anthropogenic CO₂ transport on a
 1° × 1° × 137-level grid, driven by ERA5 model-level spectral winds and
-[EDGAR v8.0](https://edgar.jrc.ec.europa.eu/) surface emissions. The animation
-shows the column-averaged mixing ratio enhancement (ppm, delta-pressure weighted)
-in Robinson projection.*
+[EDGAR v8.0](https://edgar.jrc.ec.europa.eu/) surface emissions. The diagnostic
+uses the column-averaged mixing ratio enhancement (ppm,
+delta-pressure weighted) in Robinson projection.
 
 **Simulation details.** Mass fluxes are pre-computed from ERA5 hybrid-level
 vorticity / divergence / log-PS spectral fields following TM5's continuity-

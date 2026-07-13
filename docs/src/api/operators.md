@@ -9,7 +9,7 @@ For per-scheme advection properties, [Advection schemes](@ref).
 
 ```@autodocs
 Modules = [AtmosTransport.Operators]
-Order   = [:type, :function]
+Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```
 
@@ -17,7 +17,7 @@ Private = false
 
 ```@autodocs
 Modules = [AtmosTransport.Operators.Advection]
-Order   = [:type, :function]
+Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```
 
@@ -25,7 +25,7 @@ Private = false
 
 ```@autodocs
 Modules = [AtmosTransport.Operators.Convection]
-Order   = [:type, :function]
+Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```
 
@@ -33,7 +33,7 @@ Private = false
 
 ```@autodocs
 Modules = [AtmosTransport.Operators.Diffusion]
-Order   = [:type, :function]
+Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```
 
@@ -41,7 +41,7 @@ Private = false
 
 ```@autodocs
 Modules = [AtmosTransport.Operators.SurfaceFlux]
-Order   = [:type, :function]
+Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```
 
@@ -49,6 +49,6 @@ Private = false
 
 ```@autodocs
 Modules = [AtmosTransport.Operators.Chemistry]
-Order   = [:type, :function]
+Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```

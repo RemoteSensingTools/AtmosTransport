@@ -3,6 +3,7 @@
 This submodule contains ERA5-specific geometry and continuity helpers used by
 the canonical transport-binary stack.
 
+- [`ERA5.jl`](ERA5.jl) assembles the submodule and exports its public helpers.
 - [`NativeGRIBGeometry.jl`](NativeGRIBGeometry.jl) reconstructs an ERA5 native
   reduced-Gaussian mesh from GRIB metadata.
 - [`VerticalClosure.jl`](VerticalClosure.jl) diagnoses structured vertical

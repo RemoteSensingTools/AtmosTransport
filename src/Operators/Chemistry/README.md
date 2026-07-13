@@ -14,9 +14,6 @@ operators, and sequential `CompositeChemistry` composition that
   `ExponentialDecay`, and `CompositeChemistry`
 - Kernel implementation:
   [`chemistry_kernels.jl`](chemistry_kernels.jl)
-- Step-level block composition:
-  [`chemistry_block.jl`](chemistry_block.jl)
-  provides `CompositeChemistry`
 - Model-facing runtime entrypoint:
   [`Chemistry.jl`](Chemistry.jl)
   provides `apply!(state, meteo, grid, op, dt; workspace=nothing)`
@@ -38,8 +35,6 @@ operators, and sequential `CompositeChemistry` composition that
   state-level `apply!`, and composition rules
 - [`chemistry_kernels.jl`](chemistry_kernels.jl) — fused multi-tracer
   decay kernel
-- [`chemistry_block.jl`](chemistry_block.jl) — post-transport chemistry
-  block called from the model step
 
 ## Common Tasks
 

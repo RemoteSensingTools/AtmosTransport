@@ -107,7 +107,7 @@ lifecycle is:
 6. Write verified windows through the typed writer.
 7. Flush any final cross-day windows.
 8. Patch final metadata, close the staging file, summarize gates, and promote.
-9. Quarantine the staging file on any hard failure.
+9. Remove the staging file on any hard failure.
 
 The names that define this surface are:
 
@@ -237,7 +237,7 @@ Responsibilities:
 - A contract owns replay tolerance, positivity limits, boundary checks, and
   worst-window accumulators.
 - A writer owns the staging path, fixed payload ordering, final header patch,
-  close, promote, and quarantine behavior.
+  close, promote, and failed-staging cleanup behavior.
 
 ## Transport-Binary Version 4
 

@@ -46,22 +46,19 @@ Prognostic transport state remains:
 
 Reconstruction is diagnostic and workspace-backed.
 
-Planned public reconstruction families:
+Runnable advection scheme families:
 
-- `AbstractConstantReconstruction`
-- `AbstractLinearReconstruction`
-- `AbstractQuadraticReconstruction`
-
-Current runnable scheme:
-
-- `UpwindAdvection <: AbstractConstantReconstruction`
+- `AbstractConstantScheme` → `UpwindScheme`
+- `AbstractLinearScheme` → `SlopesScheme`
+- `AbstractQuadraticScheme` → `PPMScheme`
+- `LinRoodPPMScheme <: AbstractAdvectionScheme` for cubed-sphere transport
 
 ## Topology contract
 
-Two first-class horizontal representations are expected:
+Two first-class horizontal representations are supported:
 
-- `StructuredDirectional`
-- `FaceIndexed`
+- `StructuredFluxTopology`
+- `FaceIndexedFluxTopology`
 
 The common numerical model is still conservative tracer-mass transport, but the
 storage and kernel pathways are allowed to differ by topology.

@@ -6,8 +6,8 @@ CurrentModule = AtmosTransport
 
 With the daily binary mmap'd and a typed `state.air_mass` on the same
 basis, every physics operator becomes a small `apply!(state, ...,
-op, dt)` call. This page maps the four operator families
-(advection, diffusion, convection, surface flux) onto the vocabulary
+op, dt)` call. This page maps the five operator families
+(advection, diffusion, convection, surface flux, chemistry) onto the vocabulary
 TM5 and GCHP users already have.
 
 If you have only read the [Binary pipeline](binary_pipeline.md) page,

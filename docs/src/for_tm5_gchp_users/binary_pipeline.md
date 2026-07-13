@@ -112,10 +112,10 @@ forward with the just-written flux fields and asserts
 ‖m_evolved - m_stored[n+1]‖ / ‖m_stored[n+1]‖  ≤  tol
 ```
 
-with `tol = 1e-7` (Float32) or `1e-12` (Float64). On failure the
-binary is moved to a quarantine path (`*.bin.quarantined`) and a
-human-readable diagnostic is dumped next to it. Binaries that fail
-the gate are *never* visible to the runtime under their canonical
+with `tol = 1e-4` (Float32) or `1e-10` (Float64). Output is staged
+under a temporary name; on failure the staged file is removed, while
+on success it is promoted to the canonical path. A binary that fails
+the gate is therefore never visible to the runtime under its canonical
 name.
 
 ### Per-window adaptive substeps
@@ -125,15 +125,14 @@ runtime reads it to set per-window substep counts. GEOS-native CS
 preprocessing chooses each window's count adaptively from the
 palindrome positivity budget — see
 [Operators on top of the binary](operators_on_binaries.md#adaptive-substeps).
-Set `[input].require_adaptive_substeps = true` to reject older binaries
-that do not carry this schedule. This is a capability gate, not a second
-load-time replay of the write-time conservation check.
+The v4 reader requires this schedule. Older formats are unsupported and must
+be regenerated; loading does not repeat the write-time conservation check.
 
 ## How the two preprocessing paths build the binary
 
 There are two production paths today: **ERA5 spectral** (mostly LL,
 RG; CS via subsequent regrid), and **GEOS native** (CS only). Both
-land in the same v2 binary schema.
+land in the same v4 binary schema.
 
 ### Path A — ERA5 spectral
 

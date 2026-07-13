@@ -1,20 +1,15 @@
 # ---------------------------------------------------------------------------
 # Abstract operator hierarchy for the basis-explicit transport architecture.
 #
-# All physics operators dispatch on these abstract types. The universal
-# interface is:
+# All physics operators dispatch on these abstract types and share the mutating
+# function `apply!`. Its second positional argument is family-specific: face
+# fluxes for advection, `ConvectionForcing` for convection, and meteorology or
+# clock data for diffusion, surface fluxes, and chemistry. There is therefore
+# no universal positional forcing type beyond the operator root itself.
 #
-#   apply!(state, fluxes::AbstractFaceFluxState, grid, op, dt; kwargs...)
-#
-# Transport operators receive only CellState + AbstractFaceFluxState +
-# AtmosGrid. They never see raw winds, humidity, or met-specific structs.
-#
-# The operator contract is face-oriented at the mathematical level.
-# Concrete flux storage and kernel strategy are selected by dispatch on
-# the mesh's flux topology:
-#
-#   structured mesh  → AbstractStructuredFaceFluxState  → cell-loop kernels
-#   unstructured mesh → AbstractUnstructuredFaceFluxState → face-loop kernels
+# Concrete state, flux storage, and kernel strategies are selected by dispatch
+# on the state and grid types. Raw meteorology is interpreted at the driver or
+# family boundary rather than inside transport kernels.
 #
 # Diffusion and convection roots are declared here because those modules
 # extend them directly. Advection, chemistry, and surface-flux modules declare

@@ -10,15 +10,16 @@ concept mapping, workflow differences, and where to find familiar operations.
 | `advectx.F90` / `advecty.F90` | `src/Operators/Advection/StrangSplitting.jl` | Same Strang X-Y-Z-Z-Y-X split |
 | Russell-Lerner slopes | `SlopesScheme(MonotoneLimiter())` | Identical algorithm, 3-arg minmod |
 | `advectm_cfl.F90` / `nloop` | `_x_subcycling_pass_count` | CFL evolving-mass pilot |
-| `dynam0` / `dynamw_1d` | `diagnose_cm_from_continuity!` / vertical remap | cm from continuity equation |
+| `dynam0` / `dynamw_1d` | `diagnose_cm_from_continuity!` / vertical mass-flux sweep | cm from continuity equation |
 | `grid_type_ll.F90` Poisson | `balance_mass_fluxes!` / `LLPoissonWorkspace` | Identical FFT algorithm |
 | `sp = exp(lnsp)` | `spectral_synthesis.jl` | Spectral → gridpoint via Legendre + FFT |
 | `Match('area-aver', ...)` | `pin_global_mean_ps!` | Global mean ps mass fix |
 | `echlev` / level merging | `select_levels_echlevs` / `merge_thin_levels` | Same interface-index scheme |
 | `tm5_massflux.bin` | Transport binary (v4) | Different format (JSON header + flat F32/F64) |
 | `mk.F90` (mass update) | `strang_split!` tracer loop | Air mass co-evolved with tracers |
-| Tiedtke convection | `TiedtkeConvection` | Same algorithm, explicit upwind |
-| PBL diffusion | `BoundaryLayerDiffusion` | Implicit tridiagonal solve |
+| Tiedtke convection | `TM5Convection` | Four-field entrainment/detrainment, implicit column solve |
+| GEOS moist convection | `CMFMCConvection` | Explicit mass-flux and optional detrainment path |
+| PBL diffusion | `ImplicitVerticalDiffusion` | Backward-Euler tridiagonal solve |
 
 ## Key architectural differences
 
@@ -33,9 +34,10 @@ julia --project=. scripts/run_transport.jl config/runs/era5_f64_debug.toml
 ```
 
 ### Grid dispatch (not if/else)
-TM5 has separate code paths for each grid. AtmosTransport dispatches on
-`AbstractGrid` subtypes: `LatLonMesh`, `ReducedGaussianMesh`, `CubedSphereMesh`.
-The same `strang_split!` interface works on all.
+TM5 has separate code paths for each grid. AtmosTransport stores a concrete
+`AbstractHorizontalMesh` (`LatLonMesh`, `ReducedGaussianMesh`, or
+`CubedSphereMesh`) inside `AtmosGrid`; multiple dispatch selects the matching
+state, flux storage, and kernels.
 
 ### GPU-portable kernels
 All advection kernels use KernelAbstractions.jl — the same code runs on CPU and

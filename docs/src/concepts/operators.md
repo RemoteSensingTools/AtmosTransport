@@ -6,7 +6,7 @@ runtime composes operators through a fixed Strang palindrome; users
 swap implementations by changing one field in the TOML config (or by
 implementing a new subtype and registering it).
 
-## The four operator families
+## The five operator families
 
 ```mermaid
 classDiagram
@@ -15,6 +15,7 @@ classDiagram
     class AbstractDiffusion
     class AbstractConvection
     class AbstractSurfaceFluxOperator
+    class AbstractChemistryOperator
     class UpwindScheme
     class SlopesScheme
     class PPMScheme
@@ -26,9 +27,15 @@ classDiagram
     class TM5Convection
     class NoSurfaceFlux
     class SurfaceFluxOperator
+    class NoChemistry
+    class ExponentialDecay
+    class CompositeChemistry
 
+    AbstractOperator <|-- AbstractAdvectionScheme
     AbstractOperator <|-- AbstractDiffusion
     AbstractOperator <|-- AbstractConvection
+    AbstractOperator <|-- AbstractSurfaceFluxOperator
+    AbstractOperator <|-- AbstractChemistryOperator
     AbstractAdvectionScheme <|-- UpwindScheme
     AbstractAdvectionScheme <|-- SlopesScheme
     AbstractAdvectionScheme <|-- PPMScheme
@@ -40,12 +47,10 @@ classDiagram
     AbstractConvection <|-- TM5Convection
     AbstractSurfaceFluxOperator <|-- NoSurfaceFlux
     AbstractSurfaceFluxOperator <|-- SurfaceFluxOperator
+    AbstractChemistryOperator <|-- NoChemistry
+    AbstractChemistryOperator <|-- ExponentialDecay
+    AbstractChemistryOperator <|-- CompositeChemistry
 ```
-
-`AbstractAdvectionScheme` and `AbstractSurfaceFluxOperator` are
-parallel roots that don't share `AbstractOperator`'s ancestry, but
-they follow the same composition pattern (concrete subtype +
-`No<Operator>` default + `apply!` method).
 
 ## The `apply!` contract
 
@@ -59,11 +64,13 @@ that family needs:
 | Diffusion | `apply!(state, meteo, grid, op::AbstractDiffusion, dt; workspace)` |
 | Convection | `apply!(state, forcing::ConvectionForcing, grid, op::AbstractConvection, dt; workspace)` |
 | Surface flux | `apply!(state, meteo, grid, op::AbstractSurfaceFluxOperator, dt; workspace = nothing)` |
+| Chemistry | `apply!(state, meteo, grid, op::AbstractChemistryOperator, dt; workspace = nothing)` |
 
-Every method mutates `state` in place and returns `state` (or
-`nothing`); none allocates per call (workspaces hold scratch buffers).
-The `No<Operator>` variant is a literal dead branch — calling it
-costs nothing, so leaving an unused operator slot wired in is free.
+Every method mutates `state` in place. Performance-sensitive implementations
+keep reusable scratch buffers in workspaces. Each family provides an identity
+operator (`NoAdvection`, `NoDiffusion`, `NoConvection`, `NoSurfaceFlux`, or
+`NoChemistry`) so the runtime can compose one typed model without conditionally
+calling absent physics.
 
 Topology dispatch happens **inside** each `apply!` method, not on a
 separate axis: an LL state and a CS state route through different
@@ -167,7 +174,7 @@ error**, not a silent fallback.
 
 ## Surface flux (sources)
 
-`AbstractSurfaceFluxOperator` is the parallel root; concrete subtypes:
+`AbstractSurfaceFluxOperator` is the root; concrete subtypes:
 
 | Subtype | Use |
 |---|---|
@@ -178,6 +185,20 @@ error**, not a silent fallback.
 `[tracers.<name>.surface_flux]` blocks and is the path for emissions
 inventories (EDGAR, GFED, GridFED, LMDz, …). See the worked CATRINE configs
 (`config/runs/catrine_*.toml`) for examples.
+
+## Chemistry
+
+`AbstractChemistryOperator` is the root; concrete subtypes:
+
+| Subtype | Use |
+|---|---|
+| `NoChemistry()` | Identity no-op; default. |
+| `ExponentialDecay` | Applies configured first-order loss rates to selected tracers. |
+| `CompositeChemistry` | Applies a typed tuple of chemistry operators in sequence. |
+
+Chemistry runs after the transport and convection blocks. The same operator
+interface covers `CellState` and `CubedSphereState`; topology dispatch selects
+the storage-specific kernel launch.
 
 ## Strang palindrome
 

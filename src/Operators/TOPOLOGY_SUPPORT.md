@@ -4,7 +4,7 @@ Canonical source of truth for which operators support which
 topologies. Module READMEs reference this file rather than
 duplicating coverage claims.
 
-**Last verified:** 2026-05-16 (Plan 41 CS packed split-sweep follow-up)
+**Last verified:** 2026-07-12
 
 ## Topologies
 
@@ -25,7 +25,7 @@ duplicating coverage claims.
 | `ExponentialDecay` / `CompositeChemistry` | ✅ | ✅ | ✅ |
 
 ✅ = dedicated `apply!` or `apply_*!` dispatch exists, tested and live through `TransportModel.step!`.
-❌ = no dispatch; operator rejects or (for CS chemistry) is not yet wired.
+❌ = no dispatch; the operator rejects that topology.
 
 ## Evidence anchors
 
@@ -78,14 +78,12 @@ Three valid `apply!` dispatches in
 - `apply!(::CellState, ..., ::ExponentialDecay, dt)`
 - `apply!(::CellState, ..., ::CompositeChemistry, dt)`
 
-And three corresponding `CubedSphereState` dispatches (plan 21
-follow-up). CS chemistry loops over the six panels and launches
-the same rank-agnostic decay kernel per panel.
+And three corresponding `CubedSphereState` dispatches. CS chemistry loops over
+the six panels and launches the same rank-agnostic decay kernel per panel.
 
 ## Known gaps
 
-None at present. Plan 21's topology completion work has no remaining
-documented operator × topology gaps.
+None at present.
 
 ## How to update this file
 
@@ -98,7 +96,5 @@ When topology support changes:
 4. In the corresponding submodule README, reference this file
    rather than restating coverage.
 
-A CI test (plan 21 Phase 6 — not yet landed) will validate that
-every ✅ claim maps to an actual `apply!` method and every ❌ (gap)
-maps to either no method or a `throw(ArgumentError(...))`
-rejection.
+Keep topology-specific tests beside each operator's core tests so every ✅ claim
+continues to map to an executable `apply!` path.

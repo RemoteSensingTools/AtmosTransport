@@ -4,8 +4,8 @@ Physics operators for the transport runtime.
 
 This folder is where the model-level operator contract becomes concrete:
 advection, diffusion, surface flux, convection, and chemistry all expose
-compatible `apply!` entry points, but they do not all have the same
-runtime maturity or topology coverage.
+compatible `apply!` entry points. Topology-specific implementations remain
+separate where their storage and numerical kernels genuinely differ.
 
 ## What This Tree Owns
 
@@ -27,15 +27,10 @@ runtime maturity or topology coverage.
     non-`NoConvection` operator
   - chemistry block
 
-That distinction matters when reading this tree: "operator exists in
-`src/Operators`" and "operator is live through `TransportModel`" are
-still not the same thing — the chemistry CS gap below is a current
-example.
-
 ## Topology Coverage
 
 See [`TOPOLOGY_SUPPORT.md`](TOPOLOGY_SUPPORT.md) for the canonical
-operator × topology matrix. CS chemistry is the one known gap.
+operator × topology matrix.
 
 ## File Map
 

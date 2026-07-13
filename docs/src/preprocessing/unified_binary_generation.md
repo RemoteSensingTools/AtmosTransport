@@ -84,8 +84,8 @@ explicit opt-out:
 substep_schedule = "fixed"
 ```
 
-Fixed schedules still run the final positivity contract. If they fail, the
-binary is quarantined unless the diagnostic escape hatch is explicitly enabled.
+Fixed schedules still run the final positivity contract. If it fails, the
+staged binary is removed unless the diagnostic escape hatch is explicitly enabled.
 
 ## Topology Responsibilities
 

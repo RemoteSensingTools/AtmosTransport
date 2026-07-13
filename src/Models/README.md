@@ -49,10 +49,10 @@ read.
   advection family (`advection_spec`, LinRood is cubed-sphere only) +
   chemistry family (`chemistry_spec`, `materialize` dispatches on run `FT`) +
   diffusion family (`diffusion_spec`; `materialize(spec, style, FT, context)`
-  threads all three — the CS Kz-cache helpers stay in `CSPhysicsRecipe.jl`)
-- [`CSPhysicsRecipe.jl`](CSPhysicsRecipe.jl) — CS runtime physics recipe
-  builders (thin wrappers over the specs) and capability validation for
-  advection, diffusion, convection, and surface forcing
+  threads all three — topology/capability helpers stay in `RuntimePhysicsRecipe.jl`)
+- [`RuntimePhysicsRecipe.jl`](RuntimePhysicsRecipe.jl) — topology-dispatched
+  runtime recipe construction and capability validation for advection,
+  diffusion, convection, chemistry, and surface forcing
 - [`InitialConditionIO.jl`](InitialConditionIO.jl) — topology-dispatched
   VMR builder (`build_initial_mixing_ratio` on LL/RG/CS),
   basis-aware VMR → tracer-mass packer (`pack_initial_tracer_mass`),

@@ -317,7 +317,7 @@ Base.summary(s::DecayChemistrySpec) =
 # cubed-sphere-only gating), `FT` (precision), and the runtime `context`
 # (driver/reader — for the Kz-cache shape + binary-capability gate). The spec stays
 # context-free so it can be parsed before any driver exists; the context work is
-# deferred to `materialize`, which calls the helpers in `CSPhysicsRecipe.jl`
+# deferred to `materialize`, which calls the helpers in `RuntimePhysicsRecipe.jl`
 # (`_constant_runtime_kz_field`, `_pbl_cache_shape`, `_runtime_has_*`) — those resolve
 # concrete grid/reader/driver types and are stubbed by tests, so they stay there.
 

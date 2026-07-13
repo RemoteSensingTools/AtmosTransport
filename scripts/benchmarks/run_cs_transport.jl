@@ -199,7 +199,8 @@ function run_cs(cfg)
     binary_paths = [expanduser(String(p)) for p in input_cfg["binary_paths"]]
 
     run_cfg = get(cfg, "run", Dict{String,Any}())
-    scheme = build_cs_advection(cfg)
+    scheme = AtmosTransport.Models.build_runtime_advection(
+        cfg, AtmosTransport.Models.CubedSphereRuntimeRecipeStyle())
     Hp = configured_halo_width(cfg, scheme)
     start_window = Int(get(run_cfg, "start_window", 1))
     stop_window_override = get(run_cfg, "stop_window", nothing)

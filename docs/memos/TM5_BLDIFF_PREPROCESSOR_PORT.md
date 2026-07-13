@@ -138,7 +138,7 @@ J/m² → W/m² conversion (same as `:hflux`/`sshf`).
 
 **P3 — runtime recipe** (small)
 - `build_runtime_diffusion(::CubedSphereRuntimeRecipeStyle, ::Val{:precomputed_kz}, …)`
-  in `CSPhysicsRecipe.jl` → `ImplicitVerticalDiffusion(kz_field =
+  in `RuntimePhysicsRecipe.jl` → `ImplicitVerticalDiffusion(kz_field =
   PreComputedKzField(window_cache), …)`; require the `:Kz` section, else throw
   the regenerate-binary error (mirror the `geoschem_holtslag_boville_vdiff`
   guard).

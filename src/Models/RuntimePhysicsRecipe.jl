@@ -28,8 +28,6 @@ struct RuntimePhysicsRecipe{AdvT, DiffT, ConvT, ChemT}
     chemistry  :: ChemT
 end
 
-const CSPhysicsRecipe = RuntimePhysicsRecipe
-
 # The flat-411 `catrine_co2` stub is gone. CS tracers
 # now flow through the same `build_initial_mixing_ratio` +
 # `pack_initial_tracer_mass` pipeline as LL/RG; `kind = "catrine_co2"`
@@ -375,16 +373,6 @@ function configured_halo_width(cfg, scheme::AbstractAdvectionScheme)
            Int(get(run_cfg, "halo_padding", default_hp))
 end
 
-build_cs_advection(cfg) = build_runtime_advection(cfg, CubedSphereRuntimeRecipeStyle())
-build_cs_diffusion(cfg, ::Type{FT}) where FT =
-    build_runtime_diffusion(cfg, CubedSphereRuntimeRecipeStyle(), FT)
-build_cs_convection(cfg) = build_runtime_convection(cfg, CubedSphereRuntimeRecipeStyle())
-validate_cs_physics_recipe(recipe::RuntimePhysicsRecipe, context; halo_width::Union{Nothing, Integer} = nothing) =
-    validate_runtime_physics_recipe(recipe, context; halo_width = halo_width)
-build_cs_physics_recipe(cfg, context, ::Type{FT}; halo_width::Union{Nothing, Integer} = nothing) where FT =
-    build_runtime_physics_recipe(cfg, context, FT; halo_width = halo_width)
-configured_cs_halo_width(cfg, scheme::AbstractAdvectionScheme) = configured_halo_width(cfg, scheme)
-
 # CS tracers flow through the unified pipeline:
 #
 #     vmr = build_initial_mixing_ratio(air_mass, grid, init_cfg)
@@ -393,11 +381,8 @@ configured_cs_halo_width(cfg, scheme::AbstractAdvectionScheme) = configured_halo
 #
 # See `src/Models/InitialConditionIO.jl`.
 
-export RuntimePhysicsRecipe, CSPhysicsRecipe
+export RuntimePhysicsRecipe
 export build_runtime_advection, build_runtime_diffusion, build_runtime_convection
 export build_runtime_chemistry
 export build_runtime_physics_recipe, validate_runtime_physics_recipe
 export configured_halo_width
-export build_cs_advection, build_cs_diffusion, build_cs_convection
-export build_cs_physics_recipe, validate_cs_physics_recipe
-export configured_cs_halo_width

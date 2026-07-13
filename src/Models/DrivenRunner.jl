@@ -109,11 +109,12 @@ using ..Output: SnapshotFrame,
 using ..Models: TransportModel
 import ..Models: DrivenSimulation, run_window!, run!, step!, allocate_face_fluxes
 # Physics-recipe helpers: `build_runtime_physics_recipe` /
-# `validate_runtime_physics_recipe` are defined in `CSPhysicsRecipe.jl`
+# `validate_runtime_physics_recipe` are defined in `RuntimePhysicsRecipe.jl`
 # (loaded before us in Models). Pull them in so we don't have to stutter
 # through `Main.AtmosTransport.*`.
 using ..Models: build_runtime_physics_recipe, validate_runtime_physics_recipe,
-                 configured_halo_width, build_cs_advection
+                 build_runtime_advection, configured_halo_width,
+                 CubedSphereRuntimeRecipeStyle
 
 export run_driven_simulation, validate_config, TransportTracerSpec
 
@@ -1143,7 +1144,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
     arch = _cfg_architecture(cfg)
 
     run_cfg = get(cfg, "run", Dict{String, Any}())
-    advection = build_cs_advection(cfg)
+    advection = build_runtime_advection(cfg, CubedSphereRuntimeRecipeStyle())
     Hp = configured_halo_width(cfg, advection)
     stop_window_override = get(run_cfg, "stop_window", nothing)
     haskey(run_cfg, "reset_air_mass_each_window") &&

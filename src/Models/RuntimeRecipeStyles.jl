@@ -2,7 +2,7 @@
 # on to pick topology-specific construction rules (lat-lon, reduced Gaussian,
 # cubed sphere). Kept in their own file, included BEFORE `RuntimePhysicsSpecs.jl`,
 # because the spec `materialize` methods dispatch on these types. The
-# `_runtime_recipe_style(grid/driver/reader)` resolvers live in `CSPhysicsRecipe.jl`
+# `_runtime_recipe_style(grid/driver/reader)` resolvers live in `RuntimePhysicsRecipe.jl`
 # (they need the grid/driver types) — only the bare trait types live here.
 
 abstract type AbstractRuntimeRecipeStyle end

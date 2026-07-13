@@ -33,7 +33,7 @@ _config_bool(cfg::AbstractDict, key::AbstractString, default::Bool, path::Abstra
 include("TransportModel.jl")
 include("RuntimeRecipeStyles.jl")    # runtime-style traits (dispatched on by specs)
 include("RuntimePhysicsSpecs.jl")    # typed config specs + materialize (Oceananigans-style)
-include("CSPhysicsRecipe.jl")
+include("RuntimePhysicsRecipe.jl")
 include("InitialConditionIO.jl")
 using .InitialConditionIO: FileInitialConditionSource,
                            build_initial_mixing_ratio,

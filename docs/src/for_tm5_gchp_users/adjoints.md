@@ -36,7 +36,7 @@ flowchart LR
 The production entry point is
 [`cs_surface_emission_footprint`](https://github.com/cfranken/AtmosTransportModel/blob/main/src/Footprint/FootprintAPI.jl)
 on the cubed-sphere. Given a sequence of forward windows (a
-`CubedSphereTransportDriver`), an observation specification, and a
+`TransportBinaryDriver`), an observation specification, and a
 scheme (today: `LinRoodPPMScheme()` is the fully-tested path), it
 returns a `CSFootprintResult` whose `footprints[t]` is `dJ/dE_t`,
 the sensitivity of the scalar objective to surface emission rate

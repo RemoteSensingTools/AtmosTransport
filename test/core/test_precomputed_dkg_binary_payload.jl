@@ -54,7 +54,7 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
             op = AtmosTransport.Models.materialize(
                 spec, AtmosTransport.Models.CubedSphereRuntimeRecipeStyle(), FT, reader)
             @test op.kz_field isa PrecomputedCSDkgField
-            driver = AtmosTransport.MetDrivers.CubedSphereTransportDriver(reader; Hp = 1)
+            driver = AtmosTransport.MetDrivers.TransportBinaryDriver(reader; Hp = 1)
             @test AtmosTransport.MetDrivers.supports_diffusion(driver)
         finally
             close(reader.io)

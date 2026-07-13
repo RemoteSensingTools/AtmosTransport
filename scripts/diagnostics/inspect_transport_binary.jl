@@ -49,8 +49,8 @@ function main(args)
     try
         FT = _on_disk_float_type(path)
         if caps.grid_type === :cubed_sphere
-            driver = CubedSphereTransportDriver(path; FT = FT, arch = CPU())
-            println("Driver: OK (CubedSphereTransportDriver)")
+            driver = TransportBinaryDriver(path; FT = FT, arch = CPU())
+            println("Driver: OK (TransportBinaryDriver)")
             println(driver)
             close(driver)
         else

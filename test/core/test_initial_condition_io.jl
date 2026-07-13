@@ -300,7 +300,7 @@ end
         mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
         vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
         grid = AtmosGrid(mesh, vertical, CPU(); FT = FT)
-        # Halo-padded 6-panel air_mass tuple (matches CubedSphereTransportDriver layout).
+        # Halo-padded 6-panel air_mass tuple (matches TransportBinaryDriver layout).
         air_mass = ntuple(_ -> fill(FT(1e10), Nc + 2 * Hp, Nc + 2 * Hp, Nz), 6)
 
         vmr = build_initial_mixing_ratio(air_mass, grid,

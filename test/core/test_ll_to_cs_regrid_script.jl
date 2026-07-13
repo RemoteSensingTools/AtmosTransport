@@ -234,7 +234,7 @@ end
 
             close(reader)
 
-            driver = CubedSphereTransportDriver(cs_path; FT = Float64, arch = CPU(),
+            driver = TransportBinaryDriver(cs_path; FT = Float64, arch = CPU(),
                                                 Hp = 1, validate_replay = true)
             close(driver)
         end

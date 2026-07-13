@@ -266,7 +266,7 @@ The runtime side of the contract lives in:
   (header schema and section-aware reader)
 - [`MetDrivers/transport_binary/cubed_sphere_reader.jl`](https://github.com/cfranken/AtmosTransportModel/blob/main/src/MetDrivers/transport_binary/cubed_sphere_reader.jl)
   (cubed-sphere geometry specializations)
-- [`MetDrivers/TransportBinaryDriver.jl`](https://github.com/cfranken/AtmosTransportModel/blob/main/src/MetDrivers/TransportBinaryDriver.jl)
+- [`MetDrivers/transport_binary/driver.jl`](https://github.com/cfranken/AtmosTransportModel/blob/main/src/MetDrivers/transport_binary/driver.jl)
   (window loop + replay-gate)
 
 ## Comparison with the TM5 and GCHP I/O models

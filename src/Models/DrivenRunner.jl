@@ -88,7 +88,7 @@ using ..Architectures: AbstractArchitecture, architecture_from_config,
                        array_adapter, architecture_label, device_name,
                        backend_name, synchronize_architecture!,
                        assert_residency!, assert_float_type!
-using ..MetDrivers: TransportBinaryDriver, CubedSphereTransportDriver,
+using ..MetDrivers: TransportBinaryDriver,
                      load_transport_window, driver_grid, air_mass_basis,
                      total_windows, window_dt, binary_capabilities,
                      inspect_binary, steps_per_window,
@@ -588,7 +588,7 @@ end
 
 function _allocate_cs_runner_fluxes(mesh, _Nz::Int, _FT, _basis)
     throw(ArgumentError(
-        "CubedSphereTransportDriver returned incompatible horizontal grid " *
+        "TransportBinaryDriver returned incompatible horizontal grid " *
         "$(typeof(mesh)); expected CubedSphereMesh"))
 end
 
@@ -1149,8 +1149,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     # `stager` (rolling NVMe input staging) is created + torn down by the caller
     # `run_driven_simulation`; here we just route driver opens through it.
     # First driver + model (reuses air_mass from window 1)
-    driver1 = CubedSphereTransportDriver(staged_path_for!(stager, 1);
-                                          FT = FT, arch = arch, Hp = Hp)
+    driver1 = TransportBinaryDriver(staged_path_for!(stager, 1);
+                                    FT = FT, arch = arch, Hp = Hp)
     output_cfg = get(cfg, "output", Dict{String, Any}())
     output_spec = runtime_output_spec(output_cfg, FT;
                                       default_cap_hours = _output_default_cap_hours(
@@ -1192,8 +1192,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     # here rather than producing silently wrong tracer mass.
     basis_sym === :moist &&
         error("CS driven runner does not yet support moist-basis binaries: " *
-              "`pack_initial_tracer_mass` needs qv, which `CubedSphereTransportWindow` " *
-              "does not expose. Regenerate the binary on dry basis " *
+              "`pack_initial_tracer_mass` needs qv, which canonical CS v4 " *
+              "payloads do not contain. Regenerate the binary on dry basis " *
               "(`regrid_ll_transport_binary_to_cs.jl --mass-basis dry`), " *
               "or extend the CS window + this runner to thread qv.")
 
@@ -1297,8 +1297,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
         # copy when staging is enabled (driver_idx==1 already staged above).
         driver = driver_idx == 1 ? driver1 :
                  timed_io_read!(timer,
-                     () -> CubedSphereTransportDriver(staged_path_for!(stager, driver_idx);
-                                                       FT = FT, arch = arch, Hp = Hp))
+                     () -> TransportBinaryDriver(staged_path_for!(stager, driver_idx);
+                                                  FT = FT, arch = arch, Hp = Hp))
         validate_runtime_physics_recipe(recipe, driver; halo_width = Hp)
         stop_window = stop_window_override === nothing ?
                       total_windows(driver) :

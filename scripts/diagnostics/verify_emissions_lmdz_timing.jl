@@ -21,7 +21,7 @@
 # ===========================================================================
 
 using AtmosTransport
-using AtmosTransport.MetDrivers: CubedSphereTransportDriver, driver_grid
+using AtmosTransport.MetDrivers: TransportBinaryDriver, driver_grid
 using AtmosTransport.Grids: panel_cell_center_lonlat
 using AtmosTransport.Models.InitialConditionIO:
     build_surface_flux_source, _surface_flux_storage_scale
@@ -53,7 +53,7 @@ end
 stack(p) = cat(p...; dims = 3)
 
 function main()
-    driver = CubedSphereTransportDriver(BIN; FT = FT, arch = AtmosTransport.CPU())
+    driver = TransportBinaryDriver(BIN; FT = FT, arch = AtmosTransport.CPU())
     grid = driver_grid(driver)
 
     cfg = Dict("kind" => "lmdz_co2", "time_varying" => true)

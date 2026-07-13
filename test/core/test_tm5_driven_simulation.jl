@@ -34,7 +34,7 @@ using .AtmosTransport.Grids: AtmosGrid, LatLonMesh, HybridSigmaPressure,
                               cell_areas_by_latitude, CPU as GridsCPU
 using .AtmosTransport.Operators: TM5Convection, TM5Workspace,
                                  UpwindScheme, AbstractConvection
-using .AtmosTransport.MetDrivers: ConvectionForcing, StructuredTransportWindow,
+using .AtmosTransport.MetDrivers: ConvectionForcing, TransportWindow,
                                    AbstractMetDriver
 using .AtmosTransport.Models: TransportModel, DrivenSimulation,
                                with_convection, step!, window_index
@@ -114,8 +114,8 @@ function _make_tm5_window_driver(; FT = Float64)
     forcing_b = _make_tm5_forcing(FT, Nx, Ny, Nz;
                                    peak_entu = FT(0.02))
 
-    window_a = StructuredTransportWindow(air_mass, ps, fluxes; convection = forcing_a)
-    window_b = StructuredTransportWindow(air_mass, ps, fluxes; convection = forcing_b)
+    window_a = TransportWindow(air_mass, ps, fluxes; convection = forcing_a)
+    window_b = TransportWindow(air_mass, ps, fluxes; convection = forcing_b)
     driver = _TM5WindowDriver{FT, typeof(grid), typeof(window_a)}(
         grid, [window_a, window_b], FT(1800), 1)
     return driver, forcing_a, forcing_b

@@ -25,7 +25,7 @@
 # ===========================================================================
 
 using AtmosTransport
-using AtmosTransport.MetDrivers: CubedSphereTransportDriver, driver_grid
+using AtmosTransport.MetDrivers: TransportBinaryDriver, driver_grid
 using AtmosTransport.Grids: panel_cell_center_lonlat, cell_area
 using AtmosTransport.Models.InitialConditionIO:
     build_surface_flux_source, _surface_flux_storage_scale,
@@ -169,10 +169,10 @@ function main()
     isfile(BIN)   || error("transport binary not found: $BIN")
 
     @info "Opening transport binary to get the run mesh..." BIN
-    # CS transport binaries are read by CubedSphereTransportDriver; it builds
+    # CS transport binaries are read by TransportBinaryDriver; it builds
     # the exact run mesh from the binary's own cs-definition. We only need the
     # mesh geometry, so skip the replay-consistency gate.
-    driver = CubedSphereTransportDriver(BIN; FT = FT, arch = AtmosTransport.CPU())
+    driver = TransportBinaryDriver(BIN; FT = FT, arch = AtmosTransport.CPU())
     grid = driver_grid(driver)
     mesh = grid.horizontal
     Nc = mesh.geometry.Nc

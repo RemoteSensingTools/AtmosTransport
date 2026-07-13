@@ -113,11 +113,9 @@ asserted in one place but not enforced elsewhere, or abstractions leak.
   inherits the device backend.
 
 ### 1.8 Misc smaller contract holes
-- **`replay_window_pair`** under both LL and RG drivers loads window `k+1`
-  twice per iteration
-  ([TransportBinaryDriver.jl:234](../../src/MetDrivers/TransportBinaryDriver.jl#L234)
-  and `:319`). The second load discards `_fluxes_next` (already read) and
-  re-reads to obtain `fluxes`. Fold the loads.
+- **Resolved:** `replay_window_pair` under both LL and RG drivers loaded window
+  `k+1` twice per iteration. The unified driver now reuses `fluxes_next`
+  ([driver.jl](../../src/MetDrivers/transport_binary/driver.jl#L106)).
 - **CS `PreprocessorRunCache` is not threaded into `regrid_ll_binary_to_cs`**
   (see §1.5) — separate cache instance per day batch, regridder rebuilt.
 - **LinRood: `strang_split_linrood_ppm!` (public) runs 4 fillz passes and
@@ -461,7 +459,7 @@ dispatch would be cleaner or measurably faster.
   — beyond the GPU correctness issue (§1.7), it allocates ~15 MB per call
   for ERA5 288×181×72. Pre-allocate in `CMFMCWorkspace`.
 - **`_validate_window_cm_sanity` allocates a full window per iteration**
-  ([TransportBinaryDriver.jl:167](../../src/MetDrivers/TransportBinaryDriver.jl#L167))
+  ([driver.jl](../../src/MetDrivers/transport_binary/driver.jl#L55))
   at driver construction — 24 windows × ~4 arrays × ~8 MB = ~768 MB
   temporary allocation. Pre-allocate buffers before the loop.
 - **`diagnose_cm_from_continuity_vc!` allocates `Δb` per call**

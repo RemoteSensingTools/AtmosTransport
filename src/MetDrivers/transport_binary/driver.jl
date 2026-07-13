@@ -1,135 +1,9 @@
-# ---------------------------------------------------------------------------
-# Transport-binary met driver
-#
-# Clean `src` interface for preprocessed transport binaries:
-#   - drivers own file/window timing and forcing I/O
-#   - models own prognostic tracer state
-#   - transport windows carry typed mass/flux forcing for one met window
-# ---------------------------------------------------------------------------
-
-"""
-    AbstractTransportWindow{Basis}
-
-Typed forcing window for one transport interval.
-
-A transport window carries the preprocessed mass/flux forcing that the runtime
-needs for one met interval. It does not own tracer state.
-"""
-abstract type AbstractTransportWindow{Basis <: AbstractMassBasis} end
-
-struct StructuredFluxDeltas{AAm, ABm, ACm, AM}
-    dam :: AAm
-    dbm :: ABm
-    dcm :: ACm
-    dm  :: AM
-end
-
-struct FaceIndexedFluxDeltas{AH, ACm, AM}
-    dhflux :: AH
-    dcm    :: ACm
-    dm     :: AM
-end
-
-"""
-    StructuredTransportWindow
-
-One decoded v4 lat-lon forcing window: air mass, surface pressure,
-directional face fluxes, optional humidity endpoints, replay deltas, and
-convection forcing.
-"""
-struct StructuredTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C} <: AbstractTransportWindow{Basis}
-    air_mass         :: M
-    surface_pressure :: PS
-    fluxes           :: F
-    qv_start         :: Q
-    qv_end           :: Q
-    deltas           :: D
-    convection       :: C   # ::Union{Nothing, ConvectionForcing}
-end
-
-"""
-    FaceIndexedTransportWindow
-
-One decoded v4 reduced-Gaussian forcing window: face-indexed air mass,
-surface pressure, horizontal/vertical fluxes, optional humidity endpoints,
-replay deltas, and convection forcing.
-"""
-struct FaceIndexedTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C} <: AbstractTransportWindow{Basis}
-    air_mass         :: M
-    surface_pressure :: PS
-    fluxes           :: F
-    qv_start         :: Q
-    qv_end           :: Q
-    deltas           :: D
-    convection       :: C   # ::Union{Nothing, ConvectionForcing}
-end
-
-function Adapt.adapt_structure(to, deltas::StructuredFluxDeltas)
-    dam = Adapt.adapt(to, deltas.dam)
-    dbm = Adapt.adapt(to, deltas.dbm)
-    dcm = Adapt.adapt(to, deltas.dcm)
-    dm = Adapt.adapt(to, deltas.dm)
-    return StructuredFluxDeltas{typeof(dam), typeof(dbm), typeof(dcm), typeof(dm)}(dam, dbm, dcm, dm)
-end
-
-function Adapt.adapt_structure(to, deltas::FaceIndexedFluxDeltas)
-    dhflux = Adapt.adapt(to, deltas.dhflux)
-    dcm = Adapt.adapt(to, deltas.dcm)
-    dm = Adapt.adapt(to, deltas.dm)
-    return FaceIndexedFluxDeltas{typeof(dhflux), typeof(dcm), typeof(dm)}(dhflux, dcm, dm)
-end
-
-function Adapt.adapt_structure(to, window::StructuredTransportWindow{B}) where {B <: AbstractMassBasis}
-    air_mass = Adapt.adapt(to, window.air_mass)
-    surface_pressure = Adapt.adapt(to, window.surface_pressure)
-    fluxes = Adapt.adapt(to, window.fluxes)
-    qv_start = Adapt.adapt(to, window.qv_start)
-    qv_end = Adapt.adapt(to, window.qv_end)
-    deltas = Adapt.adapt(to, window.deltas)
-    convection = Adapt.adapt(to, window.convection)
-    return StructuredTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes), typeof(qv_start), typeof(deltas), typeof(convection)}(
-        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection)
-end
-
-function Adapt.adapt_structure(to, window::FaceIndexedTransportWindow{B}) where {B <: AbstractMassBasis}
-    air_mass = Adapt.adapt(to, window.air_mass)
-    surface_pressure = Adapt.adapt(to, window.surface_pressure)
-    fluxes = Adapt.adapt(to, window.fluxes)
-    qv_start = Adapt.adapt(to, window.qv_start)
-    qv_end = Adapt.adapt(to, window.qv_end)
-    deltas = Adapt.adapt(to, window.deltas)
-    convection = Adapt.adapt(to, window.convection)
-    return FaceIndexedTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes), typeof(qv_start), typeof(deltas), typeof(convection)}(
-        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection)
-end
-
-mass_basis(::AbstractTransportWindow{B}) where {B} = B()
-has_humidity_endpoints(window::AbstractTransportWindow) = window.qv_start !== nothing && window.qv_end !== nothing
-has_flux_delta(window::AbstractTransportWindow) = window.deltas !== nothing
-
-# Window-level convection probe. Extends the
-# `ConvectionForcing` overload from `ConvectionForcing.jl` to the
-# window layer.
-has_convection_forcing(window::AbstractTransportWindow) = window.convection !== nothing
-
-function StructuredTransportWindow(air_mass, surface_pressure, fluxes::StructuredFaceFluxState{B};
-                                   qv_start = nothing, qv_end = nothing, deltas = nothing,
-                                   convection = nothing) where {B <: AbstractMassBasis}
-    return StructuredTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes), typeof(qv_start), typeof(deltas), typeof(convection)}(
-        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection)
-end
-
-function FaceIndexedTransportWindow(air_mass, surface_pressure, fluxes::FaceIndexedFluxState{B};
-                                    qv_start = nothing, qv_end = nothing, deltas = nothing,
-                                    convection = nothing) where {B <: AbstractMassBasis}
-    return FaceIndexedTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes), typeof(qv_start), typeof(deltas), typeof(convection)}(
-        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection)
-end
-
 """
     TransportBinaryDriver
 
-Standalone `src` met driver backed by a topology-generic transport binary.
+Meteorological driver backed by a validated version-4 transport binary.
+Geometry dispatch reconstructs the appropriate grid and loads structured,
+face-indexed, or panel-native windows through the same public interface.
 """
 struct TransportBinaryDriver{FT, ReaderT, GridT} <: AbstractMassFluxMetDriver
     reader :: ReaderT
@@ -362,7 +236,10 @@ end
 
 _validate_replay_consistency_rg(::Any, ::Any) = nothing
 
-function _validate_runtime_semantics(reader::TransportBinaryReader)
+function _validate_runtime_semantics(
+    reader::TransportBinaryReader,
+    ::Union{LatLonBinaryGeometry, ReducedGaussianBinaryGeometry},
+)
     h = reader.header
     variable_steps = _has_variable_step_schedule(h.steps_per_window_by_window)
     expected_poisson_scale = 1.0 / (2 * h.steps_per_window)
@@ -423,6 +300,51 @@ function _validate_runtime_semantics(reader::TransportBinaryReader)
     return nothing
 end
 
+function _validate_runtime_semantics(reader::TransportBinaryReader,
+                                     ::CubedSphereBinaryGeometry)
+    h = reader.header
+    h.air_mass_sampling === :window_start_endpoint || throw(ArgumentError(
+        "TransportBinaryDriver requires air_mass_sampling = :window_start_endpoint, " *
+        "got $(h.air_mass_sampling)"))
+    h.flux_sampling === :window_constant || throw(ArgumentError(
+        "cubed-sphere forcing requires flux_sampling = :window_constant, " *
+        "got $(h.flux_sampling)"))
+    h.flux_kind in (:substep_mass_amount, :full_window_mass_amount) ||
+        throw(ArgumentError("unsupported cubed-sphere flux_kind $(h.flux_kind)"))
+    h.humidity_sampling === :none || throw(ArgumentError(
+        "cubed-sphere forcing requires humidity_sampling = :none, " *
+        "got $(h.humidity_sampling)"))
+    return nothing
+end
+
+function _validate_transport_windows(reader::TransportBinaryReader,
+                                     ::Union{LatLonBinaryGeometry,
+                                             ReducedGaussianBinaryGeometry};
+                                     max_rel_cm::Real)
+    return _validate_window_cm_sanity(reader; max_rel_cm)
+end
+
+_validate_transport_windows(::TransportBinaryReader,
+                            ::CubedSphereBinaryGeometry;
+                            max_rel_cm::Real) = nothing
+
+function _transport_driver_grid(reader::TransportBinaryReader,
+                                ::Union{LatLonBinaryGeometry,
+                                        ReducedGaussianBinaryGeometry};
+                                FT, arch, Hp)
+    return load_grid(reader; FT, arch)
+end
+
+function _validate_driver_replay(reader::TransportBinaryReader,
+                                 ::LatLonBinaryGeometry, _grid)
+    return _validate_replay_consistency_ll(reader)
+end
+
+function _validate_driver_replay(reader::TransportBinaryReader,
+                                 ::ReducedGaussianBinaryGeometry, grid)
+    return _validate_replay_consistency_rg(reader, grid)
+end
+
 function Base.summary(driver::TransportBinaryDriver{FT}) where {FT}
     return string(
         "TransportBinaryDriver{", FT, "}(",
@@ -444,16 +366,28 @@ function Base.show(io::IO, driver::TransportBinaryDriver)
           "└── windows:       ", total_windows(driver))
 end
 
-function TransportBinaryDriver(path::AbstractString;
-                               FT::Type{<:AbstractFloat} = Float64,
-                               arch = CPU(),
+"""
+    TransportBinaryDriver(reader; arch=CPU(), Hp=1,
+                          validate_windows=true, validate_replay=false)
+    TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1,
+                          validate_windows=true, validate_replay=false)
+
+Open a version-4 binary and construct its runtime grid. `Hp` is the horizontal
+halo width for cubed-sphere grids and is ignored by other geometries. Optional
+validation checks vertical-flux magnitude for LL/RG and replay continuity for
+all geometries. The path constructor closes its internally opened reader if
+construction fails; callers retain ownership of a reader passed directly.
+"""
+function TransportBinaryDriver(reader::TransportBinaryReader{FT};
+                               arch = CPU(), Hp::Int = 1,
                                validate_windows::Bool = true,
                                validate_replay::Bool = false,
-                               max_rel_cm::Real = 1.0)
-    reader = TransportBinaryReader(String(path); FT=FT)
-    _validate_runtime_semantics(reader)
-    validate_windows && _validate_window_cm_sanity(reader; max_rel_cm=max_rel_cm)
-    grid = load_grid(reader; FT=FT, arch=arch)
+                               max_rel_cm::Real = 1.0) where FT
+    geometry = binary_geometry(reader)
+    _validate_runtime_semantics(reader, geometry)
+    validate_windows &&
+        _validate_transport_windows(reader, geometry; max_rel_cm)
+    grid = _transport_driver_grid(reader, geometry; FT, arch, Hp)
     # Load-time replay-consistency gate. Opt-in because the write-time
     # gate already guarantees continuity for
     # binaries we produce; the load-time gate is for suspect binaries
@@ -461,18 +395,48 @@ function TransportBinaryDriver(path::AbstractString;
     # Set `validate_replay=true` or `ENV["ATMOSTR_REPLAY_CHECK"]="1"` to
     # enable; disable the in-flight check with `ATMOSTR_NO_REPLAY_CHECK=1`.
     replay_on = validate_replay || get(ENV, "ATMOSTR_REPLAY_CHECK", "0") == "1"
-    if replay_on
-        topo = horizontal_topology(reader)
-        if topo === :structureddirectional
-            _validate_replay_consistency_ll(reader)
-        elseif topo === :faceindexed
-            _validate_replay_consistency_rg(reader, grid)
-        end
-    end
+    replay_on && _validate_driver_replay(reader, geometry, grid)
     return TransportBinaryDriver{FT, typeof(reader), typeof(grid)}(reader, grid)
 end
 
+function TransportBinaryDriver(path::AbstractString;
+                               FT::Type{<:AbstractFloat} = Float64,
+                               arch = CPU(), Hp::Int = 1,
+                               validate_windows::Bool = true,
+                               validate_replay::Bool = false,
+                               max_rel_cm::Real = 1.0)
+    reader = TransportBinaryReader(String(path); FT)
+    try
+        return TransportBinaryDriver(reader; arch, Hp, validate_windows,
+                                     validate_replay, max_rel_cm)
+    catch
+        close(reader)
+        rethrow()
+    end
+end
+
 Base.close(driver::TransportBinaryDriver) = close(driver.reader)
+
+"""
+    release_payload!(driver)
+
+On Linux, advise the kernel that pages faulted from the driver's read-only mmap
+may be reclaimed. Later access safely faults them back from disk. This bounds
+page-cache pressure in multi-file runs; it is a no-op on other platforms.
+"""
+function release_payload!(driver::TransportBinaryDriver)
+    Sys.islinux() || return nothing
+    data = driver.reader.data
+    isempty(data) && return nothing
+    MADV_DONTNEED = Cint(4)
+    page_size = ccall(:getpagesize, Cint, ())
+    address = UInt(pointer(data))
+    base = address & ~(UInt(page_size) - 1)
+    length_bytes = Csize_t(sizeof(data) + (address - base))
+    ccall(:madvise, Cint, (Ptr{Cvoid}, Csize_t, Cint),
+          Ptr{Cvoid}(base), length_bytes, MADV_DONTNEED)
+    return nothing
+end
 
 total_windows(driver::TransportBinaryDriver) = window_count(driver.reader)
 window_dt(driver::TransportBinaryDriver{FT}) where {FT} = FT(driver.reader.header.dt_met_seconds)
@@ -486,10 +450,16 @@ supports_moisture(driver::TransportBinaryDriver) = has_qv(driver.reader)
 supports_native_vertical_flux(::TransportBinaryDriver) = true
 supports_convection(driver::TransportBinaryDriver) =
     has_tm5_convection(driver.reader) || has_cmfmc(driver.reader)
+supports_diffusion(driver::TransportBinaryDriver) =
+    _supports_runtime_diffusion(driver.reader)
+_supports_runtime_diffusion(::TransportBinaryReader) = false
 driver_grid(driver::TransportBinaryDriver) = driver.grid
 flux_interpolation_mode(driver::TransportBinaryDriver) =
     has_flux_delta(driver.reader) && driver.reader.header.flux_sampling !== :window_constant ? :interpolate : :constant
-uses_binary_substep_contract(::TransportBinaryDriver) = false
+flux_kind(driver::TransportBinaryDriver) = flux_kind(driver.reader)
+uses_binary_substep_contract(driver::TransportBinaryDriver) =
+    get(driver.reader.header.raw_header, "runtime_substep_contract", nothing) ==
+    "binary_schedule"
 
 @inline function _interpolate_field!(dest, base, delta, λ)
     @. dest = base + λ * delta
@@ -509,7 +479,8 @@ end
     return dest
 end
 
-function interpolate_fluxes!(dest::StructuredFaceFluxState, window::StructuredTransportWindow, λ::Real)
+function interpolate_fluxes!(dest::StructuredFaceFluxState,
+                             window::TransportWindow, λ::Real)
     λ_ft = convert(eltype(dest.am), λ)
     if window.deltas === nothing
         return copy_fluxes!(dest, window.fluxes)
@@ -521,7 +492,8 @@ function interpolate_fluxes!(dest::StructuredFaceFluxState, window::StructuredTr
     return dest
 end
 
-function interpolate_fluxes!(dest::FaceIndexedFluxState, window::FaceIndexedTransportWindow, λ::Real)
+function interpolate_fluxes!(dest::FaceIndexedFluxState,
+                             window::TransportWindow, λ::Real)
     λ_ft = convert(eltype(dest.horizontal_flux), λ)
     if window.deltas === nothing
         return copy_fluxes!(dest, window.fluxes)
@@ -532,7 +504,7 @@ function interpolate_fluxes!(dest::FaceIndexedFluxState, window::FaceIndexedTran
     return dest
 end
 
-function expected_air_mass!(dest, window::AbstractTransportWindow, λ::Real)
+function expected_air_mass!(dest, window::TransportWindow, λ::Real)
     if window.deltas === nothing
         copyto!(dest, window.air_mass)
         return dest
@@ -542,7 +514,7 @@ function expected_air_mass!(dest, window::AbstractTransportWindow, λ::Real)
     return dest
 end
 
-function interpolate_qv!(dest, window::AbstractTransportWindow, λ::Real)
+function interpolate_qv!(dest, window::TransportWindow, λ::Real)
     has_humidity_endpoints(window) || throw(ArgumentError("transport window does not carry qv_start/qv_end"))
     λ_ft = convert(eltype(dest), λ)
     @. dest = window.qv_start + λ_ft * (window.qv_end - window.qv_start)
@@ -561,11 +533,11 @@ function _make_transport_window(m, ps, fluxes::StructuredFaceFluxState;
         haskey(deltas, :dm) || throw(ArgumentError("structured transport deltas require `dm`"))
         StructuredFluxDeltas(deltas.dam, deltas.dbm, deltas.dcm, deltas.dm)
     end
-    return StructuredTransportWindow(m, ps, fluxes;
-                                     qv_start = qv_pair === nothing ? nothing : qv_pair.qv_start,
-                                     qv_end = qv_pair === nothing ? nothing : qv_pair.qv_end,
-                                     deltas = delta_obj,
-                                     convection = convection)
+    return TransportWindow(m, ps, fluxes;
+                           qv_start = qv_pair === nothing ? nothing : qv_pair.qv_start,
+                           qv_end = qv_pair === nothing ? nothing : qv_pair.qv_end,
+                           deltas = delta_obj,
+                           convection = convection)
 end
 
 function _make_transport_window(m, ps, fluxes::FaceIndexedFluxState;
@@ -579,11 +551,11 @@ function _make_transport_window(m, ps, fluxes::FaceIndexedFluxState;
         haskey(deltas, :dm) || throw(ArgumentError("face-indexed transport deltas require `dm`"))
         FaceIndexedFluxDeltas(deltas.dhflux, deltas.dcm, deltas.dm)
     end
-    return FaceIndexedTransportWindow(m, ps, fluxes;
-                                      qv_start = qv_pair === nothing ? nothing : qv_pair.qv_start,
-                                      qv_end = qv_pair === nothing ? nothing : qv_pair.qv_end,
-                                      deltas = delta_obj,
-                                      convection = convection)
+    return TransportWindow(m, ps, fluxes;
+                           qv_start = qv_pair === nothing ? nothing : qv_pair.qv_start,
+                           qv_end = qv_pair === nothing ? nothing : qv_pair.qv_end,
+                           deltas = delta_obj,
+                           convection = convection)
 end
 
 """
@@ -623,8 +595,7 @@ function _load_transport_binary_convection_forcing(reader::TransportBinaryReader
     return ConvectionForcing(nothing, nothing, tm5)
 end
 
-export AbstractTransportWindow
-export StructuredFluxDeltas, FaceIndexedFluxDeltas
-export StructuredTransportWindow, FaceIndexedTransportWindow
+export StructuredFluxDeltas, FaceIndexedFluxDeltas, CubedSphereFluxDeltas
+export TransportWindow
 export TransportBinaryDriver, driver_grid, air_mass_basis, load_transport_window
 export has_humidity_endpoints, interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!

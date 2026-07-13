@@ -16,10 +16,8 @@ cubed-sphere-specific data paths.
   [`MetDrivers.jl`](MetDrivers.jl)
 - Version-4 transport-binary reader:
   [`TransportBinary.jl`](TransportBinary.jl)
-- Generic runtime driver over transport-binary windows:
-  [`TransportBinaryDriver.jl`](TransportBinaryDriver.jl)
-- Cubed-sphere runtime driver:
-  [`CubedSphereTransportDriver.jl`](CubedSphereTransportDriver.jl)
+- Geometry-dispatched runtime driver and forcing-window type:
+  [`transport_binary/driver.jl`](transport_binary/driver.jl)
 - Convection forcing container:
   [`ConvectionForcing.jl`](ConvectionForcing.jl)
 - ERA5-specific stack:
@@ -66,10 +64,13 @@ cubed-sphere-specific data paths.
     (structured / reduced-Gaussian)
   - `transport_binary/cubed_sphere.jl` — cubed-sphere streaming writer
   - `transport_binary/inspect.jl` — `binary_capabilities`, `inspect_binary`,
-    header peeking
-- [`TransportBinaryDriver.jl`](TransportBinaryDriver.jl) — structured and
-  reduced-Gaussian runtime driver
-- [`CubedSphereTransportDriver.jl`](CubedSphereTransportDriver.jl) — CS runtime driver
+    and capability reporting
+- [`transport_binary/window.jl`](transport_binary/window.jl) — decoded forcing
+  windows and topology-specific replay deltas.
+- [`transport_binary/driver.jl`](transport_binary/driver.jl) — common driver,
+  validation, replay checks, and structured/face-indexed loading
+- [`transport_binary/cubed_sphere_driver.jl`](transport_binary/cubed_sphere_driver.jl)
+  — panel-native validation and loading specializations for those common types
 - [`ERA5/`](ERA5/README.md) — ERA5-specific readers, geometry, closure,
   and dry-flux building
 

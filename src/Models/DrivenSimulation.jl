@@ -385,18 +385,8 @@ function _copy_common_window_payload!(dest, src)
     return dest
 end
 
-function _copy_window_payload!(dest::StructuredTransportWindow{B},
-                               src::StructuredTransportWindow{B}) where {B <: AbstractMassBasis}
-    return _copy_common_window_payload!(dest, src)
-end
-
-function _copy_window_payload!(dest::FaceIndexedTransportWindow{B},
-                               src::FaceIndexedTransportWindow{B}) where {B <: AbstractMassBasis}
-    return _copy_common_window_payload!(dest, src)
-end
-
-function _copy_window_payload!(dest::CubedSphereTransportWindow{B},
-                               src::CubedSphereTransportWindow{B}) where {B <: AbstractMassBasis}
+function _copy_window_payload!(dest::TransportWindow{B},
+                               src::TransportWindow{B}) where {B <: AbstractMassBasis}
     _copy_common_window_payload!(dest, src)
     _copy_optional_surface!(dest.surface, src.surface)
     _copy_optional_vdiff!(dest.vdiff, src.vdiff)
@@ -596,11 +586,11 @@ Validation dispatches on the operator type rather than an
 operator) only requires adding a method here.
 """
 _validate_convection_window!(::NoConvection,
-                              ::AbstractTransportWindow,
+                              ::TransportWindow,
                               ::AbstractMetDriver) = nothing
 
 function _validate_convection_window!(::CMFMCConvection,
-                                       window::AbstractTransportWindow,
+                                       window::TransportWindow,
                                        driver::AbstractMetDriver)
     window.convection.cmfmc === nothing &&
         throw(ArgumentError(
@@ -610,7 +600,7 @@ function _validate_convection_window!(::CMFMCConvection,
 end
 
 function _validate_convection_window!(::TM5Convection,
-                                       window::AbstractTransportWindow,
+                                       window::TransportWindow,
                                        driver::AbstractMetDriver)
     window.convection.tm5_fields === nothing &&
         throw(ArgumentError(
@@ -627,7 +617,7 @@ end
 # (cmfmc + dtrain) — only the runtime numerics differ (GCHP two-pass vs
 # the conservative TM5 LU on derived rates).
 function _validate_convection_window!(::CMFMCMatrixConvection,
-                                       window::AbstractTransportWindow,
+                                       window::TransportWindow,
                                        driver::AbstractMetDriver)
     window.convection.cmfmc === nothing &&
         throw(ArgumentError(
@@ -642,7 +632,7 @@ function _validate_convection_window!(::CMFMCMatrixConvection,
 end
 
 function _validate_convection_window!(op::AbstractConvection,
-                                       ::AbstractTransportWindow,
+                                       ::TransportWindow,
                                        ::AbstractMetDriver)
     throw(ArgumentError(
         "DrivenSimulation does not support convection operator $(typeof(op)) yet. " *
@@ -653,17 +643,17 @@ end
 
 _validate_convection_runtime(model::TransportModel,
                              driver::AbstractMetDriver,
-                             window::AbstractTransportWindow) =
+                             window::TransportWindow) =
     _validate_convection_runtime(model.convection, model, driver, window)
 
 @inline _validate_convection_runtime(::NoConvection, ::TransportModel,
                                      ::AbstractMetDriver,
-                                     ::AbstractTransportWindow) = nothing
+                                     ::TransportWindow) = nothing
 
 function _validate_convection_runtime(op::AbstractConvection,
                                       model::TransportModel,
                                       driver::AbstractMetDriver,
-                                      window::AbstractTransportWindow)
+                                      window::TransportWindow)
     window.convection === nothing &&
         throw(ArgumentError(
             "DrivenSimulation loaded a transport window without convection forcing, " *
@@ -677,26 +667,26 @@ end
 
 function _install_convection_forcing(model::TransportModel,
                                      driver::AbstractMetDriver,
-                                     window::AbstractTransportWindow)
+                                     window::TransportWindow)
     _validate_convection_runtime(model, driver, window)
     return _install_convection_forcing(model.convection, model, window)
 end
 
 @inline _install_convection_forcing(::NoConvection, model::TransportModel,
-                                    ::AbstractTransportWindow) = model
+                                    ::TransportWindow) = model
 
 function _install_convection_forcing(::AbstractConvection, model::TransportModel,
-                                     window::AbstractTransportWindow)
+                                     window::TransportWindow)
     forcing = allocate_convection_forcing_like(window.convection, model.state.air_mass)
     copy_convection_forcing!(forcing, window.convection)
     return with_convection_forcing(model, forcing)
 end
 
 @inline _refresh_convection_forcing!(::NoConvection, ::TransportModel,
-                                     ::AbstractTransportWindow) = nothing
+                                     ::TransportWindow) = nothing
 
 function _refresh_convection_forcing!(::AbstractConvection, model::TransportModel,
-                                      window::AbstractTransportWindow)
+                                      window::TransportWindow)
     copy_convection_forcing!(model.convection_forcing, window.convection)
     return nothing
 end

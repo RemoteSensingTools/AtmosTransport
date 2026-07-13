@@ -81,7 +81,7 @@ The runtime DID:
 
 * Load the binary cleanly (`grid_type=:cubed_sphere`, `mass_basis=:dry`,
   `panel_convention=:geos_native`, all 72 levels)
-* Construct the `CubedSphereTransportDriver` (which implicitly runs the
+* Construct the `TransportBinaryDriver` (which implicitly runs the
   load-time replay validation — passed)
 * Build the `GEOSNativePanelConvention` mesh from the binary header
 * Initialise the uniform 400 ppm tracer

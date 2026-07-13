@@ -19,7 +19,7 @@ using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
 # (`am[i]`, `am[iif]`, no Hp offset) — the unpadded convention the kernels, the
 # adjoint tape (LinRoodTape), and their kernel/footprint tests are all written
 # for. The production runtime driver, however, Hp-pads the flux panels
-# (`CubedSphereTransportDriver._pad_horizontal`) exactly like the cell panels,
+# (`transport_binary/cubed_sphere_driver.jl`) exactly like the cell panels,
 # so `am` arrives as (Nc+1+2Hp, Nc+2Hp, ·) and `bm` as (Nc+2Hp, Nc+1+2Hp, ·).
 # Strip the halo to the interior faces at the runtime operator boundary
 # (`_cs_transport_step!(::CSLinRoodStyle)`) so the kernels read the correct cell.

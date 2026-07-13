@@ -143,10 +143,9 @@ using .MetDrivers: AbstractMetDriver,
                    ReducedGaussianBinaryGeometry, CubedSphereBinaryGeometry,
                    TransportBinaryReader, TransportBinaryHeader, binary_geometry,
                    write_transport_binary,
-                   TransportBinaryDriver, AbstractTransportWindow,
+                   TransportBinaryDriver, TransportWindow,
                    StructuredFluxDeltas, FaceIndexedFluxDeltas,
-                   StructuredTransportWindow, FaceIndexedTransportWindow,
-                   CubedSphereTransportWindow, CubedSphereTransportDriver,
+                   CubedSphereFluxDeltas,
                    load_window!, load_qv_window!, load_flux_delta_window!,
                    load_qv_pair_window!, load_grid, load_transport_window,
                    driver_grid, air_mass_basis, has_humidity_endpoints,
@@ -255,7 +254,7 @@ export NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource,
 export AbstractConvection, NoConvection, CMFMCConvection, TM5Convection,
        CMFMCMatrixConvection, CMFMCWorkspace
 export ConvectionForcing, apply_convection!, has_convection_forcing
-export AbstractMetDriver, AbstractTransportWindow, StructuredTransportWindow, current_time
+export AbstractMetDriver, TransportWindow, current_time
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
 export ConstantField, ProfileKzField
 export apply!
@@ -273,7 +272,6 @@ export write_transport_binary
 export AbstractTransportBinaryGeometry, LatLonBinaryGeometry
 export ReducedGaussianBinaryGeometry, CubedSphereBinaryGeometry, binary_geometry
 export TransportBinaryReader, TransportBinaryHeader, TransportBinaryDriver
-export CubedSphereTransportDriver, CubedSphereTransportWindow
 export load_transport_window, driver_grid
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export window_count, load_grid, mass_basis, air_mass_basis

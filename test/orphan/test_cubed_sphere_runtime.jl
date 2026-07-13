@@ -127,7 +127,7 @@ end
         @test caps.variable_step_schedule === true
         @test caps.steps_per_window == 3
 
-        driver = CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1)
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1)
         @test steps_per_window(driver) == 3
         @test steps_per_window(driver, 1) == 2
         @test steps_per_window(driver, 2) == 3
@@ -179,7 +179,7 @@ end
         write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=2,
                                window_mass_scales=(1,),
                                steps_per_window=4)
-        driver_legacy = CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1)
+        driver_legacy = TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1)
         @test !AtmosTransport.MetDrivers.uses_binary_substep_contract(driver_legacy)
         close(driver_legacy)
 
@@ -188,7 +188,7 @@ end
             "adaptive_substeps" => true,
             "runtime_substep_contract" => "binary_schedule",
         ))
-        driver = CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1)
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1)
         @test AtmosTransport.MetDrivers.uses_binary_substep_contract(driver)
         close(driver)
     end
@@ -292,14 +292,14 @@ end
 
         close(reader)
 
-        driver = CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1)
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1)
         @test total_windows(driver) == 2
         @test window_dt(driver) == 3600.0
         @test steps_per_window(driver) == 2
         @test air_mass_basis(driver) == :dry
 
         window = load_transport_window(driver, 1)
-        @test window isa CubedSphereTransportWindow{DryBasis}
+        @test window isa TransportWindow{DryBasis}
         @test size(window.air_mass[1]) == (6, 6, 2)
         @test size(window.fluxes.am[1]) == (7, 6, 2)
         @test size(window.fluxes.bm[1]) == (6, 7, 2)
@@ -359,7 +359,7 @@ end
         @test raw.surface.ustar[1][1, 1] == FT(0.35)
         close(reader)
 
-        driver = CubedSphereTransportDriver(path; FT = FT, arch = CPU(), Hp = 1)
+        driver = TransportBinaryDriver(path; FT = FT, arch = CPU(), Hp = 1)
         recipe = build_runtime_physics_recipe(
             Dict("diffusion" => Dict("kind" => "pbl")),
             driver,
@@ -420,7 +420,7 @@ end
         @test raw.vdiff.t[2] == vdiff.t[2]
         close(reader)
 
-        driver = CubedSphereTransportDriver(path; FT = FT, arch = CPU(), Hp = 1)
+        driver = TransportBinaryDriver(path; FT = FT, arch = CPU(), Hp = 1)
         recipe = build_runtime_physics_recipe(
             Dict("diffusion" => Dict("kind" => "geoschem_holtslag_boville_vdiff")),
             driver,
@@ -531,7 +531,7 @@ end
         @test has_flux_delta(reader)
         close(reader)
 
-        driver = CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1,
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1,
                                             validate_replay=true)
         close(driver)
     end
@@ -545,7 +545,7 @@ end
                                window_mass_scales=(1,),
                                window_dm_panels=(dm_bad,))
 
-        @test_throws ArgumentError CubedSphereTransportDriver(
+        @test_throws ArgumentError TransportBinaryDriver(
             path; FT=Float64, arch=CPU(), Hp=1, validate_replay=true)
     end
 end
@@ -569,7 +569,7 @@ end
         @test has_cmfmc(reader)
         close(reader)
 
-        driver = CubedSphereTransportDriver(path; FT = FT, arch = CPU(), Hp = 1)
+        driver = TransportBinaryDriver(path; FT = FT, arch = CPU(), Hp = 1)
         window = load_transport_window(driver, 1)
         mesh = driver_grid(driver).horizontal
         @test window.convection !== nothing
@@ -638,7 +638,7 @@ end
         @test occursin("PBL diffusion", report)
         @test occursin("CMFMC convection", report)
 
-        driver = CubedSphereTransportDriver(path; FT = FT, arch = CPU(), Hp = 1)
+        driver = TransportBinaryDriver(path; FT = FT, arch = CPU(), Hp = 1)
         recipe = build_runtime_physics_recipe(
             Dict("diffusion" => Dict("kind" => "pbl"),
                  "convection" => Dict("kind" => "cmfmc")),
@@ -716,7 +716,7 @@ end
         close(io)
         write_driven_cs_binary(path; FT=Float64, window_mass_scales=(1,))
 
-        driver = CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1)
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1)
         window = load_transport_window(driver, 1)
         mesh = driver_grid(driver).horizontal
 
@@ -762,7 +762,7 @@ end
         close(io)
         write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=5, window_mass_scales=(1,))
 
-        driver = CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1)
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1)
         window = load_transport_window(driver, 1)
         grid = driver_grid(driver)
         mesh = grid.horizontal
@@ -820,7 +820,7 @@ end
         @test has_tm5_convection(reader)
         close(reader)
 
-        driver = CubedSphereTransportDriver(path; FT = FT, arch = CPU(), Hp = 3)
+        driver = TransportBinaryDriver(path; FT = FT, arch = CPU(), Hp = 3)
         window = load_transport_window(driver, 1)
         mesh = driver_grid(driver).horizontal
         @test window.convection !== nothing

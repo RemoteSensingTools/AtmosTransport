@@ -129,7 +129,7 @@ Implemented now:
 - basis-explicit `CellState` and `FluxState`
 - generic transport-binary reader/writer for structured lat-lon
 - typed `TransportBinaryDriver`
-- typed `StructuredTransportWindow`
+- typed `TransportWindow` with structured face fluxes
 - endpoint humidity loading
 - optional full flux-delta loading, including `dcm`
 - standalone `src` upwind and slopes stepping on structured lat-lon

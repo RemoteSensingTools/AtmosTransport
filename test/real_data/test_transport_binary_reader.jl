@@ -194,7 +194,7 @@ end
         @test occursin("steps/window=2", driver_repr)
 
         window = load_transport_window(driver, 1)
-        @test window isa StructuredTransportWindow{MoistBasis}
+        @test window isa TransportWindow{MoistBasis}
         @test has_humidity_endpoints(window)
         @test has_flux_delta(window)
 

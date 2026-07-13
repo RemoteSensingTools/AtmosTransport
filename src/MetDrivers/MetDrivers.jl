@@ -21,8 +21,9 @@ include("ConvectionForcing.jl")
 include("SurfaceForcing.jl")
 include("TransportBinary.jl")
 include("ReplayContinuity.jl")
-include("TransportBinaryDriver.jl")
-include("CubedSphereTransportDriver.jl")
+include("transport_binary/window.jl")
+include("transport_binary/driver.jl")
+include("transport_binary/cubed_sphere_driver.jl")
 include("ERA5/ERA5.jl")
 using .ERA5
 
@@ -36,10 +37,8 @@ export StreamingTransportBinaryWriter
 export open_streaming_transport_binary, write_streaming_window!,
        close_streaming_transport_binary!, set_streaming_steps_per_window_schedule!,
        set_transport_header_steps_per_window_schedule!
-export TransportBinaryDriver, AbstractTransportWindow
+export TransportBinaryDriver, TransportWindow
 export StructuredFluxDeltas, FaceIndexedFluxDeltas, CubedSphereFluxDeltas
-export StructuredTransportWindow, FaceIndexedTransportWindow
-export CubedSphereTransportWindow, CubedSphereTransportDriver
 export load_window!, load_qv_window!, load_flux_delta_window!
 export load_tm5_convection_window!, has_tm5_convection
 export load_qv_pair_window!, load_grid, load_transport_window

@@ -117,8 +117,8 @@ function _make_convection_window_driver(; FT = Float64, steps = 1,
     forcing_a = _make_cmfmc_forcing(FT, Nx, Ny, Nz; peak = FT(0.02), top_detrain = FT(0.01))
     forcing_b = _make_cmfmc_forcing(FT, Nx, Ny, Nz; peak = FT(0.5), top_detrain = FT(0.1))
 
-    window_a = StructuredTransportWindow(air_mass, ps, fluxes; convection = forcing_a)
-    window_b = StructuredTransportWindow(air_mass, ps, fluxes; convection = forcing_b)
+    window_a = TransportWindow(air_mass, ps, fluxes; convection = forcing_a)
+    window_b = TransportWindow(air_mass, ps, fluxes; convection = forcing_b)
     driver = _ConvectionWindowDriver{FT, typeof(grid), typeof(window_a)}(
         grid, [window_a, window_b], FT(1800), Int(steps), Bool(binary_contract))
     return driver, forcing_a, forcing_b

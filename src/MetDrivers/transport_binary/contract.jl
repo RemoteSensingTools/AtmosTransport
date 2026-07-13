@@ -486,7 +486,7 @@ function validate_transport_contract!(header::AbstractDict)
         if grid_type != "cubed_sphere"
             throw(ArgumentError(
                 "Transport-binary contract violation — runtime_substep_contract=\"binary_schedule\" " *
-                "is currently supported only by CubedSphereTransportDriver. Generic LL/RG binaries " *
+                "is currently supported only by cubed-sphere runtime forcing. LL/RG binaries " *
                 "would otherwise fall back to the runtime CFL pilot and double-subcycle adaptive " *
                 "schedules. Add an LL/RG runtime contract before writing adaptive LL/RG binaries."
             ))

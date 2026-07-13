@@ -40,12 +40,12 @@ struct _DummyConvOp <: AbstractConvection end
     fluxes = allocate_face_fluxes(grid.horizontal, 2; FT = FT, basis = DryBasis)
 
     # Default kwargs — no convection
-    win = StructuredTransportWindow(m, ps, fluxes)
+    win = TransportWindow(m, ps, fluxes)
     @test win.convection === nothing
     @test !has_convection_forcing(win)
 
     # Type parameter `C` binds to Nothing
-    @test win isa StructuredTransportWindow{DryBasis, <:Any, <:Any, <:Any, <:Any, <:Any, Nothing}
+    @test win isa TransportWindow{DryBasis, <:Any, <:Any, <:Any, <:Any, <:Any, Nothing}
 end
 
 @testset "ConvectionForcing CMFMC+DTRAIN construction" begin
@@ -125,10 +125,10 @@ end
     m = ones(FT, 4, 3, 2); ps = ones(FT, 4, 3)
     fluxes = allocate_face_fluxes(grid.horizontal, 2; FT = FT, basis = DryBasis)
 
-    win_none = StructuredTransportWindow(m, ps, fluxes)
+    win_none = TransportWindow(m, ps, fluxes)
     @test !has_convection_forcing(win_none)
 
-    win_with = StructuredTransportWindow(m, ps, fluxes;
+    win_with = TransportWindow(m, ps, fluxes;
                                           convection = ConvectionForcing(cmfmc, nothing, nothing))
     @test has_convection_forcing(win_with)
 end
@@ -164,7 +164,7 @@ end
     @test keys(f_tm5_2.tm5_fields) == (:entu, :detu, :entd, :detd)
 end
 
-@testset "Adapt.adapt_structure: StructuredTransportWindow preserves convection" begin
+@testset "Adapt.adapt_structure: TransportWindow preserves convection" begin
     FT = Float64
     mesh = LatLonMesh(; FT = FT, Nx = 4, Ny = 3)
     vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
@@ -175,14 +175,14 @@ end
     cmfmc = zeros(FT, 4, 3, 3)
     forcing = ConvectionForcing(cmfmc, nothing, nothing)
 
-    win = StructuredTransportWindow(m, ps, fluxes; convection = forcing)
+    win = TransportWindow(m, ps, fluxes; convection = forcing)
     win2 = Adapt.adapt(Array, win)
     @test win2.convection !== nothing
     @test _cap(win2.convection) == (true, false, false)
     @test size(win2.convection.cmfmc) == size(cmfmc)
 
     # Round-trip of a `convection === nothing` window stays `nothing`.
-    win_none = StructuredTransportWindow(m, ps, fluxes)
+    win_none = TransportWindow(m, ps, fluxes)
     win_none2 = Adapt.adapt(Array, win_none)
     @test win_none2.convection === nothing
 end
@@ -212,7 +212,7 @@ end
 # Face-indexed window also carries convection
 # ---------------------------------------------------------------------------
 
-@testset "FaceIndexedTransportWindow supports convection field" begin
+@testset "TransportWindow supports convection field" begin
     FT = Float64
     ncell = 8
     Nz = 2
@@ -224,7 +224,7 @@ end
     ps = ones(FT, ncell)
     fluxes = allocate_face_fluxes(grid.horizontal, Nz; FT = FT, basis = MoistBasis)
 
-    win_none = FaceIndexedTransportWindow(m, ps, fluxes)
+    win_none = TransportWindow(m, ps, fluxes)
     @test win_none.convection === nothing
     @test !has_convection_forcing(win_none)
 
@@ -234,7 +234,7 @@ end
     # carrying test).
     cmfmc = zeros(FT, ncell, Nz + 1)
     forcing = ConvectionForcing(cmfmc, nothing, nothing)
-    win_with = FaceIndexedTransportWindow(m, ps, fluxes; convection = forcing)
+    win_with = TransportWindow(m, ps, fluxes; convection = forcing)
     @test has_convection_forcing(win_with)
     @test _cap(win_with.convection) == (true, false, false)
 end

@@ -23,6 +23,7 @@ const _INSPECTOR_AIR_MASS = 1e16
 function _inspector_fixture_binary(path::AbstractString;
                                    FT::Type{<:AbstractFloat} = Float64,
                                    with_tm5::Bool = false,
+                                   with_surface::Bool = false,
                                    flux_kind::Symbol = :substep_mass_amount)
     Nx, Ny, Nz = 4, 3, 5
     mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
@@ -38,15 +39,22 @@ function _inspector_fixture_binary(path::AbstractString;
     cm = zeros(FT, Nx, Ny, Nz + 1)
     ps = fill(FT(95_000), Nx, Ny)
 
-    window = if with_tm5
+    optional = if with_tm5
         tm5 = (entu = zeros(FT, Nx, Ny, Nz),
                detu = zeros(FT, Nx, Ny, Nz),
                entd = zeros(FT, Nx, Ny, Nz),
                detd = zeros(FT, Nx, Ny, Nz))
-        (m = m, am = am, bm = bm, cm = cm, ps = ps, tm5_fields = tm5)
+        (; tm5_fields = tm5)
     else
-        (m = m, am = am, bm = bm, cm = cm, ps = ps)
+        NamedTuple()
     end
+    if with_surface
+        surface = AtmosTransport.MetDrivers.PBLSurfaceForcing(
+            fill(FT(900), Nx, Ny), fill(FT(0.3), Nx, Ny),
+            fill(FT(80), Nx, Ny), fill(FT(290), Nx, Ny))
+        optional = merge(optional, (; surface))
+    end
+    window = merge((; m, am, bm, cm, ps), optional)
 
     write_transport_binary(path, grid, [window];
                            FT = FT,
@@ -67,6 +75,11 @@ end
         @test !isdefined(AtmosTransport, :CubedSphereBinaryReader)
         @test !isdefined(AtmosTransport, :CubedSphereBinaryHeader)
         @test !isdefined(AtmosTransport, :load_cs_window)
+        @test !isdefined(AtmosTransport, :CubedSphereTransportDriver)
+        @test !isdefined(AtmosTransport, :StructuredTransportWindow)
+        @test !isdefined(AtmosTransport, :FaceIndexedTransportWindow)
+        @test !isdefined(AtmosTransport, :CubedSphereTransportWindow)
+        @test isdefined(AtmosTransport, :TransportWindow)
     end
 
     @testset "LL writer rejects unsupported full-window flux storage" begin
@@ -108,6 +121,23 @@ end
             @test :entd in caps.payload_sections
             @test :detd in caps.payload_sections
             close(reader)
+        end
+    end
+
+    @testset "LL surface payload does not advertise unsupported diffusion" begin
+        mktempdir() do dir
+            path = joinpath(dir, "fixture_surface.bin")
+            _inspector_fixture_binary(path; with_surface = true)
+
+            reader = TransportBinaryReader(path; FT = Float64)
+            @test has_surface(reader)
+            caps = binary_capabilities(reader)
+            @test caps.pbl_diffusion === false
+            @test caps.gchp_vdiff === false
+            driver = TransportBinaryDriver(reader)
+            @test !supports_diffusion(driver)
+            @test AtmosTransport.Models._runtime_has_surface(driver) === false
+            close(driver)
         end
     end
 

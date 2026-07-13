@@ -117,22 +117,27 @@ end
 _pbl_cache_shape(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
 ) = (reader.header.geometry.Nc, reader.header.geometry.Nc, reader.header.nlevel)
-_pbl_cache_shape(driver::CubedSphereTransportDriver) =
+_pbl_cache_shape(
+    driver::TransportBinaryDriver{FT, ReaderT},
+) where {FT, ReaderT <: TransportBinaryReader{<:Any, <:Any,
+                                               CubedSphereBinaryGeometry}} =
     (driver.reader.header.geometry.Nc,
      driver.reader.header.geometry.Nc,
      driver.reader.header.nlevel)
 
 @inline _runtime_has_surface(_context) = false
-_runtime_has_surface(reader::TransportBinaryReader) = MetDrivers.has_surface(reader)
-_runtime_has_surface(driver::TransportBinaryDriver) = MetDrivers.has_surface(driver.reader)
-_runtime_has_surface(driver::CubedSphereTransportDriver) = MetDrivers.has_surface(driver.reader)
+_runtime_has_surface(
+    reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
+) = MetDrivers.has_surface(reader)
+_runtime_has_surface(driver::TransportBinaryDriver) =
+    _runtime_has_surface(driver.reader)
 
 @inline _runtime_has_gchp_vdiff(_context) = false
 _runtime_has_gchp_vdiff(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
 ) =
     MetDrivers.has_surface(reader) && MetDrivers.has_vdiff_fields(reader)
-_runtime_has_gchp_vdiff(driver::CubedSphereTransportDriver) =
+_runtime_has_gchp_vdiff(driver::TransportBinaryDriver) =
     _runtime_has_gchp_vdiff(driver.reader)
 
 _runtime_has_precomputed_dkg(_context) = false
@@ -140,7 +145,7 @@ _runtime_has_precomputed_dkg(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
 ) =
     :dkg in reader.header.payload_sections
-_runtime_has_precomputed_dkg(driver::CubedSphereTransportDriver) =
+_runtime_has_precomputed_dkg(driver::TransportBinaryDriver) =
     _runtime_has_precomputed_dkg(driver.reader)
 
 function build_runtime_convection(cfg, context)
@@ -177,10 +182,8 @@ end
 @inline _runtime_has_cmfmc(_context) = false
 @inline _runtime_has_tm5_convection(reader::TransportBinaryReader) = MetDrivers.has_tm5_convection(reader)
 @inline _runtime_has_tm5_convection(driver::TransportBinaryDriver) = MetDrivers.has_tm5_convection(driver.reader)
-@inline _runtime_has_tm5_convection(driver::CubedSphereTransportDriver) = MetDrivers.has_tm5_convection(driver.reader)
 @inline _runtime_has_cmfmc(reader::TransportBinaryReader) = MetDrivers.has_cmfmc(reader)
 @inline _runtime_has_cmfmc(driver::TransportBinaryDriver) = MetDrivers.has_cmfmc(driver.reader)
-@inline _runtime_has_cmfmc(driver::CubedSphereTransportDriver) = MetDrivers.has_cmfmc(driver.reader)
 
 function validate_runtime_convection(::AbstractRuntimeRecipeStyle,
                                      ::TM5Convection,

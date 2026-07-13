@@ -874,7 +874,7 @@ function _real_binary_problem(path::AbstractString; start_window::Int,
         "use --physics transport or --physics diffusion")
     bin_path = _resolve_cs_binary(path)
     Hp = _scheme_halo_width(scheme)
-    driver = CubedSphereTransportDriver(bin_path; FT=FT, Hp=Hp,
+    driver = TransportBinaryDriver(bin_path; FT=FT, Hp=Hp,
                                         validate_replay=false)
     try
         step_schedule = steps_per_window_schedule(driver)

@@ -146,7 +146,7 @@ function wind_stats_at_pressures(window, mesh, basis, dt_factor)
 end
 
 function load_binary_window(path)
-    driver = CubedSphereTransportDriver(path; FT = Float32, arch = CPU(), Hp = 3,
+    driver = TransportBinaryDriver(path; FT = Float32, arch = CPU(), Hp = 3,
                                         validate_replay = false)
     window = load_transport_window(driver, WINDOW_INDEX)
     mesh = driver_grid(driver).horizontal

@@ -104,7 +104,7 @@ gate so the copy path is skipped for models without an active
 convection operator.
 
 The window-level overload `has_convection_forcing(window) =
-window.convection !== nothing` is defined in `TransportBinaryDriver.jl`
+window.convection !== nothing` is defined in `transport_binary/window.jl`
 alongside the window struct extensions.
 """
 has_convection_forcing(forcing::ConvectionForcing) =

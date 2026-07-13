@@ -426,7 +426,7 @@ end
             t = ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc, Nz), 6),
             qv = ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc, Nz), 6))
         dkg = ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc, Nz), 6)
-        return AtmosTransport.MetDrivers.CubedSphereTransportWindow(
+        return AtmosTransport.MetDrivers.TransportWindow(
             air_mass, ps, fluxes; surface, vdiff, dkg)
     end
 

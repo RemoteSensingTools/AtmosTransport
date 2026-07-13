@@ -10,6 +10,8 @@ requirements are selected through the reader's geometry type. Fields:
 - `replay_gate :: Bool` — dam/dbm/dcm/dm present.
 - `tm5_convection :: Bool` — entu/detu/entd/detd all present.
 - `cmfmc_convection :: Bool` — cmfmc present (CS only; LL/RG returns false).
+- `pbl_diffusion :: Bool` — complete runnable PBL forcing (CS only).
+- `gchp_vdiff :: Bool` — complete runnable GCHP VDIFF forcing (CS only).
 - `surface_pressure :: Bool` — ps present.
 - `humidity :: Bool` — qv or qv_start/qv_end present.
 - `mass_basis :: Symbol` — `:dry` or `:moist`.
@@ -21,6 +23,16 @@ _required_advection_sections(::LatLonBinaryGeometry) = (:m, :am, :bm, :cm)
 _required_advection_sections(::ReducedGaussianBinaryGeometry) = (:m, :hflux, :cm)
 _required_advection_sections(::CubedSphereBinaryGeometry) = (:m, :am, :bm, :cm)
 
+_supports_pbl_diffusion(::TransportBinaryReader) = false
+_supports_pbl_diffusion(
+    reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
+) = has_surface(reader)
+
+_supports_gchp_vdiff(::TransportBinaryReader) = false
+_supports_gchp_vdiff(
+    reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
+) = has_surface(reader) && has_vdiff_fields(reader)
+
 function binary_capabilities(reader::TransportBinaryReader)
     hdr = reader.header
     raw = hdr.raw_header
@@ -30,8 +42,8 @@ function binary_capabilities(reader::TransportBinaryReader)
         replay_gate      = has_flux_delta(reader),
         tm5_convection   = has_tm5_convection(reader),
         cmfmc_convection = has_cmfmc(reader),
-        pbl_diffusion    = has_surface(reader),
-        gchp_vdiff       = has_surface(reader) && has_vdiff_fields(reader),
+        pbl_diffusion    = _supports_pbl_diffusion(reader),
+        gchp_vdiff       = _supports_gchp_vdiff(reader),
         surface_pressure = :ps in hdr.payload_sections,
         humidity         = has_qv(reader),
         mass_basis       = hdr.mass_basis,

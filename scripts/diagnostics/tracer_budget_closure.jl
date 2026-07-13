@@ -237,7 +237,7 @@ function main(nc_path::AbstractString, cfg_path::AbstractString)
     # Cubed-sphere binaries use the CS-specific driver/reader; the generic
     # TransportBinaryDriver is for lat/lon + reduced-Gaussian. We mirror the
     # CS run path (`_run_driven_simulation_cs`) here.
-    driver = _ATM.MetDrivers.CubedSphereTransportDriver(binpath; FT = FT,
+    driver = _ATM.MetDrivers.TransportBinaryDriver(binpath; FT = FT,
                                                         arch = _ATM.CPU(), Hp = 1)
     grid   = _ATM.MetDrivers.driver_grid(driver)
 

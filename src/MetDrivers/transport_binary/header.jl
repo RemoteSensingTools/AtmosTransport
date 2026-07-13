@@ -291,26 +291,14 @@ function _transport_parse_sections(hdr)
     return Symbol.(lowercase.(String.(sections)))
 end
 
-function _transport_header_axis(hdr, n::Int, key1::Symbol, key2::Symbol)
-    if haskey(hdr, key1)
-        return Float64.(collect(getproperty(hdr, key1)))
-    elseif haskey(hdr, key2)
-        return Float64.(collect(getproperty(hdr, key2)))
-    elseif n == 0
-        return Float64[]
-    else
-        error("Transport binary header missing $(key1) / $(key2)")
-    end
+function _transport_header_axis(hdr, n::Int, key::Symbol)
+    haskey(hdr, key) && return Float64.(collect(getproperty(hdr, key)))
+    n == 0 && return Float64[]
+    error("Transport binary header missing $(key)")
 end
 
-function _transport_header_interval(hdr, key1::Symbol, key2::Symbol)
-    if haskey(hdr, key1)
-        return Float64.(collect(getproperty(hdr, key1)))
-    elseif haskey(hdr, key2)
-        return Float64.(collect(getproperty(hdr, key2)))
-    else
-        return Float64[]
-    end
+function _transport_header_interval(hdr, key::Symbol)
+    return haskey(hdr, key) ? Float64.(collect(getproperty(hdr, key))) : Float64[]
 end
 
 function _parse_transport_header(raw_bytes::Vector{UInt8})
@@ -323,9 +311,7 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     # No silent defaults for missing contract fields.
     # `validate_transport_contract!` (called by `TransportBinaryReader`
     # before we get here) has already verified the 8 fields are present —
-    # unless the env-var legacy bypass was set, in which case missing
-    # fields come back as :unknown and downstream code must handle them
-    # (or trip on a later typed check).
+    # before parsing the typed header.
     format_version = Int(hdr.format_version)
     format_version == TRANSPORT_BINARY_FORMAT_VERSION ||
         throw(ArgumentError("Obsolete transport binary format_version=$(format_version); " *
@@ -365,20 +351,15 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
 
     Nx = haskey(hdr, :Nx) ? Int(hdr.Nx) : 0
     Ny = haskey(hdr, :Ny) ? Int(hdr.Ny) : 0
-    lons_f64 = _transport_header_axis(hdr, Nx, :lons, :lon_centers)
-    lats_f64 = _transport_header_axis(hdr, Ny, :lats, :lat_centers)
-    longitude_interval_f64 = _transport_header_interval(hdr, :longitude_interval, :longitude)
-    latitude_interval_f64 = _transport_header_interval(hdr, :latitude_interval, :latitude)
+    lons_f64 = _transport_header_axis(hdr, Nx, :lons)
+    lats_f64 = _transport_header_axis(hdr, Ny, :lats)
+    longitude_interval_f64 = _transport_header_interval(hdr, :longitude_interval)
+    latitude_interval_f64 = _transport_header_interval(hdr, :latitude_interval)
 
     nlon_per_ring = haskey(hdr, :nlon_per_ring) ? Int.(collect(hdr.nlon_per_ring)) : Int[]
-    ring_latitudes = if haskey(hdr, :latitudes)
-        Float64.(collect(hdr.latitudes))
-    elseif haskey(hdr, :ring_latitudes)
-        Float64.(collect(hdr.ring_latitudes))
-    else
-        Float64[]
-    end
-    nlat = haskey(hdr, :nlat) ? Int(hdr.nlat) : length(ring_latitudes)
+    ring_latitudes = haskey(hdr, :latitudes) ?
+                     Float64.(collect(hdr.latitudes)) : Float64[]
+    nlat = haskey(hdr, :nlat) ? Int(hdr.nlat) : 0
 
     return TransportBinaryHeader(
         format_version,

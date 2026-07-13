@@ -276,6 +276,17 @@ function _validate_transport_layout!(header::AbstractDict)
         Ny = _transport_required_int(header, "Ny")
         Nx * Ny == ncell || throw(ArgumentError(
             "Transport-binary contract violation — ncell must equal Nx * Ny"))
+        for (key, expected_length) in (("lons", Nx), ("lats", Ny))
+            haskey(header, key) || throw(ArgumentError(
+                "Transport-binary contract violation — latlon header is missing $(key)"))
+            values = header[key]
+            values isa AbstractVector && length(values) == expected_length ||
+                throw(ArgumentError(
+                    "Transport-binary contract violation — $(key) must contain $(expected_length) coordinates"))
+            all(value -> value isa Real && !(value isa Bool) && isfinite(value), values) ||
+                throw(ArgumentError(
+                    "Transport-binary contract violation — $(key) coordinates must be finite numbers"))
+        end
         expected_nface_h = (Nx + 1) * Ny + Nx * (Ny + 1)
         nface_h == expected_nface_h || throw(ArgumentError(
             "Transport-binary contract violation — nface_h=$(nface_h), expected $(expected_nface_h) for Nx=$(Nx), Ny=$(Ny)"))
@@ -284,6 +295,24 @@ function _validate_transport_layout!(header::AbstractDict)
     elseif grid_type == "reduced_gaussian" && topology == "faceindexed"
         all(s -> s in sections, (:m, :hflux, :cm, :ps)) || throw(ArgumentError(
             "Transport-binary contract violation — reduced-Gaussian payload requires m, hflux, cm, and ps"))
+        nlat = _transport_required_int(header, "nlat")
+        for key in ("latitudes", "nlon_per_ring")
+            haskey(header, key) || throw(ArgumentError(
+                "Transport-binary contract violation — reduced-Gaussian header is missing $(key)"))
+            header[key] isa AbstractVector && length(header[key]) == nlat ||
+                throw(ArgumentError(
+                    "Transport-binary contract violation — $(key) must contain nlat=$(nlat) entries"))
+        end
+        latitudes = header["latitudes"]
+        all(value -> value isa Real && !(value isa Bool) && isfinite(value), latitudes) ||
+            throw(ArgumentError(
+                "Transport-binary contract violation — latitudes must be finite numbers"))
+        nlon_per_ring = header["nlon_per_ring"]
+        all(value -> value isa Integer && !(value isa Bool) && value > 0,
+            nlon_per_ring) || throw(ArgumentError(
+                "Transport-binary contract violation — nlon_per_ring entries must be positive integers"))
+        sum(nlon_per_ring) == ncell || throw(ArgumentError(
+            "Transport-binary contract violation — sum(nlon_per_ring) must equal ncell"))
         sum(_transport_faceindexed_section_elements(ncell, nface_h, nlevel, section)
             for section in sections)
     elseif grid_type == "cubed_sphere" && topology == "structureddirectional"

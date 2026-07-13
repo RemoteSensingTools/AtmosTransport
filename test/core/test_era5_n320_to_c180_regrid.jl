@@ -54,7 +54,7 @@ function _tiny_cs_target(::Type{FT} = Float64; Nc = 8) where FT
         "type"             => "cubed_sphere",
         "Nc"               => Nc,
         "panel_convention" => "geos_native",
-        "definition"       => "gmao",
+        "definition"       => "gmao_equal_distance",
     )
     return build_target_geometry(Val(:cubed_sphere), cfg, FT)
 end

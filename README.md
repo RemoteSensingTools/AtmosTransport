@@ -62,8 +62,8 @@ documented validation run.
 | `ProfileKzField` (static) | ✅ | Constant or analytic profile |
 | `DerivedKzField` (Beljaars–Viterbo) | ✅ | Default for ERA5 runs |
 | `WindowPBLKzField` | ✅ | PBL-aware variant |
-| `GCHPHoltslagBovilleKzField` | 🟡 | Non-local; one direct-physics test gap (shipped 2026-05-17) |
-| `PreComputedKzField` (`:kz` payload) | 🟡 | Binary write/read and CS runtime path are covered by core tests |
+| Local Holtslag–Boville Kz | ✅ | Computed from current meteorology |
+| Exact TM5 interface exchange (`:dkg`) | ✅ | Dry-air kg s⁻¹ payload in binary v4 |
 | `DiffusiveSurfaceFluxBoundary` | 🟡 | Pre-Thomas mass add; differs from GCHP Neumann |
 
 ### Convection
@@ -250,38 +250,11 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 # 2. Verify the install (synthetic-fixture suite, no external data)
 julia --project=. -e 'using Pkg; Pkg.test()'
 
-# 3. Download the quickstart v2 bundle (preprocessed ERA5 v3 binaries)
-bash scripts/download_quickstart_data.sh ll       # newcomer path; just LL (~1.0 GB)
-# or `bash scripts/download_quickstart_data.sh`   # both LL and CS bundles (~2.9 GB)
-
-# 4. Run a 3-day advection-only simulation (GPU by default;
-#    set [architecture] use_gpu = false in the TOML for CPU)
-julia --project=. scripts/run_transport.jl config/runs/quickstart/ll72x37_advonly.toml
+# 3. Generate a current format-v4 meteorology binary with a preprocessing
+#    configuration, then run it with scripts/run_transport.jl.
 ```
-
-The bundle is hosted as assets on the
-[`data-quickstart-v2` GitHub Release](https://github.com/RemoteSensingTools/AtmosTransport.jl/releases/tag/data-quickstart-v2)
-and contains preprocessed transport binaries at four grid configurations
-(LL 72x37, LL 144x73, CS C24, CS C90, all F32, Dec 1-3 2021). See the
-[Quickstart with example data](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/getting_started/quickstart)
-docs page for the full walkthrough.
-
-By default the quickstart downloader and configs use
-`~/data/AtmosTransport_quickstart`. For a different location, set the
-quickstart data root before downloading and running:
-
-```bash
-export ATMOSTRANSPORT_DATA_ROOT_quickstart=/scratch/$USER/AtmosTransport_quickstart
-bash scripts/download_quickstart_data.sh ll
-```
-
 Production configs use `$ATMOSTRANSPORT_DATA_ROOT/...`, which defaults to
 `~/data/AtmosTransport` when unset.
-
-Quickstart configs default to `use_gpu = true` with automatic backend
-detection: CUDA on NVIDIA hosts and Metal on Apple Silicon. If no usable GPU
-backend is available, the run fails rather than falling back to CPU; set
-`[architecture] use_gpu = false` in the TOML for CPU execution.
 
 ## Documentation
 

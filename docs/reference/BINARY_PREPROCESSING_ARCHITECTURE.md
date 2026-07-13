@@ -70,7 +70,7 @@ and unmerged products scalable without requiring users to know the safe
 substep count for each grid and vertical coordinate. The binary is the source
 of truth.
 
-The schedule is an **advection/transport-block** schedule. A Plan-41 v3 binary
+The schedule is an **advection/transport-block** schedule. A v4 binary
 stores the number of substeps needed for the met-window flux palindrome to pass
 the replay and positivity gates. It is not a request to run every physics
 operator at that frequency. In the driven runtime, the transport block
@@ -91,7 +91,7 @@ raw met files
   -> ReadyWindow or PreverifiedWindow
   -> AbstractWindowContract
   -> AbstractBinaryWriter
-  -> format-v3 transport binary
+  -> format-v4 transport binary
   -> runtime reader and driven simulation
 ```
 
@@ -239,9 +239,9 @@ Responsibilities:
 - A writer owns the staging path, fixed payload ordering, final header patch,
   close, promote, and quarantine behavior.
 
-## Transport-Binary Version 3
+## Transport-Binary Version 4
 
-Format v3 is the hard boundary for current transport binaries. It carries the
+Format v4 is the sole current transport-binary contract. It carries the
 fields needed to make per-window substeps and replay scaling explicit:
 
 - `steps_per_window_by_window`
@@ -249,11 +249,11 @@ fields needed to make per-window substeps and replay scaling explicit:
 - `poisson_balance_target_scale_by_window`
 - `poisson_balance_target_semantics`
 
-`steps_per_window` and `poisson_balance_target_scale` are compatibility
-scalars equal to the maximum schedule entry and its corresponding scale. They
-must not drive runtime stepping.
+`steps_per_window` and `poisson_balance_target_scale` summarize the maximum
+schedule entry and its corresponding scale for inspection. They do not drive
+runtime stepping.
 
-A v3 reader should validate at load time:
+A v4 reader validates at load time:
 
 - the magic and exact format version;
 - the schedule length and positivity;
@@ -264,9 +264,8 @@ A v3 reader should validate at load time:
 - target grid and vertical metadata;
 - mass basis and required preprocessor contract, when requested by run config.
 
-Filenames and directory names may retain historical labels during migration.
-The header is authoritative. When in doubt, inspect the binary header rather
-than trusting a path such as `v4`.
+The header is authoritative; filenames and directory names do not define the
+binary contract.
 
 ## Adaptive Per-Window Transport Substeps
 
@@ -281,7 +280,7 @@ The intended policy is:
 - compute the minimum safe `n_sub` for each met window from the verified
   positivity/CFL gate;
 - apply a safety target below the hard limit;
-- store the resulting schedule in the v3 header;
+- store the resulting schedule in the v4 header;
 - scale stored substep flux amounts consistently with that schedule;
 - declare `runtime_substep_contract = "binary_schedule"` when the binary has
   passed the write-time CFL/positivity gates;
@@ -317,7 +316,7 @@ The contract we want is stronger and more useful:
 - for a fixed binary, forward and adjoint runs replay the same schedule;
 - replay and positivity gates are evaluated with the same per-window schedule;
 - if exact parity is required for a study, freeze and reuse the same binary;
-- any adjoint path that assumes a single global substep count must reject v3
+- any adjoint path that assumes a single global substep count must reject v4
   variable-schedule binaries until it is schedule-aware.
 
 ## Gate Philosophy

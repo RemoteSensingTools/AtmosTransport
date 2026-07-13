@@ -72,7 +72,7 @@ target_header_metadata(grid::ReducedGaussianTargetGeometry) = Dict{String, Any}(
     "grid_type" => "reduced_gaussian",
     "grid_convention" => "ERA5 native reduced Gaussian",
     "gaussian_number" => grid.gaussian_number,
-    "ring_latitudes" => Float64.(grid.lats),
+    "latitudes" => Float64.(grid.lats),
     "nlon_per_ring" => copy(grid.nlon_per_ring),
     "geometry_source_grib" => grid.geometry_source_grib,
 )
@@ -285,10 +285,10 @@ function _parse_cs_panel_convention(raw)
     raw isa GnomonicPanelConvention && return raw
     raw isa GEOSNativePanelConvention && return raw
 
-    norm = lowercase(replace(String(raw), '-' => '_', ' ' => '_'))
-    if norm in ("gnomonic", "gnomic")
+    norm = lowercase(String(raw))
+    if norm == "gnomonic"
         return GnomonicPanelConvention()
-    elseif norm in ("geos_native", "geosnative", "geos_fp", "geosfp", "geos_it", "geosit")
+    elseif norm == "geos_native"
         return GEOSNativePanelConvention()
     end
     error("cubed_sphere: unsupported panel_convention=$(raw); " *
@@ -296,14 +296,13 @@ function _parse_cs_panel_convention(raw)
 end
 
 function _parse_cs_definition(raw, convention::AbstractCubedSpherePanelConvention)
-    norm = lowercase(replace(String(raw), '-' => '_', ' ' => '_'))
-    if norm in ("gmao", "geos", "geos_it", "geosit", "geos_fp", "geosfp",
-                "gmao_equal_distance", "gmao_equal_distance_gnomonic")
+    norm = lowercase(String(raw))
+    if norm == "gmao_equal_distance"
         return GMAOCubedSphereDefinition(; convention)
-    elseif norm in ("equiangular", "equiangular_gnomonic", "legacy")
+    elseif norm == "equiangular_gnomonic"
         return EquiangularCubedSphereDefinition(; convention)
     end
-    error("cubed_sphere: unsupported definition=$(raw); expected \"gmao\" " *
+    error("cubed_sphere: unsupported definition=$(raw); expected \"gmao_equal_distance\" " *
           "or \"equiangular_gnomonic\"")
 end
 
@@ -342,10 +341,10 @@ Required keys:
 - `Nc :: Int` — cells per panel edge
 
 Optional keys:
-- `definition` — `"equiangular_gnomonic"` (legacy synthetic) or `"gmao"`
+- `definition` — `"equiangular_gnomonic"` (synthetic) or `"gmao_equal_distance"`
   (GEOS-IT/GEOS-FP equal-distance gnomonic)
-- `panel_convention` or `convention` — `"gnomonic"` (default) or `"geos_native"`.
-  If `definition` is omitted, `"geos_native"` selects `"gmao"` and
+- `panel_convention` — `"gnomonic"` (default) or `"geos_native"`.
+  If `definition` is omitted, `"geos_native"` selects `"gmao_equal_distance"` and
   `"gnomonic"` selects `"equiangular_gnomonic"`.
 - `regridder_cache_dir` — directory for CR.jl weight cache (default `~/.cache/AtmosTransport/cr_regridding`)
 - `staging_nlon`, `staging_nlat` — override the internal LL staging grid size
@@ -362,7 +361,7 @@ function build_target_geometry(::Val{:cubed_sphere}, cfg_grid, ::Type{FT}) where
     staging_nlat = Int(get(cfg_grid, "staging_nlat", max(2 * Nc + 1, 181)))
 
     convention = _parse_cs_panel_convention(
-        get(cfg_grid, "panel_convention", get(cfg_grid, "convention", "gnomonic")))
+        get(cfg_grid, "panel_convention", "gnomonic"))
     definition = haskey(cfg_grid, "definition") ?
         _parse_cs_definition(cfg_grid["definition"], convention) :
         nothing

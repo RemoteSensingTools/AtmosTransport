@@ -147,6 +147,14 @@ end
             bad = deepcopy(header)
             push!(bad["payload_sections"], "qv_start")
             @test_throws ArgumentError MD.validate_transport_contract!(bad)
+            for key in ("nlat", "latitudes", "nlon_per_ring")
+                bad = deepcopy(header)
+                delete!(bad, key)
+                @test_throws ArgumentError MD.validate_transport_contract!(bad)
+            end
+            bad = deepcopy(header)
+            bad["ring_latitudes"] = pop!(bad, "latitudes")
+            @test_throws ArgumentError MD.validate_transport_contract!(bad)
             MD.write_streaming_window!(writer, window)
             MD.close_streaming_transport_binary!(writer)
         end

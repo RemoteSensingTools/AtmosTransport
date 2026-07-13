@@ -378,7 +378,7 @@ merge_min_thickness_Pa = 1000.0
 type                = "cubed_sphere"
 Nc                  = 180
 panel_convention    = "geos_native"             # or "gnomonic"
-definition          = "gmao"                    # optional; inferred from convention if omitted
+definition          = "gmao_equal_distance"                    # optional; inferred from convention if omitted
 regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
 
 # Reduced Gaussian (synthetic — picks a standard ECMWF reduced-Gaussian grid)

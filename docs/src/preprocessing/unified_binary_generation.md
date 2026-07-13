@@ -55,9 +55,9 @@ new_flux = old_flux * old_steps / new_steps
 cm       = recomputed from (m_next - m_cur) / (2 * new_steps)
 ```
 
-Header-only schedule edits are invalid for v3. A future binary version may store
-full-window mass amounts or rates and divide by the schedule at runtime, but that
-would be a different on-disk contract and must bump `format_version`.
+Header-only schedule edits are invalid. Format v4 permits full-window mass
+amounts only for cubed-sphere products, where the runtime divides by the stored
+schedule; LL and reduced-Gaussian products require substep mass amounts.
 
 ## Shared Policy
 

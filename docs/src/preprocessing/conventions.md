@@ -152,7 +152,7 @@ binaries.
 The day after the requested range is also required (for the last
 window's forward-flux endpoints).
 
-## v3 header fields (preprocessor-set)
+## v4 header fields (preprocessor-set)
 
 | Field | Required? | Notes |
 | --- | --- | --- |

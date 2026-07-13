@@ -33,7 +33,7 @@ function main()
 
     # geometry for lons/lats (C180 GEOS-native GMAO cube)
     gridcfg = Dict{String,Any}("type"=>"cubed_sphere", "Nc"=>Nc,
-        "panel_convention"=>"geos_native", "definition"=>"gmao",
+        "panel_convention"=>"geos_native", "definition"=>"gmao_equal_distance",
         "regridder_cache_dir"=>expanduser("~/.cache/AtmosTransport/cr_regridding"))
     grid = build_target_geometry(gridcfg, Float64)
     lons = Array{Float32}(undef, Nc, Nc, np); lats = similar(lons)

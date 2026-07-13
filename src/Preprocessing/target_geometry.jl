@@ -351,6 +351,8 @@ Optional keys:
   (defaults: `max(4Nc, 360)` × `max(2Nc+1, 181)`)
 """
 function build_target_geometry(::Val{:cubed_sphere}, cfg_grid, ::Type{FT}) where FT <: AbstractFloat
+    haskey(cfg_grid, "convention") && throw(ArgumentError(
+        "cubed_sphere: obsolete key `convention`; use `panel_convention`"))
     Nc = Int(cfg_grid["Nc"])
     Nc > 0 || error("cubed_sphere: Nc must be positive, got $Nc")
 

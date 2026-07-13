@@ -7,6 +7,12 @@ include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 const AT = AtmosTransport
 const Prep = AtmosTransport.Preprocessing
 
+@testset "cubed-sphere geometry rejects obsolete configuration aliases" begin
+    cfg = Dict{String,Any}("Nc" => 2, "convention" => "geos_native")
+    @test_throws ArgumentError Prep.build_target_geometry(
+        Val(:cubed_sphere), cfg, Float64)
+end
+
 @testset "reduced dry-basis conversion skips polar stub faces" begin
     mesh = AT.ReducedGaussianMesh(Float64[-60, -20, 20, 60], [8, 12, 12, 8])
     grid = Prep.ReducedGaussianTargetGeometry(

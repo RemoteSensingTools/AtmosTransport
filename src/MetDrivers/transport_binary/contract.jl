@@ -165,6 +165,10 @@ const _TRANSPORT_STRUCTURAL_HEADER_KEYS = Set((
     "grid_type", "horizontal_topology", "ncell", "nface_h", "nlevel",
     "nwindow", "A_ifc", "B_ifc", "mass_basis", "payload_sections",
     "elems_per_window", "n_geometry_elems", "Nx", "Ny", "Nc", "npanel",
+    "lons", "lats", "longitude_interval", "latitude_interval",
+    "nlat", "latitudes", "nlon_per_ring",
+    "panel_convention", "cs_definition", "cs_coordinate_law",
+    "cs_center_law", "longitude_offset_deg",
     "include_qv", "include_qv_endpoints", "include_flux_delta",
 ))
 
@@ -287,6 +291,13 @@ function _validate_transport_layout!(header::AbstractDict)
                 throw(ArgumentError(
                     "Transport-binary contract violation — $(key) coordinates must be finite numbers"))
         end
+        lons = Float64.(header["lons"])
+        lats = Float64.(header["lats"])
+        all(>(0), diff(lons)) || throw(ArgumentError(
+            "Transport-binary contract violation — lons must be strictly increasing"))
+        all(>(0), diff(lats)) && all(lat -> -90 <= lat <= 90, lats) ||
+            throw(ArgumentError(
+                "Transport-binary contract violation — lats must be strictly increasing within [-90, 90]"))
         expected_nface_h = (Nx + 1) * Ny + Nx * (Ny + 1)
         nface_h == expected_nface_h || throw(ArgumentError(
             "Transport-binary contract violation — nface_h=$(nface_h), expected $(expected_nface_h) for Nx=$(Nx), Ny=$(Ny)"))
@@ -307,12 +318,22 @@ function _validate_transport_layout!(header::AbstractDict)
         all(value -> value isa Real && !(value isa Bool) && isfinite(value), latitudes) ||
             throw(ArgumentError(
                 "Transport-binary contract violation — latitudes must be finite numbers"))
+        latitudes_f64 = Float64.(latitudes)
+        all(>(0), diff(latitudes_f64)) &&
+            all(lat -> -90 < lat < 90, latitudes_f64) || throw(ArgumentError(
+                "Transport-binary contract violation — reduced-Gaussian latitudes must be " *
+                "strictly increasing within (-90, 90)"))
         nlon_per_ring = header["nlon_per_ring"]
         all(value -> value isa Integer && !(value isa Bool) && value > 0,
             nlon_per_ring) || throw(ArgumentError(
                 "Transport-binary contract violation — nlon_per_ring entries must be positive integers"))
         sum(nlon_per_ring) == ncell || throw(ArgumentError(
             "Transport-binary contract violation — sum(nlon_per_ring) must equal ncell"))
+        expected_nface_h = nfaces(ReducedGaussianMesh(
+            latitudes_f64, Int.(nlon_per_ring); FT=Float64))
+        nface_h == expected_nface_h || throw(ArgumentError(
+            "Transport-binary contract violation — nface_h=$(nface_h), expected " *
+            "$(expected_nface_h) from reduced-Gaussian ring geometry"))
         sum(_transport_faceindexed_section_elements(ncell, nface_h, nlevel, section)
             for section in sections)
     elseif grid_type == "cubed_sphere" && topology == "structureddirectional"

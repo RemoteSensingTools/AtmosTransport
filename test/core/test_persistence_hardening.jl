@@ -37,6 +37,20 @@ function _open_rg(path, nwindow=1; extra_header=Dict{String,Any}())
     return writer, window
 end
 
+function _ll_fixture(::Type{FT}=Float32) where FT
+    mesh = AT.LatLonMesh(; Nx=4, Ny=3, FT)
+    vc = HybridSigmaPressure(FT[0, 1000], FT[0, 1])
+    grid = AtmosGrid(mesh, vc, CPU(); FT)
+    window = (
+        m=ones(FT, 4, 3, 1),
+        am=zeros(FT, 5, 3, 1),
+        bm=zeros(FT, 4, 4, 1),
+        cm=zeros(FT, 4, 3, 2),
+        ps=fill(FT(90_000), 4, 3),
+    )
+    return grid, window
+end
+
 @testset "download verification sidecars preserve safe resume semantics" begin
     mktempdir() do dir
         path = joinpath(dir, "download.dat")
@@ -127,6 +141,8 @@ end
         @testset "extra metadata cannot rewrite structural fields" begin
             path = joinpath(dir, "override.bin")
             @test_throws ArgumentError _open_rg(path, 1; extra_header=Dict("ncell" => 999))
+            @test_throws ArgumentError _open_rg(
+                path, 1; extra_header=Dict("latitudes" => [-30.0, 30.0]))
             @test !ispath(path)
         end
 
@@ -155,8 +171,36 @@ end
             bad = deepcopy(header)
             bad["ring_latitudes"] = pop!(bad, "latitudes")
             @test_throws ArgumentError MD.validate_transport_contract!(bad)
+            bad = deepcopy(header)
+            bad["latitudes"] .= first(bad["latitudes"])
+            @test_throws ArgumentError MD.validate_transport_contract!(bad)
+            bad = deepcopy(header)
+            bad["nface_h"] += 1
+            @test_throws ArgumentError MD.validate_transport_contract!(bad)
             MD.write_streaming_window!(writer, window)
             MD.close_streaming_transport_binary!(writer)
+        end
+
+        @testset "lat-lon coordinates are canonical and nondegenerate" begin
+            path = joinpath(dir, "ll-header-contract.bin")
+            grid, window = _ll_fixture()
+            MD.write_transport_binary(
+                path, grid, [window]; FT=Float32, header_bytes=4096,
+                steps_per_window=1,
+                source_flux_sampling=:window_start_endpoint,
+                humidity_sampling=:none, delta_semantics=:none,
+                mass_basis=:dry,
+            )
+            header = open(path, "r") do io
+                raw = MD._read_transport_header_json(io; source=path)
+                Dict{String,Any}(String(k) => v for (k, v) in
+                                 pairs(MD.JSON3.read(String(raw))))
+            end
+            for key in ("lons", "lats")
+                bad = deepcopy(header)
+                bad[key] = fill(first(bad[key]), length(bad[key]))
+                @test_throws ArgumentError MD.validate_transport_contract!(bad)
+            end
         end
 
         @testset "failed final header publication preserves the destination" begin

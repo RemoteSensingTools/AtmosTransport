@@ -110,7 +110,7 @@ function main(args::Vector{String} = ARGS)
             "type"             => "cubed_sphere",
             "Nc"               => cli.Nc,
             "panel_convention" => "geos_native",
-            "definition"       => "gmao",
+            "definition"       => "gmao_equal_distance",
         )
         target_grid = build_target_geometry(Val(:cubed_sphere), cfg, cli.FT)
 

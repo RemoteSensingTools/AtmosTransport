@@ -52,8 +52,8 @@ Metadata for a topology-generic preprocessed transport binary.
 - `flux_kind`: `:substep_mass_amount` or `:full_window_mass_amount` — stored
   flux is either the mass [kg] per scheduled transport substep, or the full
   met-window mass amount that the runtime divides by its schedule.
-- `flux_sampling`: `:window_constant` — same flux applied at every substep
-  within a window.
+- `flux_sampling`: `:window_start_endpoint`, `:window_constant`, or
+  `:window_mean`, describing how the stored forcing represents its window.
 """
 struct TransportBinaryHeader
     format_version       :: Int

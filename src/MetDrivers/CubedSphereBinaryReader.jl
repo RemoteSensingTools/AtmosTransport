@@ -59,6 +59,13 @@ zero-copy access to per-window payloads.
 # is ~36 GB on disk, so the dropped F64 copy was ~72 GB of host RAM *per day*,
 # which OOM-killed multi-day F64 runs. F32 runs are unaffected (DT===FT, so
 # `data` is the zero-copy mmap exactly as before).
+"""
+    CubedSphereBinaryReader(path; FT=Float64)
+
+Memory-mapped reader for canonical v4 cubed-sphere transport binaries. Header
+metadata is validated at construction; window payloads are converted to FT
+when loaded and remain panel-native.
+"""
 struct CubedSphereBinaryReader{FT, DT}
     data    :: Vector{DT}
     io      :: IOStream

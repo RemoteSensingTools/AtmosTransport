@@ -172,12 +172,12 @@ function validate_runtime_advection(::AbstractStructuredRuntimeRecipeStyle,
         "LinRoodPPMScheme is only supported on cubed-sphere runtimes."))
 end
 
-@inline _runtime_has_tm5conv(_context) = false
+@inline _runtime_has_tm5_convection(_context) = false
 @inline _runtime_has_cmfmc(_context) = false
-@inline _runtime_has_tm5conv(reader::TransportBinaryReader) = MetDrivers.has_tm5conv(reader)
-@inline _runtime_has_tm5conv(reader::CubedSphereBinaryReader) = MetDrivers.has_tm5conv(reader)
-@inline _runtime_has_tm5conv(driver::TransportBinaryDriver) = MetDrivers.has_tm5conv(driver.reader)
-@inline _runtime_has_tm5conv(driver::CubedSphereTransportDriver) = MetDrivers.has_tm5conv(driver.reader)
+@inline _runtime_has_tm5_convection(reader::TransportBinaryReader) = MetDrivers.has_tm5_convection(reader)
+@inline _runtime_has_tm5_convection(reader::CubedSphereBinaryReader) = MetDrivers.has_tm5_convection(reader)
+@inline _runtime_has_tm5_convection(driver::TransportBinaryDriver) = MetDrivers.has_tm5_convection(driver.reader)
+@inline _runtime_has_tm5_convection(driver::CubedSphereTransportDriver) = MetDrivers.has_tm5_convection(driver.reader)
 @inline _runtime_has_cmfmc(reader::TransportBinaryReader) = MetDrivers.has_cmfmc(reader)
 @inline _runtime_has_cmfmc(reader::CubedSphereBinaryReader) = MetDrivers.has_cmfmc(reader)
 @inline _runtime_has_cmfmc(driver::TransportBinaryDriver) = MetDrivers.has_cmfmc(driver.reader)
@@ -186,7 +186,7 @@ end
 function validate_runtime_convection(::AbstractRuntimeRecipeStyle,
                                      ::TM5Convection,
                                      context)
-    _runtime_has_tm5conv(context) ||
+    _runtime_has_tm5_convection(context) ||
         throw(ArgumentError(
             "[convection] kind = \"tm5\" requires TM5 convection sections " *
             "(`entu`, `detu`, `entd`, `detd`) in the runtime forcing source."))
@@ -288,6 +288,13 @@ end
                                      ::AbstractConvection,
                                      _context) = nothing
 
+"""
+    validate_runtime_physics_recipe(recipe, context; halo_width=nothing)
+
+Validate topology support, binary capabilities, and halo requirements for a
+materialized RuntimePhysicsRecipe. Returns recipe or throws ArgumentError
+before model allocation.
+"""
 function validate_runtime_physics_recipe(recipe::RuntimePhysicsRecipe,
                                          context;
                                          halo_width::Union{Nothing, Integer} = nothing)
@@ -304,6 +311,13 @@ function validate_runtime_physics_recipe(recipe::RuntimePhysicsRecipe,
     return recipe
 end
 
+"""
+    build_runtime_physics_recipe(cfg, context, FT; halo_width=nothing)
+
+Parse typed advection, diffusion, convection, and chemistry specifications
+from cfg, materialize them for context and floating-point type FT, then run
+the complete runtime compatibility validation.
+"""
 function build_runtime_physics_recipe(cfg,
                                       context,
                                       ::Type{FT};

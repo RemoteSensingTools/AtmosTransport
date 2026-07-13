@@ -21,6 +21,7 @@ the existing `has_flux_delta`, `has_tm5_convection`, `has_cmfmc`, and
 - `humidity :: Bool` — qv or qv_start/qv_end present.
 - `mass_basis :: Symbol` — `:dry` or `:moist`.
 - `grid_type :: Symbol` — `:latlon` / `:reduced_gaussian` / `:cubed_sphere`.
+- `flux_kind :: Symbol` — stored mass-flux normalization contract.
 - `payload_sections :: Vector{Symbol}` — raw set for debugging.
 """
 function binary_capabilities(reader::TransportBinaryReader)
@@ -41,6 +42,7 @@ function binary_capabilities(reader::TransportBinaryReader)
         nlevel           = hdr.nlevel,
         steps_per_window = hdr.steps_per_window,
         variable_step_schedule = _has_variable_step_schedule(hdr.steps_per_window_by_window),
+        flux_kind = flux_kind(reader),
         preprocessor_contract = nothing,
         vertical_Nz_output = nothing,
         adaptive_substeps = nothing,

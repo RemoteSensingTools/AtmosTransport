@@ -114,6 +114,14 @@ function _validate_structured_flux_storage(am, bm, cm)
     return nothing
 end
 
+"""
+    StructuredFaceFluxState{Basis}(am, bm, cm)
+
+Prepared substep mass transport on a logically rectangular grid. Arrays use
+shapes (Nx+1, Ny, Nz), (Nx, Ny+1, Nz), and (Nx, Ny, Nz+1). Positive horizontal
+fluxes point east/north; positive vertical flux points toward increasing level
+index. Basis must match the prognostic state.
+"""
 struct StructuredFaceFluxState{Basis <: AbstractMassBasis,
                                 AX <: AbstractArray,
                                 AY <: AbstractArray,
@@ -187,6 +195,13 @@ function _validate_face_indexed_flux_storage(horizontal_flux, cm)
     return nothing
 end
 
+"""
+    FaceIndexedFluxState{Basis}(horizontal_flux, cm)
+
+Prepared substep mass transport for a connected-face mesh. Horizontal storage
+has shape (nfaces, Nz), while vertical storage has shape (ncells, Nz+1).
+Positive horizontal flux follows the mesh face orientation.
+"""
 struct FaceIndexedFluxState{Basis <: AbstractMassBasis,
                              A <: AbstractArray,
                              AZ <: AbstractArray} <: AbstractUnstructuredFaceFluxState{Basis}
@@ -228,6 +243,13 @@ function _validate_cs_flux_storage(am, bm, cm)
     return nothing
 end
 
+"""
+    CubedSphereFaceFluxState{Basis}(am, bm, cm)
+
+Six-panel, halo-padded directional mass-flux storage for cubed-sphere
+transport. Each tuple contains one structured directional array per panel and
+uses the same mass basis as CubedSphereState.
+"""
 struct CubedSphereFaceFluxState{Basis <: AbstractMassBasis,
                                 AX <: AbstractArray,
                                 AY <: AbstractArray,

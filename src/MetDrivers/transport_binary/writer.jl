@@ -74,6 +74,14 @@ function _write_transport_binary_atomically(write_file::Function, path::Abstract
     return path
 end
 
+"""
+    write_transport_binary(path, grid, windows; kwargs...) -> path
+
+Write a canonical v4 lat-lon or reduced-Gaussian transport binary from an
+AtmosGrid and an ordered vector of forcing windows. Window payloads must match
+the grid topology and declared mass basis. The file is written atomically and
+replaces path only after the header and all payloads succeed.
+"""
 function write_transport_binary(path::AbstractString,
                                 grid::AtmosGrid{<:LatLonMesh},
                                 windows::AbstractVector;

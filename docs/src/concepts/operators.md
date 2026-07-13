@@ -82,8 +82,8 @@ specialized kernels via Julia's multiple dispatch on the grid type.
 | `LinRoodPPMScheme` | 5 or 7 | FV3 Lin-Rood PPM with cross-term advection (CS only); ORD=7 adds a panel-boundary correction. Selectable `ppm_order ∈ {5, 7}`. |
 
 Limiter parameter `L` ranges over `NoLimiter`, `MonotoneLimiter`,
-`PositivityLimiter` — declared in the same file. `PPMScheme()` with
-no limiter defaults to `NoLimiter()`.
+`PositivityLimiter` — declared in the same file. `PPMScheme()` defaults
+to `MonotoneLimiter()`.
 
 **TOML config** (preferred form):
 
@@ -98,17 +98,11 @@ scheme = "slopes"     # "upwind" | "slopes" | "ppm" | "linrood"
 # ppm_order = 7
 ```
 
-`[run].scheme` is the legacy alias; if `[advection]` is present,
-`[run].scheme` is rejected.
-
 A `NoAdvection` identity operator is available for isolating other
 operators (e.g. convection-only timing, regression). Select with
-`[advection] scheme = "none"`. It is incompatible with non-`NoDiffusion`
-/ non-`NoSurfaceFlux` companion operators (both are integrated at the
-Strang-split palindrome center of the advection block) — the `apply!`
-dispatch hard-rejects those combinations with a pointer to the right
-TOML knob. For "near-zero" transport instead of identity, set `dt` very
-small or use an identity binary (mass fluxes ≡ 0).
+`[advection] scheme = "none"`. Diffusion-only runs are supported as a
+single mass-conserving vertical solve. Surface fluxes require an advection
+palindrome and are therefore rejected with `NoAdvection`.
 
 ## Diffusion
 
@@ -150,7 +144,7 @@ Profile / derived / precomputed Kz fields exist in `src/State/Fields/` — see
 | --- | --- | --- |
 | `NoConvection()` | — | Identity no-op; default. |
 | `CMFMCConvection()` | `ConvectionForcing.{cmfmc, dtrain}` | GCHP-style upwind moist convection; mass flux + optional detrainment. |
-| `TM5Convection{FT}()` | `ConvectionForcing.tm5_fields.{entu, detu, detu, detd}` | TM5 Tiedtke-1989 four-field entrainment / detrainment with an implicit column solve. Parametric on `FT`. |
+| `TM5Convection{FT}()` | `ConvectionForcing.tm5_fields.{entu, detu, entd, detd}` | TM5 Tiedtke-1989 four-field entrainment / detrainment with an implicit column solve. Parametric on `FT`. |
 
 Both real subtypes consume a `ConvectionForcing` carrier (declared in
 `src/MetDrivers/ConvectionForcing.jl`) — different physics, identical
@@ -219,7 +213,7 @@ The same recipe applies in every family:
 1. Subtype the abstract root: `struct MyConvection <: AbstractConvection; … end`.
 2. Provide a `No<Operator>` peer if one doesn't already cover your slot — usually it does.
 3. Implement `apply!(state, …, op::MyConvection, dt; workspace)` for whichever grid types you support. Multiple dispatch on the grid type handles topology specialization.
-4. Wire selection from TOML in the appropriate recipe (`src/Models/CSPhysicsRecipe.jl` for cubed-sphere; analogous for LL/RG).
+4. Wire selection from TOML through `RuntimePhysicsSpecs.jl` and its topology-dispatched `materialize` methods.
 5. Test that the `No<Operator>` path is bit-exact to the explicit no-op — this is the contract that lets future code skip the slot for free.
 
 ## What's next

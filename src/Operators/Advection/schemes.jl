@@ -102,7 +102,7 @@ Includes PPM (Colella & Woodward 1984; Putman & Lin 2007) and Prather
 second-moment schemes.  The subcell profile is a parabola constrained
 by the cell mean and (limited) edge values.
 
-Concrete subtypes: [`PPMScheme`](@ref) (stub — kernels not yet implemented)
+Concrete subtypes: [`PPMScheme`](@ref)
 """
 abstract type AbstractQuadraticScheme <: AbstractAdvectionScheme end
 

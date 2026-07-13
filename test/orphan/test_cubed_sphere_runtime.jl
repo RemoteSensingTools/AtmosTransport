@@ -817,7 +817,7 @@ end
                                tm5_windows = (tm5,))
 
         reader = CubedSphereBinaryReader(path; FT = FT)
-        @test has_tm5conv(reader)
+        @test has_tm5_convection(reader)
         close(reader)
 
         driver = CubedSphereTransportDriver(path; FT = FT, arch = CPU(), Hp = 3)

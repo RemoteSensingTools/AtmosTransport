@@ -1,5 +1,5 @@
-"""
-    TransportModel
+const _TRANSPORT_MODEL_OVERVIEW = """
+    TransportModel(state, fluxes, grid, advection; kwargs...)
 
 Minimal Oceanigans-style model object for standalone `src` transport runs.
 
@@ -36,6 +36,13 @@ pre-refactor behaviour for callers that don't opt in.
 Helpers `with_convection(model, op)` and
 `with_convection_forcing(model, forcing)` parallel
 `with_chemistry` / `with_diffusion` / `with_emissions`.
+"""
+"""
+    TransportModelWorkspace(advection_ws, diffusion_ws; convection_ws=nothing)
+
+Independent preallocated storage for advection, diffusion, and convection.
+Inactive operators use nothing; Adapt.adapt moves populated workspaces to the
+requested array backend.
 """
 struct TransportModelWorkspace{AdvT, DiffT, ConvT}
     advection_ws  :: AdvT
@@ -177,6 +184,8 @@ struct TransportModel{StateT, FluxT, GridT, SchemeT, WorkspaceT,
     convection         :: ConvT     # default NoConvection()
     convection_forcing :: CF        # default ConvectionForcing() placeholder
 end
+
+@doc _TRANSPORT_MODEL_OVERVIEW TransportModel
 
 function TransportModel(state::CellState{B},
                         fluxes::StructuredFaceFluxState{B},

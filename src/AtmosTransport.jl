@@ -153,7 +153,7 @@ using .MetDrivers: AbstractMetDriver,
                    copy_convection_forcing!, allocate_convection_forcing_like,
                    PBLSurfaceForcing, has_pbl_surface_forcing,
                    window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc,
-                   has_surface, has_vdiff_fields, has_tm5conv,
+                   has_surface, has_vdiff_fields, has_tm5_convection,
                    grid_type, horizontal_topology,
                    source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics,
                    A_ifc, B_ifc,
@@ -274,7 +274,7 @@ export load_transport_window, driver_grid
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export window_count, load_grid, mass_basis, air_mass_basis
 export has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
-export has_surface, has_vdiff_fields, has_tm5conv, has_humidity_endpoints
+export has_surface, has_vdiff_fields, has_tm5_convection, has_humidity_endpoints
 export delta_semantics
 export grid_type, horizontal_topology
 export supports_diffusion, supports_convection

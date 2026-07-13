@@ -165,6 +165,14 @@ function _cs_default_geometry_tags(panel_convention)
     end
 end
 
+"""
+    open_streaming_cs_transport_binary(path, Nc, npanel, nlevel, nwindow, vc; kwargs...)
+
+Open a canonical v4 cubed-sphere binary for streaming window writes. The
+header records the complete panel convention and geometry law so readers
+reconstruct the same mesh. Each subsequent window must match the registered
+panel shapes and payload sections exactly.
+"""
 function open_streaming_cs_transport_binary(
         path::AbstractString,
         Nc::Int,

@@ -47,6 +47,15 @@ function _validate_cs_state_storage(air_mass, tracers_raw, tracer_names, halo_wi
     return nothing
 end
 
+"""
+    CubedSphereState(Basis, mesh, air_mass; tracers...)
+    CubedSphereState(Basis, air_mass; halo_width, tracers...)
+
+Panel-native prognostic state. Air mass is stored as six halo-padded
+three-dimensional panels. Tracers are packed into one trailing tracer axis on
+each panel, with names retained in storage order. Diagnostics and global sums
+exclude halos.
+"""
 struct CubedSphereState{Basis <: AbstractMassBasis,
                         A3 <: AbstractArray,
                         Raw4 <: AbstractArray,

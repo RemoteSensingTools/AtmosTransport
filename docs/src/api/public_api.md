@@ -37,7 +37,7 @@ model = run_driven_simulation(cfg)
 | `grid_type`, `horizontal_topology` | Inspect binary topology metadata. |
 | `supports_diffusion`, `supports_convection` | Check whether a driver can support requested physics. |
 
-Cubed-sphere reader-specific names live under `AtmosTransport.MetDrivers`.
+Cubed-sphere readers and drivers are also available at the top level.
 Streaming writer helpers live there too because they are preprocessing internals.
 
 ## Work with grids and state
@@ -63,7 +63,7 @@ Streaming writer helpers live there too because they are preprocessing internals
 
 | Symbol | Use |
 |---|---|
-| `AdvectionWorkspace` | Scratch workspace for low-level advection/diffusion experiments. |
+| `AdvectionWorkspace`, `DiffusionWorkspace` | Independent scratch storage for low-level advection and diffusion calls. Model constructors allocate them automatically. |
 | `UpwindScheme`, `SlopesScheme`, `PPMScheme`, `LinRoodPPMScheme` | Common advection schemes. |
 | `NoDiffusion`, `ImplicitVerticalDiffusion` | Diffusion operator choices. |
 | `NoSurfaceFlux`, `SurfaceFluxOperator`, `SurfaceFluxSource` | Surface-flux operator stack. |

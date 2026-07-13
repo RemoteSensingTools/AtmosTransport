@@ -50,6 +50,12 @@ function step!(sim::Simulation)
     return nothing
 end
 
+"""
+    run!(simulation)
+
+Advance a Simulation or DrivenSimulation until its configured stop condition.
+Returns the mutated simulation.
+"""
 function run!(sim::Simulation)
     target_iteration = round(Int, sim.stop_time / sim.Δt)
     while sim.iteration < target_iteration

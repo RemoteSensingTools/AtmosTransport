@@ -141,10 +141,11 @@ returns a `NamedTuple`:
 | `humidity :: Bool` | `true` iff `:qv` (or the start/end pair) is present |
 | `mass_basis :: Symbol` | `:dry` or `:moist` (echoed from header) |
 | `grid_type :: Symbol` | `:latlon` / `:reduced_gaussian` / `:cubed_sphere` |
+| `flux_kind :: Symbol` | `:substep_mass_amount` or `:full_window_mass_amount` |
 | `nlevel :: Int` | vertical levels |
 | `steps_per_window :: Int` | scalar substep count (`maximum(steps_per_window_by_window)`) |
-| `variable_step_schedule :: Bool` | `true` iff `time_step_schedule == :per_window` |
-| `adaptive_substeps :: Bool` | `true` iff the header carries `runtime_substep_contract` |
+| `variable_step_schedule :: Bool` | `true` iff per-window step counts are not all equal |
+| `adaptive_substeps :: Union{Nothing, Bool}` | explicit `adaptive_substeps` header value for CS; `nothing` when not recorded |
 | `preprocessor_contract :: Union{Nothing, String}` | preprocessor contract tag (CS only); e.g. `"plan41_variable_substeps"` |
 | `payload_sections :: Vector{Symbol}` | the raw list, for advanced filtering |
 

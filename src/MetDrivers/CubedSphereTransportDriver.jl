@@ -5,6 +5,13 @@
 # the flat structured transport-binary contract.
 # ---------------------------------------------------------------------------
 
+"""
+    CubedSphereTransportWindow
+
+One decoded v4 forcing window with panel-native air mass, pressure, face
+fluxes, optional humidity endpoints, replay deltas, convection, surface
+forcing, VDIFF fields, and exact TM5 diffusion exchange.
+"""
 struct CubedSphereTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C, S, V, DK} <: AbstractTransportWindow{Basis}
     air_mass         :: M
     surface_pressure :: PS
@@ -55,6 +62,13 @@ function Adapt.adapt_structure(to, deltas::CubedSphereFluxDeltas)
     return CubedSphereFluxDeltas(Adapt.adapt(to, deltas.dm))
 end
 
+"""
+    CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=nothing)
+
+Runtime driver for canonical v4 cubed-sphere binaries. It owns a validated
+reader and reconstructs the AtmosGrid used to allocate panel-native state and
+operator workspaces.
+"""
 struct CubedSphereTransportDriver{FT, ReaderT, GridT} <: AbstractMassFluxMetDriver
     reader :: ReaderT
     grid   :: GridT
@@ -92,9 +106,8 @@ has_surface(reader::CubedSphereBinaryReader) =
     all(s in reader.header.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)
 has_vdiff_fields(reader::CubedSphereBinaryReader) =
     all(s in reader.header.payload_sections for s in _GCHP_VDIFF_PAYLOAD_SECTIONS)
-has_tm5conv(reader::CubedSphereBinaryReader) =
+has_tm5_convection(reader::CubedSphereBinaryReader) =
     all(s in reader.header.payload_sections for s in (:entu, :detu, :entd, :detd))
-has_tm5_convection(reader::CubedSphereBinaryReader) = has_tm5conv(reader)
 
 # `CubedSphereBinaryHeader` has no `grid_type` field; the reader type
 # encodes the topology. Mirror the LL/RG NamedTuple shape so callers
@@ -248,7 +261,7 @@ air_mass_basis(driver::CubedSphereTransportDriver) = mass_basis(driver.reader)
 supports_native_vertical_flux(::CubedSphereTransportDriver) = true
 supports_moisture(::CubedSphereTransportDriver) = false
 supports_convection(driver::CubedSphereTransportDriver) =
-    has_cmfmc(driver.reader) || has_tm5conv(driver.reader)
+    has_cmfmc(driver.reader) || has_tm5_convection(driver.reader)
 supports_diffusion(driver::CubedSphereTransportDriver) =
     has_surface(driver.reader) ||
     :dkg in driver.reader.header.payload_sections

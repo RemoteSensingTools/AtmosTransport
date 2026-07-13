@@ -96,6 +96,14 @@ scavenging-restoring form remains a wet-deposition follow-up.
 # scheme remains conservative. The default `clamp = false` is the pure
 # (unclamped) conservative explicit scheme — exactly mass-conserving but
 # CFL-substep-limited.
+"""
+    CMFMCConvection(; clamp=false)
+
+Explicit, conservative convection driven by per-layer convective mass flux and
+detrainment from ConvectionForcing. Supported on lat-lon, reduced-Gaussian,
+and cubed-sphere states. Setting clamp=true applies the positivity correction
+and conservative column rescaling used for strong-CFL forcing.
+"""
 struct CMFMCConvection <: AbstractConvection
     clamp :: Bool
 end

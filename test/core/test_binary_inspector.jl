@@ -80,6 +80,7 @@ end
             @test caps.surface_pressure === true
             @test caps.mass_basis === :dry
             @test caps.grid_type === :latlon
+            @test caps.flux_kind === :substep_mass_amount
             @test :m in caps.payload_sections
             @test :am in caps.payload_sections
             close(reader)

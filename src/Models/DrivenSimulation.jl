@@ -982,6 +982,12 @@ function step!(sim::DrivenSimulation)
     return nothing
 end
 
+"""
+    run_window!(sim::DrivenSimulation)
+
+Advance exactly the current meteorological window and return sim. If sim is
+positioned at a completed non-final window, the next window is loaded first.
+"""
 function run_window!(sim::DrivenSimulation)
     if sim.iteration == sim.current_window_end_iteration &&
        sim.current_window_index < sim.stop_window

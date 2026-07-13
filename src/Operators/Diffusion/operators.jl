@@ -22,7 +22,20 @@ vertical diffusion/mixing operator.
 """
 abstract type AbstractSurfaceFluxCoupling end
 
+"""
+    SplitSurfaceFluxCoupling()
+
+Apply surface flux at the transport-palindrome center, bracketed by two
+half-step diffusion solves.
+"""
 struct SplitSurfaceFluxCoupling <: AbstractSurfaceFluxCoupling end
+
+"""
+    DiffusiveSurfaceFluxBoundary()
+
+Apply surface flux as the lower boundary condition of one implicit vertical
+diffusion solve.
+"""
 struct DiffusiveSurfaceFluxBoundary <: AbstractSurfaceFluxCoupling end
 
 """
@@ -61,10 +74,8 @@ Concrete examples:
 
     apply!(state, meteo, grid, op::ImplicitVerticalDiffusion, dt; workspace)
 
-- Refreshes the Kz cache: `update_field!(op.kz_field, t)` with
-  `t` drawn from the meteorology where available; currently
-  passes `zero(FT)` as a placeholder (chemistry-style, mirroring the
-  deferred `current_time(meteo)` accessor).
+- Refreshes the Kz cache with `update_field!(op.kz_field, current_time(meteo))`;
+  `meteo = nothing` uses `t = 0` for standalone calls.
 - For Kz fields, reads `workspace.layer_thickness` as the current layer thicknesses [m].
   The caller is responsible for filling this array before calling
   `apply!` — typically from a hydrostatic integration of the current

@@ -216,6 +216,12 @@ end
 # TOML parsing — tracer specs (hoisted from run_transport_binary.jl:57-100)
 # ===========================================================================
 
+"""
+    TransportTracerSpec
+
+Validated runtime tracer configuration: tracer name, initial-condition
+configuration, and optional surface-flux configuration.
+"""
 struct TransportTracerSpec
     name             :: Symbol
     init_cfg         :: Dict{String, Any}

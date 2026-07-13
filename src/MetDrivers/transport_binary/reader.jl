@@ -78,7 +78,6 @@ preprocessor when `tm5_convection = true`. Used by the
 """
 has_tm5_convection(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in (:entu, :detu, :entd, :detd))
-has_tm5conv(r::TransportBinaryReader) = has_tm5_convection(r)
 has_cmfmc(::TransportBinaryReader) = false
 has_surface(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)

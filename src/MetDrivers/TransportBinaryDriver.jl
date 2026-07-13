@@ -30,6 +30,13 @@ struct FaceIndexedFluxDeltas{AH, ACm, AM}
     dm     :: AM
 end
 
+"""
+    StructuredTransportWindow
+
+One decoded v4 lat-lon forcing window: air mass, surface pressure,
+directional face fluxes, optional humidity endpoints, replay deltas, and
+convection forcing.
+"""
 struct StructuredTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C} <: AbstractTransportWindow{Basis}
     air_mass         :: M
     surface_pressure :: PS
@@ -471,7 +478,7 @@ air_mass_basis(driver::TransportBinaryDriver) = mass_basis(driver.reader)
 supports_moisture(driver::TransportBinaryDriver) = has_qv(driver.reader)
 supports_native_vertical_flux(::TransportBinaryDriver) = true
 supports_convection(driver::TransportBinaryDriver) =
-    has_tm5conv(driver.reader) || has_cmfmc(driver.reader)
+    has_tm5_convection(driver.reader) || has_cmfmc(driver.reader)
 driver_grid(driver::TransportBinaryDriver) = driver.grid
 flux_interpolation_mode(driver::TransportBinaryDriver) =
     has_flux_delta(driver.reader) && driver.reader.header.flux_sampling !== :window_constant ? :interpolate : :constant

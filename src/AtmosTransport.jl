@@ -10,7 +10,8 @@ grids.
 using TOML
 using AtmosTransport
 
-cfg = TOML.parsefile("config/runs/quickstart/ll72x37_advonly.toml")
+# First run examples/generate_synthetic_quickstart.jl from the terminal.
+cfg = TOML.parsefile("config/examples/minimal_template.toml")
 ok, errors = validate_config(cfg)
 ok || error(join(errors, "\n"))
 run_driven_simulation(cfg)
@@ -19,7 +20,8 @@ run_driven_simulation(cfg)
 From the shell, use the same library entry point through the canonical runner:
 
 ```bash
-julia --project=. scripts/run_transport.jl config/runs/quickstart/ll72x37_advonly.toml
+julia --project=. examples/generate_synthetic_quickstart.jl
+julia --project=. scripts/run_transport.jl config/examples/minimal_template.toml
 ```
 
 ## Common entry points
@@ -35,9 +37,9 @@ julia --project=. scripts/run_transport.jl config/runs/quickstart/ll72x37_advonl
 - [`write_transport_binary`](@ref): build a transport binary from in-memory
   test or preprocessing windows.
 
-See the rendered getting-started docs under `docs/src/getting_started/` and
-the curated API map in `docs/src/api/public_api.md`. The detailed architecture
-notes remain in `docs/reference/ARCHITECTURE.md`.
+See the rendered getting-started docs under `docs/src/getting_started/`, the
+architecture tour in `docs/src/concepts/architecture.md`, and the curated API
+map in `docs/src/api/public_api.md`.
 """
 module AtmosTransport
 
@@ -48,27 +50,24 @@ using KernelAbstractions
 #
 # Configs and CLI scripts express paths as `~/...`, `$ENV_VAR/...`, or
 # `${ENV_VAR}/...`. `expand_data_path` resolves ordinary environment variables
-# plus two package-specific fallbacks:
+# plus the package data-root fallback:
 #
 #     export ATMOSTRANSPORT_DATA_ROOT=/scratch/$USER/atmostransport
-#     export ATMOSTRANSPORT_DATA_ROOT_quickstart=/scratch/$USER/atmostransport_quickstart
 #
-# When these env vars are unset, the fallbacks are `~/data/AtmosTransport` and
-# `~/data/AtmosTransport_quickstart`. Trailing `/` on env vars is tolerated.
+# When this variable is unset, the fallback is `~/data/AtmosTransport`.
+# Trailing `/` on environment-variable values is tolerated.
 # ---------------------------------------------------------------------------
 const _DATA_ROOT_ENV                = "ATMOSTRANSPORT_DATA_ROOT"
 const _DATA_ROOT_FALLBACK           = "~/data/AtmosTransport"
-const _QUICKSTART_DATA_ROOT_ENV     = "ATMOSTRANSPORT_DATA_ROOT_quickstart"
-const _QUICKSTART_DATA_ROOT_FALLBACK = "~/data/AtmosTransport_quickstart"
 const _PATH_ENVVAR_RE = r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)"
 
 """
     expand_data_path(p::AbstractString) -> String
 
 Resolve a TOML/CLI path string by substituting `\$ATMOSTRANSPORT_DATA_ROOT`
-(or `\${ATMOSTRANSPORT_DATA_ROOT}`), `\$ATMOSTRANSPORT_DATA_ROOT_quickstart`,
-and any environment variable that is set in `ENV`, then running `expanduser`
-for any leading `~`. Returns a plain `String`.
+(or `\${ATMOSTRANSPORT_DATA_ROOT}`) and any environment variable that is set
+in `ENV`, then running `expanduser` for any leading `~`. Returns a plain
+`String`.
 """
 function expand_data_path(p::AbstractString)
     s = String(p)
@@ -84,8 +83,6 @@ function expand_data_path(p::AbstractString)
             ENV[name]
         elseif name == _DATA_ROOT_ENV
             _DATA_ROOT_FALLBACK
-        elseif name == _QUICKSTART_DATA_ROOT_ENV
-            _QUICKSTART_DATA_ROOT_FALLBACK
         else
             m.match
         end

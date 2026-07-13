@@ -1,5 +1,5 @@
 """
-    column_mean_mixing_ratio(air_mass, tracer_mass)
+    column_mean_mixing_ratio(air_mass, tracer_storage)
 
 Compute the air-mass-weighted vertical mean mixing ratio for one snapshot field.
 
@@ -54,8 +54,9 @@ end
 """
     mixing_ratio_field(air_mass, tracer_mass)
 
-Return per-layer VMR from tracer mass divided by the stored air mass. Tiny or
-non-positive mass cells are written as `NaN` rather than silently clamped.
+Return per-layer VMR from conservative tracer storage divided by the stored air
+mass. Tiny or non-positive air-mass cells are written as `NaN` rather than
+silently clamped.
 """
 function mixing_ratio_field(air_mass::AbstractArray, tracer_mass::AbstractArray)
     size(air_mass) == size(tracer_mass) ||

@@ -1,79 +1,38 @@
-# AtmosTransport Documentation
+# AtmosTransport documentation
 
-Documentation for the basis-explicit transport architecture in
-[`../src/`](../src/). The rendered user and API site is sourced from `src/`;
-the numbered documents and `reference/` provide extended repository-level
-design references. `resources/` and explicitly dated bug reports are archival,
-not statements of the current API.
+The maintained manual lives in [`src/`](src/) and is published at the
+[AtmosTransport.jl documentation site](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/).
+The same pages serve new users, experienced atmospheric-model developers, and
+API readers; there is no second, competing reference manual.
 
-## Structure
+## Start here
 
-```
+1. [Installation](src/getting_started/installation.md)
+2. [Julia orientation](src/getting_started/julia_basics.md) if Julia is new to you
+3. [Quickstart](src/getting_started/quickstart.md)
+4. [Architecture tour](src/concepts/architecture.md)
+5. [Run with real meteorology](src/getting_started/first_run.md)
+
+The quickstart is deterministic, uses the current version-4 binary contract,
+and downloads no external data.
+
+## Documentation structure
+
+```text
 docs/
-  README.md                  -- This file
-  00_SCOPE_AND_STATUS.md     -- What src/ is, what ships today
-  10_CORE_CONTRACTS.md       -- State / flux / driver contracts
-  20_RUNTIME_FLOW.md         -- End-to-end step! walkthrough
-  30_BINARY_AND_DRIVERS.md   -- Transport binary format + driver API
-  35_RUNTIME_STABILITY_AND_SUBCYCLING.md
-  36–39 *_BUG_*.md          -- Archival incident reports
-  40_QUALITY_GATES.md
-  reference/                 -- Shared reference docs (data layouts, APIs)
-  memos/                     -- Design memos and debugging analyses
-  resources/                 -- Archival material (bug archive, dev notes)
+├── src/             rendered user manual and API reference
+├── literate/        executable tutorial sources
+├── memos/           dated design and investigation records
+├── validation/      dated validation records
+├── make.jl          Documenter navigation and build definition
+└── build.jl         reproducible local/CI build entry point
 ```
 
-## Reading Order
+The numbered top-level documents (`00_…` through `40_…`) are engineering
+contracts for contributors. Dated bug reports and memos preserve decision
+history; they are not statements of the current user API.
 
-For a new contributor:
-
-1. **[`../README.md`](../README.md)** — Current capability/status summary
-2. **[`../src/README.md`](../src/README.md)** — Runtime entry points
-3. **[`../src/Operators/TOPOLOGY_SUPPORT.md`](../src/Operators/TOPOLOGY_SUPPORT.md)** — Canonical operator × topology matrix
-4. **Core contracts:**
-   - [`00_SCOPE_AND_STATUS.md`](00_SCOPE_AND_STATUS.md)
-   - [`10_CORE_CONTRACTS.md`](10_CORE_CONTRACTS.md)
-   - [`20_RUNTIME_FLOW.md`](20_RUNTIME_FLOW.md)
-   - [`30_BINARY_AND_DRIVERS.md`](30_BINARY_AND_DRIVERS.md)
-5. **Stability and quality:**
-   - [`35_RUNTIME_STABILITY_AND_SUBCYCLING.md`](35_RUNTIME_STABILITY_AND_SUBCYCLING.md)
-   - [`40_QUALITY_GATES.md`](40_QUALITY_GATES.md)
-6. **On-demand (when hitting a specific topic):**
-   - [`reference/`](reference/) — Shared reference docs
-   - [`memos/`](memos/) — Design memos and analyses
-
-## Key Reference Docs
-
-| Topic | File |
-|-------|------|
-| Data folder conventions | [`reference/DATA_LAYOUT.md`](reference/DATA_LAYOUT.md) |
-| Binary format spec | [`reference/BINARY_FORMAT.md`](reference/BINARY_FORMAT.md) |
-| Binary preprocessing architecture | [`reference/BINARY_PREPROCESSING_ARCHITECTURE.md`](reference/BINARY_PREPROCESSING_ARCHITECTURE.md) |
-| Quick-start guide | [`reference/QUICKSTART.md`](reference/QUICKSTART.md) |
-| Architecture overview | [`reference/ARCHITECTURE.md`](reference/ARCHITECTURE.md) |
-| Preprocessing pipeline | [`reference/PREPROCESSING_PHILOSOPHY.md`](reference/PREPROCESSING_PHILOSOPHY.md) |
-| GEOS mass balance + global dry-air pin | [`reference/GEOS_PREPROCESSING_MASS_BALANCE.md`](reference/GEOS_PREPROCESSING_MASS_BALANCE.md) |
-| Diagnostic NetCDF output | [`reference/OUTPUT.md`](reference/OUTPUT.md) |
-| Snapshot visualization | [`reference/VISUALIZATION.md`](reference/VISUALIZATION.md) |
-| Conservative regridding | [`reference/CONSERVATIVE_REGRIDDING.md`](reference/CONSERVATIVE_REGRIDDING.md) |
-| Transport comparison (TM5/GCHP) | [`reference/TRANSPORT_COMPARISON.md`](reference/TRANSPORT_COMPARISON.md) |
-
-## Key Design Memos
-
-| Topic | File |
-|-------|------|
-| Basis-explicit transport design | [`memos/DESIGN_MEMO_BASIS_EXPLICIT_TRANSPORT.md`](memos/DESIGN_MEMO_BASIS_EXPLICIT_TRANSPORT.md) |
-| Advection kernel refactor | [`memos/advection_kernel_refactor_memo_update.md`](memos/advection_kernel_refactor_memo_update.md) |
-| Global mean ps fix | [`memos/GLOBAL_MEAN_PS_FIX.md`](memos/GLOBAL_MEAN_PS_FIX.md) |
-| RG instability root cause (archived) | [`resources/bug_archive/MEMO_REDUCED_GAUSSIAN_INSTABILITY_2026-04-10.md`](resources/bug_archive/MEMO_REDUCED_GAUSSIAN_INSTABILITY_2026-04-10.md) |
-
-## Quick Inspection
-
-```bash
-julia --project=. scripts/diagnostics/inspect_transport_binary.jl path/to/file.bin
-```
-
-## Build the rendered site
+## Build locally
 
 From the repository root:
 
@@ -81,6 +40,25 @@ From the repository root:
 ATMOSTR_DOCS_BUILD_ONLY=true julia docs/build.jl
 ```
 
-The bootstrap script installs the isolated docs environment and performs the
-same strict Documenter, doctest, Literate tutorial, and VitePress production
-build used by CI. Output is written under `docs/build/`.
+The build uses the isolated docs environment, executes the Literate tutorial
+and doctests, checks exported docstrings and cross-references, and renders the
+VitePress site beneath `docs/build/`.
+
+To preview the rendered site:
+
+```bash
+cd docs
+julia --project -e 'using DocumenterVitepress; DocumenterVitepress.dev_docs("build")'
+```
+
+## Contribute
+
+- Edit prose pages under `docs/src/`.
+- Edit API documentation in source docstrings; `docs/src/api/` selects which
+  symbols Documenter renders.
+- Add runnable tutorials under `docs/literate/`. They must be CPU-safe and
+  independent of external data.
+- Run the strict docs build before opening a pull request.
+
+If behavior and prose disagree, treat the code and tests as evidence and fix
+the manual in the same change.

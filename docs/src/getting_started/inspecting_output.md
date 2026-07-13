@@ -1,154 +1,115 @@
-# Inspecting output
+# [Inspecting input and output](@id Inspecting-output)
 
-A successful run leaves you with two kinds of artifacts: the
-**transport binary** consumed by the runtime (input side) and the
-**snapshot files** written by the runtime (output side). This page
-covers the tooling for both.
+AtmosTransport reads a **transport binary** and writes **NetCDF snapshots**.
+The two formats have different jobs:
 
-## Inspect a transport binary
+| File | Contains | Typical question |
+|---|---|---|
+| `*.bin` | grid, air mass, mass fluxes, and optional physics fields | Can this forcing run the operators I requested? |
+| `*.nc` | tracer and air-mass snapshots | What did the simulated atmosphere look like? |
 
-`scripts/diagnostics/inspect_transport_binary.jl` is a thin CLI wrapper
-over the `AtmosTransport.inspect_binary` function. It auto-detects
-LL / RG vs CS binaries by peeking the JSON header, runs load-time
-gates, and prints a capability summary.
+The [Quickstart](@ref) creates both kinds beneath `data/quickstart/`.
 
-```bash
-julia --project=. scripts/diagnostics/inspect_transport_binary.jl <path.bin>
-```
+## Check a transport binary before running
 
-Typical output:
-
-```text
-TransportBinaryReader
-├── path:          /temp2/.../era5_transport_20211201_merged1000Pa_float32.bin
-├── geometry:      latlon 72×37×34, ncell=2664, nface_h=…
-├── storage:       Float32 on disk, load as Float32
-├── basis:         dry
-├── timing:        dt=3600.0 s, steps/window=8 (constant)
-├── payload:       m, am, bm, cm, ps, dam, dbm, dcm, dm, qv_start, qv_end
-├── humidity:      qv_start/qv_end
-├── semantics:     flux_sampling=window_constant, flux_kind=substep_mass_amount
-├── poisson:       scale=1.0, target=continuity
-└── windows:       24
-Capabilities:
-  ✓ advection         (m, am, bm, cm)
-  ✓ replay gate       (dam, dbm, dcm, dm)
-  ✗ TM5 convection    (entu, detu, entd, detd)
-  ✗ CMFMC convection  (cmfmc)
-  ✗ PBL diffusion     (pblh, ustar, pbl_hflux, t2m)
-  ✓ surface pressure  (ps)
-  ✓ humidity          (qv_start, qv_end)
-  mass_basis       = :dry
-  grid_type        = :latlon
-```
-
-The capability rows tell the runtime which operators are eligible. A
-config that requests `convection.kind = "cmfmc"` against a binary
-without the `:cmfmc` payload section is rejected at load time —
-no silent capability mismatch. (`:dtrain` is optional even when
-`:cmfmc` is present.)
-
-Transport binaries must be `format_version = 4`. Every other version is rejected by
-the same reader path used by runtime drivers; regenerate them with the current
-preprocessor rather than loading them with compatibility defaults.
-
-## Inspect a snapshot NetCDF
-
-The runtime's `[output]` block writes NetCDF snapshots at `path`, with cadence
-from `hours`, `cadence_hours`, or `cadence_seconds`. `split = "single"` writes
-one file for the run; `split = "daily"` writes one file per daily binary. The
-variables and their dimensions depend on the target topology:
-
-`[output.fields]` can further restrict output to selected tracers, column means
-only, or selected model levels. If a variable is missing, first check whether
-the run config intentionally disabled that product.
-
-For a lat-lon snapshot the actual variable list looks like:
-
-```
-lev, time, lon, lat, lon_bounds, lat_bounds, cell_area,
-air_mass, air_mass_per_area, column_air_mass_per_area,
-co2_bl, co2_bl_column_mean, co2_bl_column_mass_per_area
-```
-
-Dimension order for LL payload variables follows
-`netcdf_writer.jl::_def_payload_var`: 3D variables (column-mean,
-column-mass-per-area) are `(lon, lat, time)`; 4D per-layer variables
-are `(lon, lat, lev, time)`. Note this is the column-major Julia
-storage order; readers that report `(time, lev, lat, lon)` (e.g.
-`xarray`, `ncdump`) print the dimensions in row-major order — same
-data, opposite-ordered axes.
-
-Per topology, the per-tracer set is:
-
-| Topology | Full-3D | Column mean (2D) | Column mass / area (2D) |
-|---|---|---|---|
-| Lat-lon | `<tracer>(time, lev, lat, lon)` | `<tracer>_column_mean(time, lat, lon)` | `<tracer>_column_mass_per_area(time, lat, lon)` |
-| Reduced Gaussian | `<tracer>` (per-cell native dim) | `<tracer>_column_mean(time, lat, lon)` (rasterized) plus `<tracer>_column_mean_native(time, cell)` | `<tracer>_column_mass_per_area` |
-| Cubed-sphere | `<tracer>(time, lev, nf, Ydim, Xdim)` | `<tracer>_column_mean(time, nf, Ydim, Xdim)` | `<tracer>_column_mass_per_area(time, nf, Ydim, Xdim)` |
-
-Each frame also writes the matching `air_mass`,
-`air_mass_per_area`, `column_air_mass_per_area`, and `cell_area`
-fields so you can recompute mass-weighted means without re-loading the
-binary. Tracer names come straight from the `[tracers.<name>]` block
-in the run config — for the quickstart configs that's `co2_bl`.
-
-### From the shell
-
-The simplest verification is `ncdump -h`:
+Use the inspector on any binary, synthetic or preprocessed:
 
 ```bash
-ncdump -h ~/data/AtmosTransport_quickstart/output/ll72x37_advonly.nc | head -40
+julia --project=. scripts/diagnostics/inspect_transport_binary.jl \
+    data/quickstart/synthetic_latlon_v4.bin
 ```
 
-For a full Python inspection:
+It reports the grid, precision, mass basis, time windows, payload fields, and
+operator capabilities. For example, the synthetic quickstart has advection and
+replay fields but no convection or diffusion fields. Asking the runtime to use
+an unsupported operator therefore fails immediately with a useful error.
 
-```python
-import netCDF4 as nc
-ds = nc.Dataset("~/data/AtmosTransport_quickstart/output/ll72x37_advonly.nc")
-print(list(ds.variables.keys()))
-cm = ds["co2_bl_column_mean"][:]   # (time, lat, lon) for LL
-print(cm.shape, cm.min(), cm.max(), cm.mean())
-```
+All current inputs must have `format_version = 4`. Regenerate an older binary
+with the current preprocessor; the runtime does not guess old semantics.
 
-!!! note "Existing helper scripts"
-    The repository ships `scripts/diagnostics/verify_snapshot_netcdf.py`
-    and `scripts/diagnostics/quick_viz.py`, but both were written
-    against an older snapshot schema (`co2_surface`, `co2_column_mean`,
-    `time_hours`) and have not been updated for the current variable
-    names (`<tracer>_column_mean`, `<tracer>_column_mass_per_area`,
-    `time`). They will need a small refresh before recommending.
-
-### From Julia
-
-For programmatic access without leaving Julia:
+From Julia, the same check is:
 
 ```julia
 using AtmosTransport
-caps = AtmosTransport.inspect_binary("/path/to/transport.bin")
-@show caps   # NamedTuple of capability booleans
 
-using NCDatasets
-ds = NCDataset("~/data/AtmosTransport_quickstart/output/ll72x37_advonly.nc")
-@show keys(ds.variables)
-cm = ds["co2_bl_column_mean"][:, :, end]   # last frame, (lon, lat)
+capabilities = inspect_binary("data/quickstart/synthetic_latlon_v4.bin")
+@show capabilities.grid_type capabilities.mass_basis
 ```
 
-## Common gotchas
+## Open the quickstart output in Julia
+
+`NCDatasets` is already a project dependency:
+
+```julia
+using NCDatasets
+
+NCDataset("data/quickstart/synthetic_output.nc") do ds
+    println(keys(ds.variables))
+    co2 = ds["co2_bl_column_mean"][:, :, :]
+    println("shape: ", size(co2))
+    println("range: ", extrema(co2))
+end
+```
+
+For the maintained example, the column-mean array has shape `(36, 18, 5)`:
+longitude × latitude × output time. Its values begin at `4e-4` and develop a
+longitudinal pattern as the synthetic flow transports the tracer.
+
+If you have NetCDF command-line tools installed, this gives a quick structural
+check without starting Julia:
+
+```bash
+ncdump -h data/quickstart/synthetic_output.nc | less
+```
+
+## Understand variable names and dimensions
+
+Tracer names come from the TOML table name. For `[tracers.co2_bl]`, output
+variables begin with `co2_bl`:
+
+| Variable | Meaning |
+|---|---|
+| `co2_bl` | tracer mixing ratio on every model level |
+| `co2_bl_column_mean` | air-mass-weighted column mean |
+| `co2_bl_column_mass_per_area` | tracer column mass per unit area |
+| `air_mass` | air mass on every model level |
+| `column_air_mass_per_area` | vertically integrated air mass per unit area |
+
+The horizontal dimensions depend on the grid:
+
+| Grid | Full three-dimensional tracer | Column mean |
+|---|---|---|
+| Latitude–longitude | `(lon, lat, lev, time)` | `(lon, lat, time)` |
+| Reduced Gaussian | native cells plus rasterized products | native and `(lon, lat, time)` products |
+| Cubed sphere | `(Xdim, Ydim, face, lev, time)` | `(Xdim, Ydim, face, time)` |
+
+Some Python tools display dimensions in the opposite order because they follow
+row-major conventions. Read the variable's named dimensions instead of
+assuming an axis order.
+
+The `[output.fields]` table can intentionally omit full three-dimensional
+fields, select tracers, or select model levels. Check that table first when an
+expected variable is absent. See [Output schema](@ref) for every option.
+
+## Interpret the run summary
+
+At shutdown the runner prints relative air-mass and conservative tracer-storage
+changes. The
+synthetic quickstart is closed and has no sources, so both should be near the
+floating-point noise floor. A source-driven experiment can legitimately change
+model storage; compare the change with the reported integrated source rather
+than expecting zero. This storage is `mixing ratio × carrier-air-mass`, not
+physical kilograms of the tracer species.
+
+## Common problems
 
 | Symptom | First check |
 |---|---|
-| Transport about 8× too slow | `mass_flux_dt = 450` (FV3 dynamics step), not 1. |
-| Extreme CFL or NaNs | Vertical level ordering (preprocessor auto-detects but check the binary header), or stale binary. |
-| ~10 % mass loss per step | In-place sweep update bug; sweeps must ping-pong source/destination arrays. |
-| Surface emissions invisible in column means | Diffusion likely disabled. |
-| Uniform-tracer jump near the surface | Inconsistent pressure/mass geometry in preprocessing; verify layer pressure edges and stored vertical mass flux. |
-| Day-boundary continuity warnings | Regenerate the binary with the current preprocessor (the contract evolves). |
+| Binary rejected before the run | Confirm `format_version = 4` and inspect its capabilities. |
+| Requested convection or diffusion is unavailable | Reprocess forcing with the required fields enabled. |
+| A tracer variable is missing | Check `[output.fields]` and the tracer table name. |
+| Extreme CFL values or non-finite output | Check vertical ordering, flux time units, and whether the binary was produced by the current preprocessor. |
+| A closed run has appreciable mass drift | Check the conservation budget and replay gate before interpreting tracer results. |
 
-The repository README carries the maintained Fast-Failure-Triage table.
-
-## What's next
-
-- [Concepts](../concepts/grids.md) — the model architecture.
-- [Mass conservation](@ref), [Advection schemes](@ref), and
-  [Validation status](@ref) — theory and verification results.
+Continue with [Architecture tour](@ref) for the model's moving pieces, or
+[Run with real meteorology](@ref) to replace the synthetic forcing.

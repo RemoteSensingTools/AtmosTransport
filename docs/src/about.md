@@ -28,8 +28,9 @@ which produces a VitePress static site with native Mermaid rendering.
 
 When this site and the source code disagree, **the source code wins**.
 Open an issue if you find a contradiction and we'll patch the doc.
-Concrete invariants and file-level pointers live in the repository
-`README.md`, `docs/reference/`, and the source-side module docstrings.
+Concrete invariants and file-level pointers live in the repository `README.md`,
+the numbered engineering-contract documents under `docs/`, and source-side
+module docstrings.
 
 ## Build the docs locally
 
@@ -54,8 +55,8 @@ CI builds the same target on every push and PR; deployment to
 
 ## How to contribute documentation
 
-- **Concepts and theory pages.** Prose-heavy. Cite source file paths
-  (`src/Path/To/File.jl`) for any concrete claim; if a claim depends
+- **Concepts and theory pages.** Prose-heavy. Cite the relevant source file for
+  any concrete claim; if a claim depends
   on a specific function, link the function in the API reference
   rather than copying its signature inline (signatures drift; the
   autodoc does not).

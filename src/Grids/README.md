@@ -83,11 +83,11 @@ make that decision possible.
 
 ## Related Docs And Tests
 
-- Reference docs:
-  - [`../../docs/reference/GRID_TYPES.md`](../../docs/reference/GRID_TYPES.md)
-  - [`../../docs/reference/GRID_CONVENTIONS.md`](../../docs/reference/GRID_CONVENTIONS.md)
+- User guides:
+  - [`../../docs/src/concepts/grids.md`](../../docs/src/concepts/grids.md)
+  - [`../../docs/src/preprocessing/conventions.md`](../../docs/src/preprocessing/conventions.md)
 - Tests:
-  - [`../../test/test_structured_mesh_metadata.jl`](../../test/test_structured_mesh_metadata.jl)
-  - [`../../test/test_reduced_gaussian_mesh.jl`](../../test/test_reduced_gaussian_mesh.jl)
-  - [`../../test/test_basis_explicit_core.jl`](../../test/test_basis_explicit_core.jl)
-  - [`../../test/test_cubed_sphere_runtime.jl`](../../test/test_cubed_sphere_runtime.jl)
+  - [`../../test/core/test_structured_mesh_metadata.jl`](../../test/core/test_structured_mesh_metadata.jl)
+  - [`../../test/core/test_reduced_gaussian_mesh.jl`](../../test/core/test_reduced_gaussian_mesh.jl)
+  - [`../../test/core/test_basis_explicit_core.jl`](../../test/core/test_basis_explicit_core.jl)
+  - [`../../test/orphan/test_cubed_sphere_runtime.jl`](../../test/orphan/test_cubed_sphere_runtime.jl)

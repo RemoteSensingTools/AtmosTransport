@@ -70,7 +70,7 @@ geos_balance_mode          = "column"
 # Global dry-air mass pin — mirror of the GEOS-CS / ERA5 N320 path. Removes the
 # residual global-mean dry-mass drift, pinning the MEASURED C180 dry mass to a
 # fixed absolute target shared with the GEOS path so the driver families share
-# one dry-air baseline. See docs/reference/GEOS_PREPROCESSING_MASS_BALANCE.md.
+# one dry-air baseline. See docs/src/theory/mass_conservation.md.
 enable           = true
 mode             = "target_ps_dry"
 target_ps_dry_pa = 98726.0

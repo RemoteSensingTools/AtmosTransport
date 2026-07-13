@@ -1235,7 +1235,7 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         # DIAGNOSTIC-ONLY LIMITATION: when δ_smooth ≠ 0 this leaves a nonzero
         # SURFACE flux cm[Nz+1] = −δ_smooth/(2·steps) (the closed-bottom boundary
         # is violated), and chain_mass=true accumulates negative UTLS mass. The
-        # tracer test (docs/reference/GEOS_MASS_FLUX_UTLS_FINGERING.md) showed it
+        # tracer analysis summarized in docs/src/preprocessing/geos_native_cs.md showed it
         # makes ~164–280 hPa WORSE. NOT a production closure.
         two_steps = FT(2 * steps)
         pit = ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT)

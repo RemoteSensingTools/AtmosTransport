@@ -23,9 +23,9 @@ the state's full `tracer_names` and look up each by name.
 # Construction
 
 ```julia
-co2_rate  = fill(2.0e-7, Nx, Ny)    # kg/s per cell for :CO2
-sf6_rate  = fill(1.5e-9, Nx, Ny)    # kg/s per cell for :SF6
-rn222_rate = fill(3.0e-11, Nx, Ny)  # kg/s per cell for :Rn222
+co2_rate  = fill(2.0e-7, Nx, Ny)    # model-storage units/s per cell
+sf6_rate  = fill(1.5e-9, Nx, Ny)    # already converted from physical flux
+rn222_rate = fill(3.0e-11, Nx, Ny)
 
 map = PerTracerFluxMap(
     SurfaceFluxSource(:CO2,   co2_rate),

@@ -4,13 +4,13 @@ The GEOS path takes **GEOS-IT C180** native NetCDF — the FV3
 dynamical core's own cubed-sphere output — and writes a transport
 binary on the same cubed-sphere grid (no horizontal regrid). GEOS-FP
 native C720 hourly CTM files use the same source contract, with one
-file per UTC hour. It
-uses the FV3 mass fluxes and pressure-fixer formula directly; this
-is the highest-fidelity path for any GEOS-driven simulation.
+file per UTC hour. It preserves native FV3 horizontal mass fluxes, balances
+them against raw next-hour dry-air endpoints, and diagnoses the vertical mass
+flux required by that discrete continuity target.
 
 GEOS-FP C720 support covers the native hourly CTM layout
-(`GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.YYYYMMDD_HH30.V01.nc4`, with
-`HH00` accepted for legacy fixtures). Surface/convection physics from
+(`GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.YYYYMMDD_HH30.V01.nc4`; test fixtures may
+also use `HH00`). Surface/convection physics from
 the 0.25° GEOS-FP products can be attached by setting
 `[source] physics_dir`, `include_surface = true`, and
 `include_convection = true`; the day handle validates and embeds those
@@ -37,10 +37,7 @@ The endpoint convention is the **raw dry endpoint** rather than the
 endpoint implied by an FV3-style pressure fixer. The pressure-fixer
 endpoint can go slightly negative in thin upper layers; the raw
 endpoint is robust and the header records
-`"geos_mass_endpoint" => "raw_dry_endpoint"` for traceability. The
-legacy `compute_cs_cm_pressure_fixer!` still exists in
-`src/Preprocessing/cs_transport_helpers.jl` for reference but is not
-on the production path.
+`"geos_mass_endpoint" => "raw_dry_endpoint"` for traceability.
 
 ## Required input per day
 

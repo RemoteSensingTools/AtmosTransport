@@ -1,4 +1,4 @@
-# Operators
+# [Operators](@id Operator-concepts)
 
 Every physics process in AtmosTransport is implemented behind an
 **abstract operator type** with a `No<Operator>` no-op default. The
@@ -118,7 +118,7 @@ palindrome and are therefore rejected with `NoAdvection`.
 | Subtype | Use |
 |---|---|
 | `NoDiffusion()` | Identity no-op; default when `[diffusion]` is absent or `kind = "none"`. |
-| `ImplicitVerticalDiffusion{FT, KzF, SFC}` | Backward-Euler vertical diffusion driven by an `AbstractTimeVaryingField` Kz. `SFC` chooses legacy split surface flux placement or lower-boundary flux placement. |
+| `ImplicitVerticalDiffusion{FT, KzF, SFC}` | Backward-Euler vertical diffusion driven by an `AbstractTimeVaryingField` Kz. `SFC` chooses midpoint source splitting or source-before-full-solve ordering. |
 
 The implicit solver runs a per-column Thomas tridiagonal solve; the
 column kernel is exposed as `solve_tridiagonal!` for tests and
@@ -137,9 +137,13 @@ value = 1.0      # Kz [m²/s]; broadcast to all (i, j, k)
 `kind = "none"` (or omitting the block entirely) selects `NoDiffusion`.
 Cubed-sphere binaries carrying PBL surface sections can use
 `kind = "tm5_beljaars_viterbo_local_kz"`.
-`surface_flux_boundary = true` places configured surface fluxes at the lower
-boundary of the implicit vertical solve (`S(dt) -> V(dt)`) instead of the
-legacy midpoint split (`V(dt/2) -> S(dt) -> V(dt/2)`).
+On lat-lon and cubed-sphere grids, `surface_flux_boundary = true` adds
+configured surface mass before one full implicit vertical solve
+(`S(dt) -> V(dt)`) instead of using the separate
+midpoint split (`V(dt/2) -> S(dt) -> V(dt/2)`). The key name is historical:
+this changes operator ordering, not the lower row of the tridiagonal system.
+Reduced-Gaussian transport currently supports midpoint splitting only and
+rejects `surface_flux_boundary = true` while building the runtime recipe.
 Profile / derived / precomputed Kz fields exist in `src/State/Fields/` — see
 [State & basis](@ref) for the full field-type list.
 
@@ -200,26 +204,27 @@ Chemistry runs after the transport and convection blocks. The same operator
 interface covers `CellState` and `CubedSphereState`; topology dispatch selects
 the storage-specific kernel launch.
 
-## Strang palindrome
+## Transport composition
 
-The transport step is composed as a **time-symmetric Strang
-palindrome**:
+The directional advection shell is a palindrome. Its center follows the
+diffusion operator's surface-coupling policy:
 
 ```text
 forward:   X → Y → Z   (each direction CFL-subcycled)
-center:    V(dt/2) → S(dt) → V(dt/2)   (only when surface flux is on)
-           [otherwise the center is a single V(dt) — and a NoDiffusion
-            V is a literal dead branch]
+center A:  V(dt/2) → S(dt) → V(dt/2)   (default symmetric Strang split)
+center B:  S(dt) → V(dt)               (LL/CS source-before-full-solve policy)
+           [without surface flux, the center is one V(dt); NoDiffusion is a no-op]
 reverse:   Z → Y → X   (same subcycle counts)
 post:      apply!(convection)   (convection is outside the palindrome)
            apply!(chemistry)    (chemistry is outside the palindrome)
 ```
 
 `V` is `apply_vertical_diffusion_vmr!` and `S` is `apply_surface_flux!`.
-Splitting surface emissions across the diffusion half-steps (rather
-than emitting before or after the palindrome) is necessary to keep
-the operator second-order accurate and to allow the bottom-layer
-mass increment to diffuse upward symmetrically.
+Center A is time-symmetric and lets fresh bottom-layer storage diffuse in both
+half solves. Center B reproduces the supported GCHP-style placement of fresh
+surface storage before one full solve; it is an ordering policy, not a
+time-symmetric Strang center or a different tridiagonal boundary condition.
+Reduced-Gaussian transport implements Center A only.
 
 Convection and chemistry sit **outside** the palindrome for the same
 reason: they are not commutative with advection at the per-substep

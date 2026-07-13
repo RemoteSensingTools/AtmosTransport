@@ -21,8 +21,9 @@ All three target topologies (LL, RG, CS) run through the unified driver
 The thermo file is mandatory if `[output] mass_basis = "dry"` (the
 default and only currently-tested binary basis for runtime
 consumption); without it, the dry-basis correction `(1 − qv)` cannot
-be applied. ECMWF distributes spectral data via CDS / MARS; the
-download script `scripts/download_era5.py` handles the CDS path.
+be applied. ECMWF distributes spectral data via CDS / MARS; the unified
+downloader is `scripts/downloads/download_data.jl`, with ERA5 recipes under
+`config/downloads/`.
 
 The preprocessor **prefers** one extra day past the requested range
 so the last window of each day can read its forward-flux endpoints
@@ -31,8 +32,8 @@ paths fall back to a zero-tendency final-window closure** when the
 next-day file is missing — the binary still builds, and replay
 continuity holds, but the very last window of the last day uses an
 implicit `dm = 0` rather than a real next-day delta. As a rule of
-thumb, download `[start, end+1]` for production runs; quickstart-
-sized one-day jobs are fine without.
+thumb, download `[start, end+1]` for production runs; a one-day development
+job can use the fallback if its final-window tendency is not being analyzed.
 
 ## Targets
 
@@ -123,7 +124,7 @@ For each of the day's 24 hourly windows:
     - **CS** (spectral source): a CG-based solve on the per-panel
       cubed-sphere Laplacian; cm is then derived via
       `diagnose_cs_cm!` rather than `recompute_cm_from_dm_target!`.
-    - All three converge to the same plan-39 dry-basis tolerance and
+    - All three converge to the same current dry-basis tolerance and
       satisfy `‖m_evolved − m_stored_{n+1}‖/‖m_{n+1}‖ ≤
       replay_tolerance(FT)` at the write-time gate.
 
@@ -144,7 +145,7 @@ thermo_dir   = "~/data/AtmosTransport/met/era5/0.5x0.5/physics"
 coefficients = "config/era5_L137_coefficients.toml"
 
 [output]
-directory  = "~/data/AtmosTransport/met/era5/ll72x37_advresln/transport_binary_v2_tropo34_dec2021_f32"
+directory  = "~/data/AtmosTransport/met/era5/ll72x37_advresln/transport_binary_v4_tropo34_dec2021_f32"
 mass_basis = "dry"
 
 [grid]

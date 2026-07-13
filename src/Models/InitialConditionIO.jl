@@ -12,7 +12,7 @@ topology-dispatched VMR builders for the unified runtime.
   catrine_co2` for LL/RG meshes. CS supports `uniform |
   latitude_step | gaussian_blob | file | netcdf | file_field |
   catrine_co2`.
-- [`pack_initial_tracer_mass`](@ref) — basis-aware VMR → tracer-mass
+- [`pack_initial_tracer_mass`](@ref) — basis-aware VMR → conservative model storage
   conversion. Dispatches on `mass_basis::AbstractMassBasis`:
   - `DryBasis` (default per CLAUDE.md invariant 14): `rm = vmr .* air_mass`.
   - `MoistBasis`: `rm = vmr .* air_mass .* (1 .- qv)` per CLAUDE.md
@@ -687,9 +687,10 @@ end
     pack_initial_tracer_mass(grid, air_mass, vmr_dry; mass_basis::AbstractMassBasis,
                                                       qv = nothing)
 
-Convert dry volume mixing ratio `vmr_dry` to tracer-mass storage
-matching the binary's mass-basis contract. Returns an array of the
-same shape as `air_mass`.
+Convert dry volume mixing ratio `vmr_dry` to conservative model storage
+matching the binary's mass-basis contract. On `DryBasis` that storage is
+`vmr_dry × dry_air_mass`; it is not physical kg species. Returns an array of
+the same shape as `air_mass`.
 
 ## Dispatch
 

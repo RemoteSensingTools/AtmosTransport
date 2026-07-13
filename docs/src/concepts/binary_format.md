@@ -240,7 +240,7 @@ and the GEOS-CS-source path use it differently.
 
 Mass conservation is enforced by a **two-stage replay gate**:
 
-### Write-time gate (always on)
+### Write-time gate (on by default)
 
 After every window write, the preprocessor evolves `m_n` forward one
 window using the just-written flux fields and asserts:
@@ -253,7 +253,8 @@ with `tol = replay_tolerance(FT)` from
 `src/MetDrivers/ReplayContinuity.jl` — `1e-10` for Float64 and `1e-4`
 for Float32. A binary that fails this gate is **rejected at write
 time**; the preprocessor errors out rather than producing a
-known-bad file.
+known-bad file. Diagnostic runs can explicitly bypass this gate with
+`ATMOSTR_NO_WRITE_REPLAY_CHECK=1`; production preprocessing should not.
 
 ### Load-time gate (opt-in)
 
@@ -270,7 +271,7 @@ driver = TransportBinaryDriver(path; validate_replay = true)
 ```
 
 There is no TOML key for the load-time gate today; use the env var
-when running from the CLI. The write-time gate (above) is always on.
+when running from the CLI. The write-time gate (above) is on by default.
 
 ```bash
 ATMOSTR_REPLAY_CHECK=1 julia --project=. scripts/run_transport.jl <cfg.toml>

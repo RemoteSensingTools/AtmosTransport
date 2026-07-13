@@ -22,7 +22,8 @@ LL/RG manual setup looks like this:
 using TOML, AtmosTransport
 using AtmosTransport.MetDrivers: air_mass_basis, driver_grid, flux_kind
 
-cfg = TOML.parsefile("config/runs/quickstart/ll72x37_advonly.toml")
+# First run examples/generate_synthetic_quickstart.jl from the terminal.
+cfg = TOML.parsefile("config/examples/minimal_template.toml")
 paths = expand_binary_paths(cfg["input"])
 FT = Float64
 
@@ -607,8 +608,8 @@ function _validate_convection_window!(::TM5Convection,
             "TM5Convection requires `window.convection.tm5_fields` " *
             "(NamedTuple with :entu, :detu, :entd, :detd) to be populated; " *
             "driver $(typeof(driver)) provided convection forcing without TM5 fields. " *
-            "Preprocess the binary with `scripts/preprocessing/preprocess_spectral_v4_binary.jl` " *
-            "and `tm5_convection = true` in the run config, or fall back to " *
+            "Preprocess the binary with `scripts/preprocessing/preprocess_transport_binary.jl` " *
+            "and `[tm5_convection] enable = true` in the preprocessing config, or fall back to " *
             "`CMFMCConvection()` if you have GEOS-FP CMFMC data instead."))
     return nothing
 end

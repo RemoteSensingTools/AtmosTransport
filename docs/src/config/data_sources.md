@@ -4,10 +4,9 @@ This page covers where to obtain the raw meteorological input the
 preprocessor needs, how to authenticate against each source, and
 the recommended local layout under `~/data/AtmosTransport/met/`.
 
-If you only want to run the model and don't care about the
-preprocessing pipeline, **skip to [the quickstart bundle](#The-quickstart-bundle)**
-at the end — that's preprocessed binaries already, downloadable
-from a GitHub Release.
+If you only want to learn the runtime first, start with the
+[Quickstart](@ref). It generates small current-format forcing locally and does
+not require a data account or a large download.
 
 ## ERA5 (ECMWF Reanalysis 5)
 
@@ -36,7 +35,7 @@ url: https://cds.climate.copernicus.eu/api
 key: <YOUR-PAT>
 ```
 
-CDS migrated to single PAT-style keys in September 2024; the legacy
+CDS migrated to single PAT-style keys in September 2024; the older
 `<UID>:<API-KEY>` format is no longer accepted. Get your PAT from your
 CDS account profile page once you're logged in. The `base_url` in
 `config/met_sources/era5.toml` matches this. Tools that read the
@@ -147,8 +146,8 @@ the project's own configs use historically.
 
 `GEOSSettings{:geosfp}` opens 24 hourly native CTM files plus the
 next-day 00Z endpoint. The WashU archive names the hourly averaged
-files with `HH30` timestamps; the resolver also accepts legacy `HH00`
-fixtures. When `[source] include_surface = true` or
+files with `HH30` timestamps; test fixtures may also use `HH00`. When
+`[source] include_surface = true` or
 `include_convection = true`, set `[source] physics_dir` to a directory
 containing `GEOSFP.YYYYMMDD.{A1,A3mstE,A3dyn}.025x03125.nc` files (or
 pre-regridded CS equivalents) and the preprocessor embeds `PBLH`,
@@ -162,54 +161,27 @@ MFXC/MFYC, so this is deliberately separate from `AbstractGEOSSettings`.
 The unified `OPeNDAPProtocol.execute!` downloader is still unavailable, so
 raw files must currently be staged separately with NASA Earthdata credentials.
 
-## The quickstart bundle
+## Try the runtime without external data
 
-If you don't want to manage raw met data — for a smoke test, a tutorial,
-or a short benchmark — there's a **preprocessed bundle** on the
-[`data-quickstart-v2` GitHub Release](https://github.com/RemoteSensingTools/AtmosTransport.jl/releases/tag/data-quickstart-v2):
-
-| Tarball | Contents |
-|---|---|
-| `quickstart_ll_dec2021_v2.tar.gz` (~1.0 GB) | LL 72x37 + LL 144x73 transport binaries, F32, Dec 1-3 2021 |
-| `quickstart_cs_dec2021_v2.tar.gz` (~1.9 GB) | CS C24 + CS C90 transport binaries, F32, Dec 1-3 2021 |
-
-Both built from raw ERA5 spectral via the preprocessor described in
-[ERA5 spectral path](@ref). Use:
+The maintained quickstart creates a small, deterministic version-4 transport
+binary in the repository's ignored `data/quickstart/` directory:
 
 ```bash
-bash scripts/download_quickstart_data.sh ll      # newcomer path
-bash scripts/download_quickstart_data.sh cs
-bash scripts/download_quickstart_data.sh         # both
+julia --project=. examples/generate_synthetic_quickstart.jl
+julia --project=. scripts/run_transport.jl config/examples/minimal_template.toml
 ```
 
-The quickstart downloader and run configs use
-`$ATMOSTRANSPORT_DATA_ROOT_quickstart`, defaulting to
-`~/data/AtmosTransport_quickstart`. Set it before downloading if the bundle
-should live somewhere else:
-
-```bash
-export ATMOSTRANSPORT_DATA_ROOT_quickstart=/scratch/$USER/AtmosTransport_quickstart
-bash scripts/download_quickstart_data.sh ll
-```
-
-See [Quickstart with example data](@ref) for the runnable
-walkthrough.
+This is the supported smoke test and tutorial path.
 
 ## A note on disk space
 
-For reference, a 30-day production preprocessing job needs:
-
-| Source × target | Raw input | Binary output (F32) |
-|---|---|---|
-| ERA5 spectral → LL 720×361 (full ERA5 res) | ~6 GB / day raw GRIB+NetCDF | ~5 GB / day binary |
-| ERA5 spectral → CS C90 | same raw | ~700 MB / day binary |
-| GEOS-IT C180 → CS C180 (passthrough) | ~3 GB / day raw NetCDF | ~3 GB / day binary |
-
-Plan storage accordingly; production run datasets are tens to
-hundreds of GB.
+Binary size scales with grid cells, vertical levels, windows, precision, and
+optional physics sections. Generate one representative day, inspect its
+`payload_sections`, and size campaign storage from that file rather than from
+a different source or physics configuration.
 
 ## Where to read next
 
-- [Quickstart with example data](@ref) — runnable bundle walkthrough.
+- [Quickstart](@ref) — a zero-download, runnable walkthrough.
 - [TOML schema](@ref) — `[input]` / `[source]` / `[grid]` reference.
 - [Preprocessing overview](@ref) — the unified `process_day` dispatch.

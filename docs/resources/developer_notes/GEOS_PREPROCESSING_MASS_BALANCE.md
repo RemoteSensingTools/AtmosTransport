@@ -1,3 +1,6 @@
+> **Archived research note.** This dated investigation is preserved for
+> scientific provenance. Paths, run status, and implementation details may
+> have changed; use the maintained manual for current workflows.
 # GEOS Preprocessing: Mass-Flux Balance and Global Dry-Air Conservation
 
 > **Status (2026-05-29).** Global dry-air pins are **shipped** for both native

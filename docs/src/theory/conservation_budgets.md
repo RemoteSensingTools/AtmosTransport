@@ -17,35 +17,34 @@ The simplest non-trivial conservation property: a tracer initialised
 to a uniform constant value `χ_0` everywhere should stay close to
 `χ_0` after multi-step advection on a non-trivial flow.
 
-| Test (`test/test_advection_kernels.jl`) | Asserts | Tolerance |
+| Test (`test/core/test_advection_kernels.jl`) | Asserts | Tolerance |
 |---|---|---|
-| `"CPU $precision_tag: uniform invariance"` (line 153–157) | `maximum(abs(χ_out − 4.0e-4)) / 4.0e-4 < 1e-6` after one Strang step on a sinusoidal flow. CPU coverage spans `Upwind` / `Slopes` / `PPM`. | `< 1e-6` (both F32 and F64) |
-| `"GPU $precision_tag: uniform invariance"` (line 201–214) | same assertion on `CuArray`-backed state — but only in the **`Upwind`** variant of the test loop. The Slopes / PPM uniform-invariance tests at lines 303 and 407 are CPU-only. | `< 1e-6` |
+| CPU uniform-invariance test sets | `maximum(abs(χ_out − 4.0e-4)) / 4.0e-4 < 1e-6` after one Strang step on a sinusoidal flow. CPU coverage spans `Upwind` / `Slopes` / `PPM`. | `< 1e-6` (both F32 and F64) |
+| GPU uniform-invariance test set | same assertion on `CuArray`-backed state — currently for **`Upwind`**. The Slopes / PPM uniform-invariance cases are CPU-only. | `< 1e-6` |
 
 The test fixture builds a synthetic LL `36 × 18 × 4` setup
-(see lines 38–50 for the construction) with a sinusoidal zonal `am`
+together with a sinusoidal zonal `am`
 tapered with latitude and a `cm` diagnosed from continuity to keep
 the synthetic forcing self-consistent. CFL ≈ 0.15 at the equator.
 Schemes covered: `UpwindScheme`, `SlopesScheme`, `PPMScheme` — each
 in its own `@testset` block. CPU coverage spans all three; **GPU
-uniform-invariance coverage is `Upwind` only** (line 201). The
-Slopes / PPM uniform tests at lines 303 and 407 run on CPU only.
+uniform-invariance coverage is `Upwind` only**. The Slopes / PPM uniform tests
+run on CPU only.
 
 ## Mass-budget conservation
 
 Same kernel, but on a non-uniform tracer (a meridional gradient
 `rm_grad_cpu`):
 
-| Test (`test/test_advection_kernels.jl`) | Asserts | Tolerance |
+| Test (`test/core/test_advection_kernels.jl`) | Asserts | Tolerance |
 |---|---|---|
-| `"CPU $precision_tag: mass conservation (uniform)"` (line 159–164) | `abs(Σ m_out − Σ m_cpu) / Σ m_cpu < tol` and the same for tracer mass | F64: `< 1e-13`. F32: `< 1e-5` |
-| `"CPU $precision_tag: mass conservation (gradient, 4 steps)"` (line 166–171) | same assertion after 4 Strang steps with a gradient IC | F64: `< 1e-12`. F32: `< 5e-5` |
-| `"GPU $precision_tag: mass conservation (gradient, 4 steps)"` (line 182–199) | same on a `CuArray`-backed state | F64: `< 1e-12`. F32: `< 5e-5` |
-| `"CPU $precision_tag: non-trivial transport"` (line 173–176) | `maximum(abs(rm_out − rm_grad_cpu)) > 0` — sanity that the run actually moved tracer mass (not just held it constant) | strict `>` |
+| CPU mass conservation, uniform | `abs(Σ m_out − Σ m_cpu) / Σ m_cpu < tol` and the same for tracer mass | F64: `< 1e-13`. F32: `< 1e-5` |
+| CPU mass conservation, gradient over 4 steps | same assertion after 4 Strang steps with a gradient IC | F64: `< 1e-12`. F32: `< 5e-5` |
+| GPU mass conservation, gradient over 4 steps | same on a `CuArray`-backed state | F64: `< 1e-12`. F32: `< 5e-5` |
+| CPU non-trivial transport | `maximum(abs(rm_out − rm_grad_cpu)) > 0` — sanity that the run actually moved tracer mass (not just held it constant) | strict `>` |
 
-`test/test_cubed_sphere_advection.jl` (lines 374–455 cover the PPM-
-on-CS variants of the same suite, exercising the panel-edge halo
-sync end-to-end).
+`test/core/test_cubed_sphere_advection.jl` covers the PPM-on-CS variants of the
+same suite, exercising the panel-edge halo sync end to end.
 
 ## CPU / GPU agreement
 
@@ -55,16 +54,16 @@ reductions, and on F64 the GPU's FMA instruction can produce a
 small ULP-scale difference per multiply-add. The test suite uses
 ULP-bounded tolerances that vary by scheme and step count:
 
-| Test (`test/test_advection_kernels.jl`) | Tolerance |
+| Test (`test/core/test_advection_kernels.jl`) | Tolerance |
 |---|---|
-| Upwind, 1 step (line 216-235) | `4 * eps(FT)` per cell |
-| Upwind, 4 steps (line 237-257) | `16 * eps(FT)` per cell |
-| Slopes, 4 steps (line 345-363) | `16 * eps(FT)` per cell |
-| PPM, 4 steps (line 451-469) | `16 * eps(FT)` per cell |
+| Upwind, 1 step | `4 * eps(FT)` per cell |
+| Upwind, 4 steps | `16 * eps(FT)` per cell |
+| Slopes, 4 steps | `16 * eps(FT)` per cell |
+| PPM, 4 steps | `16 * eps(FT)` per cell |
 
 `LinRoodPPMScheme` is not in this CPU/GPU agreement matrix; it has a
-CPU CS runtime smoke test in `test/test_cubed_sphere_runtime.jl:322`
-but no per-step GPU comparison.
+forward runtime coverage in the opt-in orphan test
+`test/orphan/test_cubed_sphere_runtime.jl`, but no per-step GPU comparison.
 
 The CPU/GPU agreement check runs ONLY when CUDA.jl is loaded; it's
 gated by `HAS_GPU` at the top of the test file. CI runs the CPU
@@ -74,13 +73,13 @@ side; GPU coverage is exercised on machines with hardware.
 
 Per-window replay is the contract that lets the runtime stream window
 N+1 starting from window N's evolved endpoint without drift. Tested
-in `test/test_replay_consistency.jl`:
+in `test/core/test_replay_consistency.jl`:
 
 | Subtest (line) | Asserts |
 |---|---|
-| `verify_window_continuity_ll` with continuity-consistent data (line 80–89) | `tol_rel ≤ 1e-12` (F64) / `1e-6` (F32). Both pass on the synthetic fixture. |
-| Deliberately broken `cm` storage (line 145–161) | The storage-level gate fires `@test_throws ErrorException` when the binary's stored `cm` violates the explicit-`dm` closure by more than `replay_tolerance(FT)`. The earlier subtest (line 91-110) checks the diagnostic max-residual numbers against the same broken `cm`; the throw lives in the storage subtest. |
-| Final-window inconsistent `cm` (line 145–161) | The LL storage replay-gate test deliberately injects an inconsistent final-window `cm` and asserts `@test_throws ErrorException` — i.e. the gate **does** detect inconsistency at the day boundary, not silently pass it as zero-tendency. |
+| `verify_window_continuity_ll` with continuity-consistent data | `tol_rel ≤ 1e-12` (F64) / `1e-6` (F32). Both pass on the synthetic fixture. |
+| Deliberately broken `cm` storage | The storage-level gate fires `@test_throws ErrorException` when the binary's stored `cm` violates the explicit-`dm` closure by more than `replay_tolerance(FT)`. A separate subtest checks the diagnostic residual against the same broken field. |
+| Final-window inconsistent `cm` | The LL storage replay-gate test deliberately injects an inconsistent final-window `cm` and asserts `@test_throws ErrorException` — i.e. the gate **does** detect inconsistency at the day boundary, not silently pass it as zero-tendency. |
 
 The same gate runs at preprocessing write time (always) and at
 runtime load time (opt-in via `[met_data] validate_replay = true` or
@@ -98,13 +97,13 @@ distribution by `O(10⁻⁶)`.
 | Test | Asserts |
 |---|---|
 | `test/regridding/test_conservation.jl` | `sum(m_dest) ≈ sum(m_source)` under LL↔CS conservative regrid. |
-| `test/test_ll_to_cs_regrid_script.jl:175–178` | End-to-end LL → CS regrid pipeline produces a binary whose stored `m`, summed globally, matches the LL source's stored `m` to `1e-6` relative — the script-level acceptance gate, deliberately looser than the kernel-level `1e-13` to absorb the per-level mass-consistency redistribution. |
+| `test/core/test_ll_to_cs_regrid_script.jl` | End-to-end LL → CS regrid pipeline produces a binary whose stored `m`, summed globally, matches the LL source's stored `m` to `1e-6` relative — the script-level acceptance gate, deliberately looser than the kernel-level `1e-13` to absorb the per-level mass-consistency redistribution. |
 
 The per-level mass-consistency correction in
 `cs_transport_helpers.jl::_enforce_perlevel_mass_consistency!` is
 what closes the per-level distribution; tested implicitly via the
 Poisson balance convergence requirement (would not converge to the
-plan-39 dry-basis tolerance without the correction).
+current dry-basis replay tolerance without the correction).
 
 ## Initial-condition mass conservation
 
@@ -115,8 +114,8 @@ matters when the IC interpolates from a different mesh.
 
 | Test | Asserts |
 |---|---|
-| `test/test_initial_condition_io.jl` | The `file` / `netcdf` IC kinds round-trip a known field through the IC pipeline and assert the recovered mixing ratio matches the source within tolerance. |
-| `test/test_basis_explicit_core.jl` | Dry-basis IC interpretation: `[tracers.co2.init] kind = "uniform"; background = 4.0e-4` produces a tracer field whose `mixing_ratio(state, :CO2)` is `4.0e-4` exactly when `air_mass` is on dry basis. |
+| `test/core/test_initial_condition_io.jl` | The `file` / `netcdf` IC kinds round-trip a known field through the IC pipeline and assert the recovered mixing ratio matches the source within tolerance. |
+| `test/core/test_basis_explicit_core.jl` | Dry-basis IC interpretation: `[tracers.co2.init] kind = "uniform"; background = 4.0e-4` produces a tracer field whose `mixing_ratio(state, :CO2)` is `4.0e-4` exactly when `air_mass` is on dry basis. |
 
 ## Preprocessor contract suite
 
@@ -144,14 +143,14 @@ The CS surface-emission footprint and 4D-Var stack are anchored by:
 | `test_cs_4dvar_preconditioned.jl`, `test_cs_lbfgs.jl`, `test_cs_optimizer_dispatch.jl` | Preconditioning, optimizer dispatch, and gradient identities. |
 | `test_cs_covariance.jl`, `test_cs_preconditioning.jl` | `apply_B_half!` / `apply_B_half_adjoint!` / `apply_B_half_inverse!` identities. |
 | `test_cs_observations_io.jl`, `test_cs_observation_binding.jl`, `test_cs_departures_io.jl` | Observation IO + bind-to-mesh + departures-file round-trip. |
-| `test_cs_stride_checkpoint.jl`, `test_cs_revolve_checkpoint.jl`, `test_cs_tape_mmap_roundtrip.jl` | Tape storage and checkpoint scheduler correctness. |
+| `test_cs_stride_checkpoint.jl`, `test_cs_tape_mmap_roundtrip.jl` | Tape storage and checkpoint scheduler correctness, including `RevolveCheckpoint` cases. |
 
 ## Test-pass status
 
-The `core_tests` set in `test/runtests.jl` ships ~75 test files that
-all run without external met data. The CI workflow runs the core
-suite on every push and PR. Real-data tests (gated by the `--all`
-flag) require preprocessed binaries in `~/data/AtmosTransport/`.
+The `test/runtests.jl` entry point discovers more than 100 files under
+`test/core/`; they run without external meteorology. CI runs that tier and the
+regridding tier on every push and PR. Real-data tests are opt-in via
+`--real-data` or `--all` and require locally staged inputs.
 
 Total core-suite case count is in the thousands; CI reports per-test
 pass / fail breakdown on every run.
@@ -160,5 +159,4 @@ pass / fail breakdown on every run.
 
 - [Validation status](@ref) — what we've validated end-to-end against
   external reference data, vs what's still synthetic-fixture-only.
-- [Adjoint status](@ref) — what's actually shipped vs what's
-  roadmap.
+- [Adjoint status](@ref) — the verified support boundary and remaining gaps.

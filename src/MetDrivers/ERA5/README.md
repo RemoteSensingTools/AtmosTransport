@@ -15,5 +15,5 @@ Transport binaries are read by the geometry-dispatched v4 reader assembled in
 runtime binary layouts and runtime moist-to-dry conversion are intentionally
 unsupported: preprocessing writes the current v4 dry-basis contract.
 
-See [`../../../docs/reference/BINARY_FORMAT.md`](../../../docs/reference/BINARY_FORMAT.md)
+See [`../../../docs/src/concepts/binary_format.md`](../../../docs/src/concepts/binary_format.md)
 for the canonical on-disk schema.

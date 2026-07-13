@@ -1,3 +1,6 @@
+> **Archived research note.** This dated investigation is preserved for
+> scientific provenance. Paths, run status, and implementation details may
+> have changed; use the maintained manual for current workflows.
 # Catrine Dec 2021 validation protocol
 
 Side-by-side validation of two preprocessing paths against the

@@ -1,79 +1,93 @@
 # Binary And Driver Contract
 
-## Why timing semantics matter
+This contributor note summarizes the timing boundary between preprocessing and
+runtime. The rendered user reference is [Binary format](src/concepts/binary_format.md).
 
-Meteorological sources may provide different things:
+## Why semantics are explicit
 
-- instantaneous values at time boundaries
-- interval means
-- interval-integrated transport amounts
+Meteorological products may provide endpoint values, interval means, or
+interval-integrated transport. Those quantities are not interchangeable. The
+version-4 header therefore records both source provenance and the normalized
+payload meaning; kernels never infer timing from filenames or source family.
 
-Those are not interchangeable.
+The reader rejects older format versions and missing/unknown contract fields.
+There is no compatibility fallback for an ambiguous transport product.
 
-If the runtime treats interval-integrated fields as endpoint states, the forcing
-can be wrong even when the kernel is correct.
+## Required header semantics
 
-## Current `src` stored runtime contract
+Every current binary declares:
 
-The current standalone runtime expects stored transport binaries with explicit
-semantics that match this contract:
+- `source_flux_sampling`
+- `air_mass_sampling`
+- `flux_sampling`
+- `flux_kind`
+- `delta_semantics`
+- `humidity_sampling`
+- `poisson_balance_target_scale` and its semantics
+- `steps_per_window` and `steps_per_window_by_window`
+- `time_step_schedule`
+- `poisson_balance_target_scale_by_window`
 
-- `air_mass_sampling = "window_start_endpoint"`
-- `flux_sampling = "window_constant"` for the current ERA5 lat-lon reference path
-- `flux_kind = "substep_mass_amount"`
-- `delta_semantics = "forward_window_endpoint_difference"`
-- `poisson_balance_target_scale = 1 / (2 * steps_per_window)` for the current lat-lon Poisson-balanced preprocessor
+`air_mass_sampling` is currently `window_start_endpoint`. Lat-lon and reduced
+Gaussian drivers accept normalized substep mass amounts and support
+window-start, window-mean, or window-constant fluxes according to whether
+endpoint deltas are present. Cubed-sphere forcing requires window-constant
+flux sampling and accepts substep or full-window mass amounts; the simulation
+normalizes full-window storage before operator application.
 
-The driver may still support other stored semantics explicitly, but only when
-they are validated and normalized up front. The current reference path is:
+When deltas are present, `delta_semantics` must be
+`forward_window_endpoint_difference`. Humidity is either absent or supplied as
+the pair `qv_start` / `qv_end` with `window_endpoints` semantics.
 
-- source flux provenance: `source_flux_sampling = "window_start_endpoint"`
-- stored runtime forcing: constant within the met window
-- advection kernels consume prepared substep mass amounts directly
+## Stored schedule
 
-Humidity semantics:
+The header owns the numerical advection schedule. Variable schedules carry one
+positive step count and one Poisson target scale per window. Cubed-sphere
+products with `runtime_substep_contract = "binary_schedule"` run transport at
+that cadence and run convection/chemistry once at the meteorological-window
+boundary.
 
-- `qv_start` and `qv_end` appear together with
-  `humidity_sampling = "window_endpoints"`
-- binaries without humidity use `humidity_sampling = "none"`
+Runtime may assert the stored schedule's CFL sufficiency, but it must not
+silently replace a writer-verified schedule with a new one. A failed product
+should be regenerated.
 
-## Provenance vs stored semantics
+## Provenance versus runtime meaning
 
-The binary should distinguish:
-
-- what the raw source product originally was
-- what the stored transport payload now means
-
-That is why the header should carry provenance like:
-
-- `source_flux_sampling = "window_start_endpoint"`
-- `source_flux_sampling = "window_end_endpoint"`
-- `source_flux_sampling = "window_mean"`
-- `source_flux_sampling = "interval_integrated"`
-
-But the runtime should only consume normalized stored semantics that it
-explicitly supports.
+`source_flux_sampling` describes what the raw source supplied. The other
+sampling fields describe what preprocessing wrote. For example, a source
+interval integral can be normalized into per-substep mass amounts with
+window-constant runtime sampling. Keeping both prevents source conventions
+from leaking into the operator kernels.
 
 ## Driver responsibility
 
-Drivers should:
+Drivers must:
 
-- validate header semantics early
-- refuse unsupported files
-- prepare substep forcing cleanly
-- keep fluxes constant or interpolate only when the header explicitly says so
+- validate the version, geometry, basis, schedule, section shapes, and timing
+  semantics before stepping;
+- copy/convert required mmap sections into typed host windows;
+- build topology-appropriate flux and forcing containers;
+- interpolate only when the header and delta payload explicitly permit it;
+- adapt or copy windows to the selected backend; and
+- refuse a physics recipe whose required payload sections are absent.
 
-Drivers should not:
+Drivers must not diagnose missing vertical closure, guess wet/dry conversion,
+or reinterpret unsupported source timing. Those transformations belong in
+preprocessing.
 
-- silently reinterpret ambiguous semantics
-- push timing/closure guesses down into kernels
+## Dry-air output
 
-## Dry-air output note
+When a moist-basis transport product supplies humidity endpoints, end-of-window
+dry-VMR diagnostics must use the corresponding end humidity. Reusing
+`qv_start` with the end air mass creates a sampling mismatch.
 
-For moist-basis transport that may later write dry VMR:
+## Evidence
 
-- carry `qv_start`
-- carry `qv_end`
-- use end-of-window moist mass plus `qv_end` for end-of-window dry-air output
-
-Do not reuse stale `qv_start` for output conversion.
+- Contract construction and validation:
+  `src/MetDrivers/transport_binary/contract.jl`
+- Typed header and accepted values:
+  `src/MetDrivers/transport_binary/header.jl`
+- Topology-specific runtime validation:
+  `src/MetDrivers/transport_binary/driver.jl`
+- Window/backend lifecycle:
+  `src/Models/DrivenSimulation.jl`

@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 # ---------------------------------------------------------------------------
-# test_binary_path_expander.jl — plan 40 Commit 4
+# test_binary_path_expander.jl
 #
 # Verifies the two accepted `[input]` TOML shapes for resolving transport
 # binary paths: the existing explicit `binary_paths = [...]` list (Shape A)
@@ -31,7 +31,7 @@ function _touch_binary_set(dir::AbstractString, dates; prefix = "era5_", suffix 
     return paths
 end
 
-@testset "plan 40 Commit 4 — expand_binary_paths" begin
+@testset "expand_binary_paths" begin
 
     @testset "Shape A: explicit list is returned verbatim" begin
         cfg = Dict("binary_paths" => [
@@ -49,24 +49,13 @@ end
     end
 
     @testset "Shape A: data-root expansion" begin
-        withenv("ATMOSTRANSPORT_DATA_ROOT" => "/tmp/atmos_root",
-                "ATMOSTRANSPORT_DATA_ROOT_quickstart" => "/tmp/atmos_quickstart") do
+        withenv("ATMOSTRANSPORT_DATA_ROOT" => "/tmp/atmos_root") do
             @test expand_data_path(raw"$ATMOSTRANSPORT_DATA_ROOT/met/a.bin") ==
                   "/tmp/atmos_root/met/a.bin"
             @test expand_data_path(raw"${ATMOSTRANSPORT_DATA_ROOT}/met/a.bin") ==
                   "/tmp/atmos_root/met/a.bin"
-            @test expand_data_path(raw"$ATMOSTRANSPORT_DATA_ROOT_quickstart/met/a.bin") ==
-                  "/tmp/atmos_quickstart/met/a.bin"
             cfg = Dict("binary_paths" => [raw"$ATMOSTRANSPORT_DATA_ROOT/met/a.bin"])
             @test expand_binary_paths(cfg) == ["/tmp/atmos_root/met/a.bin"]
-        end
-    end
-
-    @testset "quickstart data root has an independent fallback" begin
-        withenv("ATMOSTRANSPORT_DATA_ROOT" => "/tmp/atmos_root",
-                "ATMOSTRANSPORT_DATA_ROOT_quickstart" => nothing) do
-            @test expand_data_path(raw"$ATMOSTRANSPORT_DATA_ROOT_quickstart/met") ==
-                  expanduser("~/data/AtmosTransport_quickstart/met")
         end
     end
 

@@ -1,3 +1,6 @@
+> **Archived research note.** This dated investigation is preserved for
+> scientific provenance. Paths, run status, and implementation details may
+> have changed; use the maintained manual for current workflows.
 # GEOS native-mass-flux SH-UTLS "fingering": diagnosis and resolution
 
 **Status (2026-06-03):** root cause established, every cm-side fix ruled out *with

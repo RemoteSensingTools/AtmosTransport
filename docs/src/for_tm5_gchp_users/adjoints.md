@@ -2,242 +2,153 @@
 CurrentModule = AtmosTransport
 ```
 
-# Adjoints on top of the binary
+# Adjoints and surface-flux inversion
 
-If you have used **TM5-4DVAR** for inverse modeling of CO₂ / CH₄ /
-SF₆, or the **GIGC adjoint** branch of GEOS-Chem for similar work,
-the goals are familiar: take a scalar objective (mismatch with
-observations), seed it at observation time, and walk backwards
-through the model to obtain a gradient against the control vector
-(typically surface emissions).
+If you have used TM5-4DVAR or the GEOS-Chem adjoint, the goal is familiar:
+run transport forward, seed a scalar observation objective, and propagate its
+sensitivity backward to surface emissions. AtmosTransport uses the same Julia
+operator implementations and accelerator backend for forward and reverse
+work; it does not maintain a separate adjoint fork.
 
-AtmosTransport's adjoint layer is built on the same forward
-mass-flux binaries described in [The binary pipeline](binary_pipeline.md).
-Nothing about the adjoint is a parallel-maintained Fortran fork; the
-reverse pass walks operator-specific kernels that mirror their
-forward counterparts and runs on the same GPU backend.
+This subsystem currently targets cubed-sphere surface-emission footprints and
+a compact 4D-Var scaffold. It is useful for method development and synthetic
+inversions. Read [Adjoint status](@ref) before planning a production campaign,
+because not every optimized forward-physics branch has a matching reverse
+operator yet.
 
-This page lays out the architecture, the present capability surface,
-and the gap to a full 4D-Var driver.
+## Try the shipped inversion first
 
-## What works today
+The repository contains a tiny, self-contained inversion with synthetic
+meteorology:
+
+```bash
+julia --project=. scripts/inversions/cs_4dvar.jl \
+    config/inversions/example_synthetic.toml
+```
+
+It builds a C3 cubed sphere, two transport steps, one layer-mean observation,
+an isotropic covariance, a linear preconditioner, and an L-BFGS solve. It
+should complete in seconds and print the initial and final cost.
+
+!!! note "Two config interfaces"
+    `scripts/run_transport.jl` reads the forward-run schema documented in
+    [TOML schema](@ref). The inversion script above reads its own
+    smaller schema. A forward config does **not** accept an `[adjoint]` block.
+    For programmatic work, call the APIs in `AtmosTransport.Adjoints` directly.
+
+The second example, `config/inversions/example_c48.toml`, is a schema sketch
+for a future real-meteorology driver. It is intentionally not runnable with
+the current synthetic-only script.
+
+## What the reverse pass computes
 
 ```mermaid
 flowchart LR
-    A[Forward palindrome step] --> B[Record op-records<br/>onto tape]
-    B --> A
-    A --> C{Last step?}
-    C -->|yes| D[Seed adjoint state<br/>from objective]
-    D --> E[Walk tape backwards]
-    E --> F[Per-op adjoint kernels:<br/>X', Y', Z', V', S']
-    F --> G[Result: dJ/dE_t<br/>at every surface step]
+    A[Forward CS transport] --> B[Record operator data]
+    B --> C[Evaluate observation objective]
+    C --> D[Seed final adjoint state]
+    D --> E[Replay records in reverse]
+    E --> F[Footprints dJ / dE at each surface step]
 ```
 
-The production entry point is
-[`cs_surface_emission_footprint`](https://github.com/cfranken/AtmosTransportModel/blob/main/src/Footprint/FootprintAPI.jl)
-on the cubed-sphere. Given a sequence of forward windows (a
-`TransportBinaryDriver`), an observation specification, and a
-scheme (today: `LinRoodPPMScheme()` is the fully-tested path), it
-returns a `CSFootprintResult` whose `footprints[t]` is `dJ/dE_t`,
-the sensitivity of the scalar objective to surface emission rate
-`E_t` (kg/s) at step `t`.
+The footprint entry point is
+`AtmosTransport.Adjoints.cs_surface_emission_footprint`. Its positional
+inputs are panel tuples for initial tracer mass and air mass, step sequences
+for the three mass-flux directions, a `CubedSphereMesh`, and an objective such
+as `CSLayerMeanObjective` or `CSColumnMeanObjective`. It returns a
+`CSFootprintResult`; `result.footprints[t]` contains the sensitivity to the
+surface-emission rate at model step `t`.
 
-Three things this gives you out of the box:
+The API accepts the following advection families:
 
-1. **Surface-emission attribution.** Given a tower or aircraft
-   observation, find the spatial pattern of upstream surface
-   emissions that contributed.
-2. **Bayesian-inverse precondition.** Use the footprint matrix as
-   the Jacobian column for a small set of basis functions and run an
-   offline analytic inversion (see
-   [`src/Inversion/Jacobian.jl`](https://github.com/cfranken/AtmosTransportModel/blob/main/src/Inversion/Jacobian.jl)).
-3. **Multi-observation gradient.** Loop over observations and
-   accumulate footprints into a single control-space gradient.
+- `UpwindScheme()`
+- `SlopesScheme(NoLimiter())`
+- `PPMScheme(NoLimiter())`
+- monotone `PPMScheme()` using recorded limiter branches
+- `LinRoodPPMScheme` with its dedicated horizontal tape
 
-A 6-hour C24 backward LinRood footprint at LA from synthetic
-meteorology ran end-to-end on 2026-05-11; the map lives at
-`artifacts/linrood_la_footprint_c24_6h.png`.
+Optional vertical diffusion and supported convection operators can be passed
+with the corresponding operator, forcing, and workspace keywords. Unsupported
+physics combinations fail validation instead of silently using an incomplete
+transpose.
 
-## Architecture
+## From footprints to 4D-Var
 
-### Forward recording
+The inversion layer composes the reverse pass rather than reimplementing it:
 
-During the forward pass, every operator that the adjoint will need
-to step through writes an **op-record** onto the tape. There are
-five record families:
+| API | Purpose |
+| --- | --- |
+| `cs_surface_emission_footprint` | One scalar objective to per-step emission sensitivities. |
+| `cs_surface_flux_jacobian` | Batch objectives and aggregate steps into named control windows. |
+| `cs_surface_flux_4dvar` | Evaluate observation/background cost and its control gradient. |
+| `cs_surface_flux_4dvar_optimize` | Optimize with `CSGradientDescent` or `CSLBFGS`. |
+| `read_observations`, `bind_to_mesh` | Read point observations and bind them to CS column objectives. |
+| `read_departures`, `write_departures` | Exchange modeled-minus-observed diagnostics. |
 
-| Record | Captured by | What it stores |
+Controls are `CSSurfaceFluxControl` values associated with
+`CSSurfaceFluxWindow`s. A `CSSurfaceFluxPreconditioner` can apply either a
+linear or log-normal transform using a diagonal or isotropic-Gaussian
+covariance. See the working assembly in `scripts/inversions/cs_4dvar.jl` and
+the exact keyword contracts in [Adjoints and checkpointing API](@ref).
+
+## Tape and checkpoint choices
+
+The forward pass records typed advection, halo, midpoint, diffusion, and
+convection operations. Lin-Rood horizontal updates use an additional dedicated
+record. The reverse loop dispatches on those record types and calls the
+matching transpose kernel.
+
+`tape_storage` controls where staged tape data lives:
+
+| Value | Use |
+| --- | --- |
+| `:device` | Default and simplest choice for short runs. |
+| `:pinned_host` | Move staged data to pinned host memory when device memory is limiting. |
+| `:mmap` | Store records under an on-disk directory for long or inspectable runs. |
+
+With `:mmap`, pass `tape_path` when the files must persist beyond the API call.
+After finalization, reopen the directory with `load_mmap_tape(path)` and read
+records with `get_record`. An interrupted, unfinalized tape is rejected.
+Lin-Rood currently supports device tape storage only.
+
+The `checkpoint` keyword controls the memory/recompute trade-off:
+
+| Policy | Stored state | Recompute behavior |
 | --- | --- | --- |
-| `_CSSweepRecord` | Each X/Y/Z half-sweep | direction, scheme, flux slice references, scale |
-| `_CSHaloRecord` | Halo exchanges between sweeps | source/target panels, edge orientations |
-| `_CSMidpointRecord` | The palindrome midpoint (V/2 → S → V/2) | links to diffusion + emission records |
-| `_CSDiffusionRecord` | Each Thomas solve | Kz, dt, boundary trait |
-| `_CSConvectionRecord` | Each convection apply | forcing fields |
-| `_CSLinRoodHorizRecord` | LinRood horizontal substeps | panel-resolved state snapshots |
+| `FullCheckpoint()` | Proportional to the number of steps. | No window replay. |
+| `StrideCheckpoint(k)` | Checkpoints every `k` steps. | Replays one `k`-step window at a time. |
+| `RevolveCheckpoint()` | Logarithmic-depth bisection snapshots. | Recursively replays subranges. |
 
-Records are appended to a `Vector{_CSAllTapeOp}`-typed tape (with
-storage backends `:device`, `:pinned_host`, `:mmap`). The forward
-loop runs at near-zero overhead: the tape append is
-type-stable and the records hold references to the existing
-workspace fields, not copies.
+`RevolveCheckpoint()` is a bisection schedule inspired by Revolve, not the
+optimal binomial Griewank-Walther schedule and not a user-specified snapshot
+budget. Use `StrideCheckpoint(k)` when bitwise parity with a full checkpoint is
+more important than minimum storage; nonlinear limiter branches can differ at
+roundoff level after recursive replay.
 
-### Checkpointing
+## How this maps to established systems
 
-A full forward replay of a 14-day C180 simulation would exhaust GPU
-memory; the tape is therefore stored at **revolve checkpoints**.
-`src/Tape/CheckpointSchedule.jl` implements the Griewank-Walther
-revolve schedule with a configurable RAM budget; you pick the
-number of checkpoints per day and the schedule chooses where to
-store full state snapshots and where to re-run forward from the
-nearest snapshot.
+| Task | TM5-4DVAR / GEOS-Chem adjoint | AtmosTransport |
+| --- | --- | --- |
+| Forward integration | Separate CTM driver | `run_driven_simulation` or the lower-level CS arrays |
+| Reverse forcing | Observation operator | `CSObservation` objectives or an explicit seed |
+| Observation IO | System-specific files | `CSObservationSet` NetCDF IO + `bind_to_mesh` |
+| Background covariance | B or B¹ᐟ² implementation | `DiagonalCSCovariance` / `IsotropicGaussianCSCovariance` |
+| Preconditioning | Hand-coded control transform | `CSSurfaceFluxPreconditioner` |
+| Optimization | M1QN3 / L-BFGS variants | `CSGradientDescent` / `CSLBFGS` |
+| Driver | Dedicated inversion executable | `scripts/inversions/cs_4dvar.jl` for the synthetic workflow |
 
-For TM5-4DVAR users: this is the same trade-off as TM5's `nsplit`
-parameter, with the same factor-of-log cost in extra forward steps.
+## Current limits
 
-### Reverse walk
+- CMFMC requires `clamp = false` in the footprint path.
+- TM5 and CMFMC-matrix convection require the full, unmerged,
+  non-collaborative solve (`use_collab_lu = false`, `lmax_conv = 0`,
+  `n_merge = 1`).
+- A tangent-linear driver is not exposed.
+- A real-data TM5-4DVAR or GCHP-adjoint cross-validation has not been
+  published.
+- The supplied TOML inversion driver supports synthetic constant meteorology;
+  real transport-binary ingestion still requires programmatic assembly.
 
-The reverse pass walks `Iterators.reverse(ops)` and dispatches on
-record type. Each adjoint kernel is the transpose of the forward
-operator's update step:
-
-```julia
-# Forward (advection x-sweep, conceptually)
-rm_new[i,j,k] = rm_old[i,j,k] - (flux_right - flux_left) * dt/m
-
-# Adjoint
-lambda_old[i,j,k] += lambda_new[i,j,k]
-flux_left_adj    += lambda_new[i,j,k] * dt/m
-flux_right_adj   -= lambda_new[i,j,k] * dt/m
-```
-
-The adjoint kernels live in:
-
-- [`src/Adjoints/AdvectionAdjoint.jl`](https://github.com/cfranken/AtmosTransportModel/blob/main/src/Adjoints/AdvectionAdjoint.jl)
-- [`src/Adjoints/DiffusionAdjoint.jl`](https://github.com/cfranken/AtmosTransportModel/blob/main/src/Adjoints/DiffusionAdjoint.jl)
-- [`src/Adjoints/ConvectionAdjoint.jl`](https://github.com/cfranken/AtmosTransportModel/blob/main/src/Adjoints/ConvectionAdjoint.jl)
-- [`src/Adjoints/HaloAdjoint.jl`](https://github.com/cfranken/AtmosTransportModel/blob/main/src/Adjoints/HaloAdjoint.jl)
-- [`src/Adjoints/LinRoodTape.jl`](https://github.com/cfranken/AtmosTransportModel/blob/main/src/Adjoints/LinRoodTape.jl)
-
-Each adjoint kernel is a `KernelAbstractions.@kernel` and runs on
-the same backend (CPU/CUDA/Metal) as the forward pass. The reverse
-walk is type-stable end-to-end (after a recent typed-tape cleanup);
-this is the single highest-leverage performance investment in the
-adjoint layer.
-
-## Tape storage backends
-
-```mermaid
-flowchart TD
-    subgraph Device[':device' — fastest]
-        D1[Tape lives in GPU memory] --> D2[OK for short runs<br/>or aggressive checkpointing]
-    end
-    subgraph PinnedHost[':pinned_host' — production default]
-        P1[Tape lives in CUDA-pinned host RAM] --> P2[Async copy from device<br/>during forward]
-        P2 --> P3[Async read during reverse]
-    end
-    subgraph Mmap[':mmap' — long runs]
-        M1[Tape lives in mmap'd file] --> M2[Survives process crash;<br/>can be inspected post-hoc]
-    end
-```
-
-The default for production GPU runs is `:pinned_host`. CUDA-pinned
-allocation enables overlap between the forward kernels and the
-device-to-host copy of the tape records; for a 14-day C180 run, the
-forward overhead of recording is single-digit percent.
-
-For very long runs, `:mmap` stores the tape on disk; this is the
-only storage that survives a crash and supports post-hoc inspection
-with `scripts/diagnostics/inspect_tape.jl`.
-
-## Mapping to TM5-4DVAR / GIGC adjoint workflows
-
-| Task | TM5-4DVAR | GIGC adjoint | AtmosTransport |
-| --- | --- | --- | --- |
-| Forward integration | TM5 CTM | GEOS-Chem | `run_driven_simulation` |
-| Tangent linear | Hand-coded | Hand-coded | Not currently exposed |
-| Adjoint forcing | TM5 obs operator | gchem_adj | `bind_to_mesh` + observation IO |
-| Observation IO | Specific files per inst | NetCDF | `src/Inversion/ObservationsIO.jl` |
-| Covariance B^{1/2} | Diagonal + horizontal correlation | Shipped | `src/Inversion/Covariance.jl` |
-| Preconditioning | Hand-coded | Hand-coded | `src/Inversion/Preconditioning.jl` |
-| Optimizer | M1QN3 (L-BFGS-B variant) | L-BFGS-B | Pluggable `AbstractCSOptimizer` |
-| Driver | tm5-4dvar.x | gchem_4dvar | Prototype driver under `scripts/inversions/` |
-
-What's **shipped** today:
-
-- Tape + checkpoint + revolve schedule.
-- Public footprint API (`cs_surface_emission_footprint`).
-- Observation IO and departures IO.
-- `bind_to_mesh` for observation co-location.
-- Covariance B^{1/2} construction.
-- Preconditioning and 4D-Var cost/gradient assembly.
-- Pluggable optimizer dispatch.
-
-What's **next**:
-
-- Hardening the TOML-facing inversion driver.
-- Publishing a real-data TM5-4DVAR cross-validation.
-- Completing the remaining physics-adjoint gaps listed below.
-
-## Practical knobs
-
-```toml
-[adjoint]
-enabled = true                 # set false for a forward-only run
-tape_storage = "pinned_host"   # or "device" / "mmap"
-checkpoint_count_per_day = 4   # revolve checkpoints per day
-scheme_override = "linrood7"   # adjoint-tested CS scheme
-
-[adjoint.objective]
-kind = "site_concentration"
-site = "MLO"
-time_utc = "2021-12-05T12:00:00"
-```
-
-The TOML schema for the adjoint side is still **experimental** — see
-the [Validation status](../theory/validation_status.md) for the
-specific scheme/topology combinations that have a passing
-adjoint-identity test.
-
-## Remaining adjoint limitations
-
-The remaining limitations in the reverse path are:
-
-- **`copy_corners` reverse** is the named gap for the cubed-sphere
-  halo-corner exchange.
-- **Optimized/clamped convection variants** are not adjointed: CMFMC requires
-  `clamp = false`, while TM5 and CMFMC-matrix require
-  `use_collab_lu = false`, `lmax_conv = 0`, and `n_merge = 1`. The public
-  footprint API rejects other variants instead of silently using a mismatched
-  transpose.
-
-The CS footprint reverse pass supports the TM5, CMFMC, and CMFMC-matrix
-convection operators under those default settings. CMFMC and CMFMC-matrix
-have direct column adjoint-identity coverage; TM5 and CMFMC end-to-end
-emission gradients are finite-difference tested.
-
-If you need a feature on this list for a campaign, open an issue;
-priority follows campaign demand.
-
-## Performance properties
-
-For a 14-day C180 run with `:pinned_host` storage and 4 checkpoints
-per day:
-
-- **Forward overhead from recording:** 3–8 % on top of the
-  no-record forward run, dominated by the CUDA pinned-host async
-  copy.
-- **Reverse pass wall clock:** 2.5–3 × the forward wall clock
-  (consistent with the Griewank-Walther asymptotic).
-- **Memory:** 4 checkpoints × C180 full state ≈ 6 GB on the host.
-  The tape itself is ~1–2 GB depending on scheme.
-
-These numbers are competitive with TM5-4DVAR on equivalent
-resolution and substantially faster than GIGC-adjoint
-(GIGC-adjoint runs are CPU-only).
-
-## Reading next
-
-- For the kernel architecture details that make the adjoint pass
-  fast on GPU, see [Kernel architecture](kernel_architecture.md).
-- For the current implementation status, see
-  [Adjoint status](../theory/adjoint_status.md).
+For the test-by-test support matrix and the distinction between verified
+kernels and externally validated workflows, continue with
+[Adjoint status](@ref) and [Validation status](@ref).

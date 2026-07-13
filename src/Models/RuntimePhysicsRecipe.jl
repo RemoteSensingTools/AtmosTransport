@@ -178,6 +178,23 @@ function validate_runtime_advection(::AbstractStructuredRuntimeRecipeStyle,
         "LinRoodPPMScheme is only supported on cubed-sphere runtimes."))
 end
 
+function validate_runtime_advection(::ReducedGaussianRuntimeRecipeStyle,
+                                    scheme::Union{SlopesScheme, PPMScheme},
+                                    _context)
+    throw(ArgumentError(
+        "$(nameof(typeof(scheme))) is not implemented for reduced-Gaussian runs; " *
+        "use UpwindScheme or NoAdvection."))
+end
+
+function validate_runtime_diffusion(::ReducedGaussianRuntimeRecipeStyle,
+                                    op::ImplicitVerticalDiffusion,
+                                    _context)
+    uses_diffusive_surface_flux_boundary(op) || return nothing
+    throw(ArgumentError(
+        "DiffusiveSurfaceFluxBoundary is not implemented for reduced-Gaussian runs; " *
+        "use SplitSurfaceFluxCoupling."))
+end
+
 @inline _runtime_has_tm5_convection(_context) = false
 @inline _runtime_has_cmfmc(_context) = false
 @inline _runtime_has_tm5_convection(reader::TransportBinaryReader) = MetDrivers.has_tm5_convection(reader)
@@ -213,21 +230,22 @@ function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
             "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" requires " *
             "pblh/ustar/pbl_hflux/t2m and vdiff_u/vdiff_v/vdiff_t/vdiff_qv " *
             "sections in every cubed-sphere transport binary."))
-    # GCHP parity requires emissions to be applied as a boundary condition
-    # inside the same diffusive solve (see vdiff_mod.F90:679, gchp_chunk_mod.F90:1296).
-    # Our default `SplitSurfaceFluxCoupling` does V(dt/2) → S(dt) → V(dt/2)
-    # Strang, which is a valid integration but does NOT match GCHP. Warn at
-    # config-load time so users picking this Kz field for GCHP parity know
-    # to flip `surface_flux_boundary = true` (or equivalent recipe knob).
+    # The supported GCHP-style placement adds emissions before one full
+    # diffusion solve: S(dt) → V(dt). The historical policy name
+    # `DiffusiveSurfaceFluxBoundary` describes that ordering; it does not add
+    # a Neumann source term to the Thomas system. The default split policy is
+    # V(dt/2) → S(dt) → V(dt/2), so warn when a GCHP-oriented Kz field is used
+    # with the other ordering.
     if !(op.surface_flux_coupling isa DiffusiveSurfaceFluxBoundary)
         @warn """
         [diffusion] kind = "geoschem_holtslag_boville_vdiff" was selected but
         the surface-flux coupling is $(typeof(op.surface_flux_coupling)).
-        For GCHP VDIFF parity, surface emissions must be applied as a boundary
-        condition inside the diffusion solve (reference: vdiff_mod.F90:679,
-        gchp_chunk_mod.F90:1296). Switch to `DiffusiveSurfaceFluxBoundary`
-        (set `surface_flux_boundary = true` in the recipe) for GCHP-equivalent
-        behavior. See memory/diffusion_full_pipeline_audit_2026_05_25.md (D3).
+        For GCHP-style VDIFF placement, surface emissions must be added before
+        one full diffusion solve: S(dt) -> V(dt). Set
+        `surface_flux_boundary = true` to select that ordering. Despite its
+        historical `DiffusiveSurfaceFluxBoundary` name, this policy does not
+        insert a literal boundary term into the tridiagonal system. Exact
+        discrete GCHP VDIFF parity remains to be validated end to end.
         """
     end
     return nothing

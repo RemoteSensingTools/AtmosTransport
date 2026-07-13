@@ -10,7 +10,7 @@ in reconstruction order, monotonicity, and panel-edge handling.
 |---|---|---|---|---|---|---|
 | `UpwindScheme` | 1st order (donor cell) | yes (trivially) | yes (trivially) | yes | yes | **yes — RG's only option today** |
 | `SlopesScheme{L}` | 2nd order in smooth regions (van Leer / Russell-Lerner) | yes if `L = MonotoneLimiter` (default) | only with `L = PositivityLimiter`, and even then only weakly (see [Limiters](@ref Limiters) below) | yes | yes | no (the face-indexed Strang path restricts to `AbstractConstantScheme`) |
-| `PPMScheme{L}` | 3rd order in smooth regions (Colella-Woodward 1984) | yes with `MonotoneLimiter`, may oscillate without | as `Slopes` | yes | yes — covered by `test/test_cubed_sphere_advection.jl` | no (same rejection) |
+| `PPMScheme{L}` | 3rd order in smooth regions (Colella-Woodward 1984) | yes with `MonotoneLimiter`, may oscillate without | as `Slopes` | yes | yes — covered by `test/core/test_cubed_sphere_advection.jl` | no (same rejection) |
 | `LinRoodPPMScheme{ORD}` | piecewise-parabolic; `ORD ∈ {5, 7}` selects the boundary stencil | yes (FV3 piecewise-parabolic limiter) | yes | n/a | yes — uses FV3 cross-term advection (`fv_tp_2d_cs!`) | n/a |
 
 The "order" column reports the spatial accuracy of the **per-face
@@ -76,7 +76,7 @@ The face flux is the integral of this parabola over the swept region
   limiter PPM is **not monotone** and can produce small oscillations
   near discontinuities.
 - Shipped on lat-lon AND cubed-sphere structured layouts (the CS
-  case is exercised by `test/test_cubed_sphere_advection.jl`).
+  case is exercised by `test/core/test_cubed_sphere_advection.jl`).
   Face-connected PPM for the **reduced-Gaussian** topology is not
   currently wired — and neither is `SlopesScheme` on RG. The
   face-indexed Strang path restricts to `AbstractConstantScheme`, so
@@ -198,12 +198,12 @@ do not commute with advection at the per-substep level.
 
 ## Panel-edge halo treatment (cubed sphere)
 
-`PanelConnectivity` (`src/Grids/PanelConnectivity.jl:55-96`) carries a
+`PanelConnectivity` (`src/Grids/PanelConnectivity.jl`) carries a
 table of panel-edge mappings: for each panel `p` and each edge `e ∈
 {west, east, south, north}`, what is the neighbour panel and what's the
 edge orientation (`0 = aligned`, `2 = reversed`)? The default
-connectivity (lines 82-96) hard-codes the GEOS-FP / GEOS-IT 6-panel
-arrangement. The gnomonic alternative is in lines 118-132.
+connectivity methods encode the GEOS-FP / GEOS-IT 6-panel arrangement and its
+gnomonic alternative.
 
 At the start of each X / Y sweep on the cubed sphere, the runtime
 `_propagate_cs_outflow_to_halo!` walks the connectivity table and
@@ -217,7 +217,7 @@ boundaries.
 Adjacent rings on a reduced-Gaussian grid have different cell counts
 (`nlon[j+1] ≠ nlon[j]`), so the boundary between them cannot be
 covered by a one-to-one face mapping. `_boundary_counts(nlon_per_ring)`
-in `src/Grids/ReducedGaussianMesh.jl:121-130` segments each ring-pair
+in `src/Grids/ReducedGaussianMesh.jl` segments each ring-pair
 boundary into `lcm(nlon[j], nlon[j+1])` mini-faces — every cell on
 ring `j` contributes `lcm/nlon[j]` mini-faces, and every cell on ring
 `j+1` receives `lcm/nlon[j+1]` mini-faces. Mass-flux pairing is then
@@ -225,7 +225,7 @@ exact and the telescoping argument holds across the whole grid.
 
 The cost is a higher face count than the cell count would suggest:
 adjacent rings with `nlon = 108, 112` produce `lcm = 3024` mini-faces
-between them. Performance-tuning notes are inline at line 118.
+between them. Performance-tuning notes live beside the implementation.
 
 ## Where the schemes meet the code
 

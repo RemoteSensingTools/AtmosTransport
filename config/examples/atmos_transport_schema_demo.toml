@@ -13,7 +13,7 @@
 # Paths are illustrative; replace them with local inputs before running.
 
 [input]
-folder = "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/"
+folder = "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v4_tropo34_dec2021_f64/"
 start_date = "2021-12-02"
 end_date = "2021-12-03"
 

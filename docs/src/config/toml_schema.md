@@ -79,7 +79,7 @@ backend = "auto"              # default: "auto" if use_gpu else "cpu"
 
 | `backend` | Effect |
 |---|---|
-| `"cpu"` | CPU only. **Conflicts with `use_gpu = true` and errors at config-load time** (see `src/Architectures.jl:120-121`). |
+| `"cpu"` | CPU only. **Conflicts with `use_gpu = true` and errors at config-load time** (see `src/Architectures.jl`). |
 | `"cuda"` | NVIDIA CUDA via `CUDA.jl` (must be installed). |
 | `"metal"` | Apple Silicon Metal via `Metal.jl`. F32 only. |
 | `"auto"` | Auto-detects an available GPU backend (CUDA → Metal); errors if none is available. |
@@ -113,8 +113,7 @@ air_mass_reset_mode = "preserve_tracer_mass"
 `stop_window` is the inclusive last window; setting it lets you
 run a partial day for smoke tests. `air_mass_reset_mode` is one of
 `"none"`, `"preserve_vmr"`, or `"preserve_tracer_mass"`. Advection belongs
-in `[advection]`; the legacy `[run].scheme` spelling is accepted only when an
-`[advection]` table is absent.
+in the separate `[advection]` table.
 
 ### `[tracers.<name>]` — per-tracer setup
 
@@ -194,7 +193,7 @@ replay the first day's slices — the cause of the historical co2_natural
 ### `[advection]`, `[diffusion]`, `[convection]`, `[chemistry]`
 
 Each operator has a selector and per-kind options. See
-[Operators](@ref) and [Advection schemes](@ref) for what each
+[Operators](@ref Operator-concepts) and [Advection schemes](@ref) for what each
 selector means; relevant config keys:
 
 ```toml
@@ -212,7 +211,8 @@ kind  = "constant"              # "none" | "constant" |
                                 #   interface exchange — requires a
                                 #   binary built with include_tm5_diffusion=true)
 value = 1.0                     # m²/s — broadcast Kz when kind="constant"
-surface_flux_boundary = false   # true: S(dt)->V(dt); false: V/2->S->V/2
+surface_flux_boundary = false   # LL/CS: true selects S(dt)->V(dt).
+                                # false selects V/2->S->V/2; RG requires false.
 
 [convection]
 kind = "cmfmc"                  # "none" | "cmfmc" | "cmfmc_matrix" | "tm5"
@@ -242,9 +242,13 @@ kind = "decay"                  # currently only first-order decay
   rn222 = 330350.4              # per-tracer half-lives (seconds)
 ```
 
-The runtime **rejects** at load time any operator selection that
-the binary doesn't support (e.g. `convection.kind = "cmfmc"`
-against a binary lacking `:cmfmc` payload). See
+Topology checks happen while the runtime recipe is built: reduced-Gaussian
+runs accept `upwind` or `none` advection and require midpoint surface-flux
+splitting, while Lin-Rood and the binary-derived PBL closures are cubed-sphere
+only. The runtime also rejects operator selections that the loaded binary does
+not support (for example, `convection.kind = "cmfmc"` against a binary lacking
+`:cmfmc` payload). These checks run before model allocation or the first
+transport step. See
 [Binary format](@ref Binary-format) for the capability surface.
 
 ### `[output]` — snapshots
@@ -262,9 +266,9 @@ shuffle       = true           # shuffle filter; only effective when deflate>0
 `split = "single"` writes one file after the run. `split = "daily"` writes
 one complete file per daily binary; use `{date}` or `{YYYYMMDD}` in `path`
 for an explicit filename template, otherwise the date is inserted before the
-suffix. Legacy `snapshot_file`, `snapshot_hours`, and
-`snapshot_interval_hours` are still accepted. See [Output schema](@ref) for
-the per-topology variable list the file actually contains.
+suffix. Use the current `path`, `hours`, and `cadence_*` keys shown above. See
+[Output schema](@ref) for the per-topology variable list the file actually
+contains.
 
 `format = "binary_mmap"` writes fast self-describing per-day **ATMSNAP** binary
 files inline (skipping the NetCDF/HDF5 encode in the GPU run), to be converted
@@ -325,12 +329,12 @@ The preprocessing config has a different shape from the run config:
 the **target topology IS specified here** because that's the act of
 producing a binary for that topology.
 
-### `[input]` (legacy spectral) or `[source]` (native)
+### `[input]` (spectral source) or `[source]` (native source)
 
 The preprocessor source-axis dispatch reads either:
 
 ```toml
-# ERA5 spectral (legacy path)
+# ERA5 spectral source
 [input]
 spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
 thermo_dir   = "~/data/AtmosTransport/met/era5/0.5x0.5/physics"
@@ -338,7 +342,7 @@ coefficients = "config/era5_L137_coefficients.toml"
 ```
 
 ```toml
-# GEOS-IT native (current path)
+# GEOS-IT native source
 [source]
 toml     = "config/met_sources/geosit.toml"     # source descriptor
 root_dir = "~/data/AtmosTransport/met/geosit/C180/raw_catrine"
@@ -404,13 +408,13 @@ The numerics block has **different keys** on the spectral and native
 paths:
 
 ```toml
-# Spectral (legacy ERA5) preprocessing
+# ERA5 spectral preprocessing
 [numerics]
 float_type   = "Float32"     # "Float32" or "Float64"
 dt           = 900.0         # advection sub-step (s)
 met_interval = 3600.0        # window cadence (s); 1 hour for ERA5
 cs_balance_tol = 1e-14       # CS Poisson balance tolerance
-cs_balance_project_every = 50 # CS PCG mean-zero projection cadence; 1 = legacy
+cs_balance_project_every = 50 # CS PCG mean-zero projection cadence; 1 = every iteration
 ```
 
 ```toml
@@ -463,6 +467,7 @@ it drift by tens of Pa per window.
 
 - [Output schema](@ref) — what the snapshot NetCDF actually contains
   per topology.
-- [Data sources](@ref) — ERA5 / GEOS access, credentials, recommended
-  local layout, and the quickstart bundle.
-- [First run](@ref) — the smallest end-to-end invocation pattern.
+- [Data sources](@ref) — ERA5 / GEOS access, credentials, and recommended
+  local layout.
+- [Run with real meteorology](@ref) — move from the synthetic tutorial to
+  preprocessed forcing.

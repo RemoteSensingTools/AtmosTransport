@@ -1,4 +1,4 @@
-# Preprocessing overview
+# [Preprocessing overview](@id Preprocessing-overview)
 
 The preprocessor turns **raw meteorological input** (ERA5 spectral GRIB,
 GEOS-IT / GEOS-FP native NetCDF, …) into the **transport binary**
@@ -6,15 +6,11 @@ GEOS-IT / GEOS-FP native NetCDF, …) into the **transport binary**
 day per (source, target) combination; the runtime then memory-maps the
 result.
 
-!!! tip "Preprocessing is time-intensive — and that's the point"
-    A single day of GEOS-IT C180 → CS C180 preprocessing takes a few
-    minutes on a current workstation; a global ERA5 spectral day at
-    LL 720×361 takes longer. This is intentional. The preprocessor
-    does the expensive work once: spectral synthesis, vertical level
-    merging, conservative regridding, mass-fix, Poisson balance,
-    write-time replay-gate verification. The resulting binary is a
-    flat, self-describing, memory-map-friendly file with fixed-stride
-    per-window I/O so the runtime can stream a window in microseconds.
+!!! tip "Preprocessing is the expensive stage"
+    Spectral synthesis, vertical transforms, regridding, mass balancing, and
+    replay verification happen once before a run. Runtime then reads a flat,
+    self-describing file with fixed-stride windows. Measure a representative
+    day on the intended storage and thread count before estimating a campaign.
 
 ## One unified driver, three dispatch axes
 
@@ -40,9 +36,9 @@ with a typed contract surface from
 | `AbstractBinaryWriter{G, FT, Basis}` | On-disk schema for that target + basis |
 | `PreprocessorRunCache` | Run-level cache for regridders, compressed Laplacians, etc. |
 
-The `G` type parameter pins topology at compile time; the `Basis`
-parameter pins the writer's on-disk label to the runtime's mass basis.
-Mismatches are a `MethodError` at write time, not a silent data error.
+The `G` type parameter pins topology at compile time; the `Basis` parameter
+pins the writer's on-disk label to the runtime's mass basis. Constructor and
+writer validations reject incompatible combinations before promotion.
 
 ```mermaid
 flowchart LR

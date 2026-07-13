@@ -30,47 +30,51 @@ DocMeta.setdocmeta!(AtmosTransport, :DocTestSetup, :(using AtmosTransport);
 
 const PAGES = [
     "Home" => "index.md",
-    "Getting Started" => [
+    "Start Here" => [
         "getting_started/installation.md",
+        "getting_started/julia_basics.md",
         "getting_started/quickstart.md",
         "getting_started/first_run.md",
         "getting_started/inspecting_output.md",
     ],
-    "For TM5 & GCHP users" => [
+    "User Guide" => [
+        "concepts/architecture.md",
+        "concepts/grids.md",
+        "concepts/state_and_basis.md",
+        "concepts/operators.md",
+        "concepts/binary_format.md",
+    ],
+    "Workflows" => [
+        "Configuration and runtime" => [
+            "config/toml_schema.md",
+            "config/output_schema.md",
+            "config/data_sources.md",
+        ],
+        "Meteorology preprocessing" => [
+            "preprocessing/overview.md",
+            "preprocessing/unified_binary_generation.md",
+            "preprocessing/spectral_era5.md",
+            "preprocessing/geos_native_cs.md",
+            "preprocessing/regridding.md",
+            "preprocessing/conventions.md",
+        ],
+    ],
+    "Examples" => [
+        "tutorials/_generated/synthetic_latlon.md",
+    ],
+    "For TM5 & GCHP Users" => [
         "for_tm5_gchp_users/philosophy.md",
         "for_tm5_gchp_users/binary_pipeline.md",
         "for_tm5_gchp_users/operators_on_binaries.md",
         "for_tm5_gchp_users/adjoints.md",
         "for_tm5_gchp_users/kernel_architecture.md",
     ],
-    "Concepts" => [
-        "concepts/grids.md",
-        "concepts/state_and_basis.md",
-        "concepts/operators.md",
-        "concepts/binary_format.md",
-    ],
-    "Tutorials" => [
-        "tutorials/_generated/synthetic_latlon.md",
-    ],
-    "Preprocessing" => [
-        "preprocessing/overview.md",
-        "preprocessing/unified_binary_generation.md",
-        "preprocessing/spectral_era5.md",
-        "preprocessing/geos_native_cs.md",
-        "preprocessing/regridding.md",
-        "preprocessing/conventions.md",
-    ],
-    "Theory & Verification" => [
+    "Theory & Validation" => [
         "theory/mass_conservation.md",
         "theory/advection_schemes.md",
         "theory/conservation_budgets.md",
         "theory/validation_status.md",
         "theory/adjoint_status.md",
-    ],
-    "Configuration & Runtime" => [
-        "config/toml_schema.md",
-        "config/output_schema.md",
-        "config/data_sources.md",
     ],
     "API Reference" => [
         "api/public_api.md",

@@ -46,5 +46,5 @@ contributor is auditing past decisions.
   Single-session debug workflow for cubed-sphere vertical remap.
 - **[CS_TRANSPORT_TRACE.md](CS_TRANSPORT_TRACE.md)** and
   **[ERA5_LL_TRANSPORT_TRACE.md](ERA5_LL_TRANSPORT_TRACE.md)**
-  Algorithm traces from early debugging; now codified in
-  `docs/reference/`.
+  Algorithm traces from early debugging; current behavior is documented under
+  `docs/src/`.

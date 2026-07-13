@@ -95,11 +95,8 @@ explicit-`dm` continuity equation to floating-point tolerance — the
 **write-time replay gate** then verifies it before the binary file is
 committed to disk.
 
-A separate FV3-style pressure-fixer `cm` diagnostic
-(`compute_cs_cm_pressure_fixer!`) still exists in
-`src/Preprocessing/cs_transport_helpers.jl` but is **not** used by the
-production GEOS-CS path; it is preserved for legacy regrid pathways and
-research comparison.
+The production GEOS-CS path does not use the separate FV3-style pressure-fixer
+`cm` diagnostic; it closes against the raw dry endpoint described above.
 
 ## Replay-gate tolerance
 
@@ -125,10 +122,10 @@ relaxed to `1e-4` to absorb the per-window accumulation).
 
 The gate fires twice in the lifecycle of a binary:
 
-1. **Write-time** (always on, in the preprocessor). A binary that fails
+1. **Write-time** (on by default, in the preprocessor). A binary that fails
    is rejected at write time — the preprocessor errors out rather than
-   producing a known-bad file. The binary committed to disk is, by
-   construction, replay-clean.
+   producing a known-bad file. `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` is an explicit
+   diagnostic escape hatch; do not use it for production binaries.
 2. **Load-time** (opt-in, in the runtime). Set
    `ATMOSTR_REPLAY_CHECK=1` in the environment (no TOML key today;
    the load-time gate is a driver kwarg or env-var setting). Off by
@@ -184,7 +181,6 @@ well before any windows actually step.
 | Substep positivity gates | `src/Preprocessing/transport_binary/{cubed_sphere_contracts.jl, latlon_contracts.jl, reduced_gaussian_contracts.jl}` |
 | Dry-basis correction | `src/Preprocessing/mass_support.jl::apply_dry_basis_native!` |
 | Basis-mismatch enforcement | `src/Models/DrivenSimulation.jl` (construction) |
-| Legacy FV3 pressure-fixer `cm` (not on production path) | `src/Preprocessing/cs_transport_helpers.jl::compute_cs_cm_pressure_fixer!` |
 
 ## What's next
 

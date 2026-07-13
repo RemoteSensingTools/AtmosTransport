@@ -23,8 +23,8 @@ separate where their storage and numerical kernels genuinely differ.
 - [`TransportModel.step!`](../Models/TransportModel.jl) currently runs:
   - transport block: advection, with diffusion and surface flux embedded
     at the Strang midpoint
-  - convection block (plan 22D), executed when the model carries a
-    non-`NoConvection` operator
+  - convection block, executed when the model carries a non-`NoConvection`
+    operator
   - chemistry block
 
 ## Topology Coverage

@@ -6,9 +6,10 @@ Surface emission operators.
 Ships the data types and helpers needed to apply per-tracer surface
 sources to a `CellState`:
 
-- `SurfaceFluxSource{RateT}` — single-tracer source + rate
-  array (kg/s per cell), also available from the top-level
-  `AtmosTransport` module.
+- `SurfaceFluxSource{RateT}` — single-tracer source plus a rate array in
+  model-storage units per second per cell, also available from the top-level
+  `AtmosTransport` module. Physical inventories in kg species/s are converted
+  to these units by the runtime's basis-aware input builders.
 - `PerTracerFluxMap{S}` — NTuple-backed map of
   `SurfaceFluxSource`s, keyed by `tracer_name`. Ships with the
   `flux_for(map, :name)` lookup helper. Storage-bits-stable on GPU.

@@ -13,9 +13,10 @@
 #     drop it, move to the previous window. Peak in-memory ops × K instead
 #     of × nsteps; peak window-tape disk ~ K × per-step panel bytes.
 #
-# `RevolveCheckpoint` (Griewank-Walther binomial schedule) is reserved for
-# a follow-up commit — its recursive replay structure deserves its own
-# round of FD-identity tests.
+#   * `RevolveCheckpoint()` — recursively bisect the step range. Peak snapshot
+#     storage is logarithmic in the number of steps; replay work is
+#     O(nsteps log nsteps). This is a bisection schedule, not optimal binomial
+#     Revolve.
 # ---------------------------------------------------------------------------
 
 abstract type AbstractCheckpointSchedule end

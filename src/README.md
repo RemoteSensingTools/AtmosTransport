@@ -1,6 +1,6 @@
 # src
 
-Primary source tree for AtmosTransportModel.
+Primary source tree for AtmosTransport.jl.
 
 This is the runtime code, not just utilities. If you are trying to
 understand how a transport step is assembled end to end, start here.
@@ -11,7 +11,7 @@ At a high level, the live path is:
 
 1. [`MetDrivers/README.md`](MetDrivers/README.md) loads or prepares a
    transport window and its grid
-2. [`State/README.md`](State/README.md) holds air mass, tracer mass, and
+2. [`State/README.md`](State/README.md) holds air mass, conservative tracer storage, and
    face-flux storage in topology-appropriate containers
 3. [`Models/README.md`](Models/README.md) composes state, grid, drivers,
    and operators into a runnable model/simulation
@@ -39,9 +39,18 @@ Geometry and topology decisions come from
   derived diagnostics for LL, RG, and CS runs
 - `Parameters/` — physical constants and planetary parameters
 - `Architectures.jl` — unified CPU/vendor-specific GPU execution policies
+- `Quantities/` — intensive/extensive/vector/flux traits used by regridding
+- `Diagnostics/` — lightweight runtime instrumentation
 - `Regridding/` — conservative regridding and weight application
 - `Preprocessing/` — transport-binary and met-data preparation
 - `Downloads/` — data acquisition helpers
+- `Visualization/` — topology-aware snapshot views and optional Makie methods
+- `Tape/` — checkpoint schedules and device/pinned-host/mmap tape storage
+- `Adjoints/` — reverse operators and objective seeding
+- `Footprint/` — forward-record/reverse-loop footprint workflows included by
+  `Adjoints`
+- `Inversion/` — observations, covariance, costs, and optimizers included by
+  `Adjoints`
 
 ## Read This First For Common Goals
 
@@ -54,7 +63,8 @@ Geometry and topology decisions come from
 - "I need to trace data from disk to runtime":
   start with [`MetDrivers/README.md`](MetDrivers/README.md)
 - "I need to understand runtime NetCDF output":
-  start with [`../docs/reference/OUTPUT.md`](../docs/reference/OUTPUT.md)
+  start with
+  [`../docs/src/getting_started/inspecting_output.md`](../docs/src/getting_started/inspecting_output.md)
 - "I need to add a new operator input field":
   start with [`State/Fields/README.md`](State/Fields/README.md)
 

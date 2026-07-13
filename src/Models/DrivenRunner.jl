@@ -383,8 +383,8 @@ _advection_label(::UpwindScheme) = "Upwind"
 
 _diffusion_label(op) = String(nameof(typeof(op)))
 function _diffusion_label(op::ImplicitVerticalDiffusion)
-    coupling = uses_diffusive_surface_flux_boundary(op) ? ", surface_flux=boundary" :
-               ", surface_flux=split"
+    coupling = uses_diffusive_surface_flux_boundary(op) ? ", surface_flux=before_full_solve" :
+               ", surface_flux=midpoint_split"
     return string(nameof(typeof(op)), coupling)
 end
 
@@ -1102,13 +1102,13 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
         rm0 = Float64(tracer_masses0[name])
         rm1 = Float64(total_mass(model.state, name))
         if name in source_tracers
-            @info @sprintf("Final tracer mass for %s (with source): %.12e kg",
+            @info @sprintf("Final model storage for %s (with source): %.12e carrier-air kg",
                            String(name), rm1)
         elseif abs(rm0) > eps(Float64)
-            @info @sprintf("Final tracer-mass drift for %s:         %.3e",
+            @info @sprintf("Final tracer-storage drift for %s:      %.3e",
                            String(name), (rm1 - rm0) / rm0)
         else
-            @info @sprintf("Final tracer mass for %s:               %.12e kg",
+            @info @sprintf("Final model storage for %s:             %.12e carrier-air kg",
                            String(name), rm1)
         end
     end

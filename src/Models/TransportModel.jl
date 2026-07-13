@@ -382,8 +382,10 @@ end
     transport_step!(model::TransportModel, dt; meteo = nothing)
 
 Advance `model.state` by one transport step: advection with
-vertical diffusion at the palindrome center, surface emissions
-wrapped by the two V half-steps when active.
+vertical diffusion at the palindrome center and surface emissions.
+The diffusion operator's coupling policy selects either
+`V(dt/2) -> S(dt) -> V(dt/2)` or `S(dt) -> V(dt)` when both diffusion
+and a surface source are active.
 
 Binary-scheduled driven runs use this block at the per-window
 advection substep cadence stored in the transport binary. Convection

@@ -2,7 +2,7 @@
 CurrentModule = AtmosTransport
 ```
 
-# Philosophy
+# [Design philosophy](@id Design-philosophy)
 
 AtmosTransport sits in the same family as **TM5-4DVAR** and the
 **GEOS-Chem High Performance / GCHP CTM** lineage: an *offline*
@@ -50,10 +50,10 @@ flowchart LR
 | Met-data ingestion | tm5-meteo boundary archive | MAPL ExtData NetCDF connectors | One daily binary per day |
 | Advection core | Russell-Lerner slopes + Strang split | PPM (Lin-Rood) with FV substepping | Slopes / PPM / Lin-Rood (CS) via type dispatch |
 | Convection | Tiedtke/SiBJK two-side updraft/downdraft | RAS / SHOC / GMAO depending on collection | TM5 four-field *or* GCHP-style CMFMC |
-| Vertical diffusion | Holtslag–Boville non-local | GCHP/VDIFF local Beljaars–Viterbo | Beljaars–Viterbo + Holtslag–Boville (preview) |
+| Vertical diffusion | Holtslag–Boville non-local | GCHP/VDIFF local Beljaars–Viterbo | Beljaars–Viterbo and local Holtslag–Boville Kz fields |
 | Mass basis | Moist (with explicit qv bookkeeping) | Moist + dry conversions per-operator | **Dry by default**, basis is a *type parameter* |
-| Multi-tracer | Tracer loop *inside* each operator | Tracer loop *inside* FV step (PPM × Nt) | Single multi-tracer fused kernel (6 launches / palindrome on LL & CS split-sweep) |
-| Adjoint | TM5-4DVAR (hand-coded) | GIGC adjoint (separate fork) | Tape + checkpoint + replay; surface-emission footprints today, 4D-Var on the roadmap |
+| Multi-tracer | Tracer loop *inside* each operator | Tracer loop *inside* FV step (PPM × Nt) | Packed tracer dimension in LL and CS split-sweep kernels |
+| Adjoint | TM5-4DVAR (hand-coded) | GIGC adjoint (separate fork) | Tape + checkpoint + replay; surface-emission footprints and a CS 4D-Var scaffold |
 | Hardware | CPU clusters | CPU clusters (some GPU effort upstream) | Single-node multi-GPU (CUDA / Metal) and CPU; one source tree |
 
 The differences are deliberate; the similarities are deliberate too.
@@ -68,7 +68,7 @@ sign conventions).
 Off-line preprocessing produces a single binary per day. That binary
 fully specifies every field the runtime needs: air mass, horizontal
 and vertical mass fluxes, surface pressure, optional moist physics
-fields. A JSON header in the first ~131 KB declares topology, basis,
+fields. A padded JSON header declares topology, basis,
 vertical coordinate, substep schedule, and which optional sections are
 present. The runtime's job is to memory-map the file and stream over
 windows; nothing about the model is configured by reading raw met
@@ -117,15 +117,13 @@ See [Kernel architecture](kernel_architecture.md).
 
 ### 4. Multi-tracer kernels by default
 
-When you run 50 tracers, GCHP and TM5 pay roughly 50× the per-tracer
-cost of one tracer (the tracer loop sits inside the FV step or inside
-the operator). AtmosTransport's split-sweep paths run **6 launches per
-Strang palindrome regardless of the tracer count**: the X, Y, Z half
-sweeps each pack all tracers into one kernel. This means doubling the
-tracer count is closer to a 10–20 % runtime hit than a 100 % hit on
-the GPU. The Lin-Rood (PPM, ORD=5/7) path still loops per-tracer
-externally; that is a known asymmetry called out in
-[Operators on top of the binary](operators_on_binaries.md).
+AtmosTransport's structured and cubed-sphere split-sweep paths store tracer
+mass in a packed fourth dimension. The six directional legs of one advection
+palindrome therefore launch per direction, not per tracer, while still doing
+the flux work and memory traffic required for every tracer. Lin-Rood uses a
+different horizontal implementation and should be benchmarked separately.
+See [Kernel architecture](kernel_architecture.md) for the exact data layout
+and profiling tools.
 
 ### 5. Mass conservation is type-level
 
@@ -144,14 +142,12 @@ See [Mass conservation theory](../theory/mass_conservation.md) and the
 ### 6. Adjoints are a layer, not a fork
 
 Tape recording and reverse replay live in `src/Tape/`,
-`src/Adjoints/`, and `src/Footprint/`. The forward integrator records
-op-records onto a tape during normal stepping; the reverse pass walks
-the tape backwards with operator-specific adjoint kernels. There is no
-separate adjoint executable, no maintained-by-hand "forward and
-backward parallel codebase" as in GIGC adjoint or in TM5-4DVAR's
-legacy split. Today the main consumer of the adjoint is
-*surface-emission footprints*; a full 4D-Var driver is the next
-milestone.
+`src/Adjoints/`, and `src/Footprint/`. The footprint forward pass records
+typed operator data; the reverse pass walks those records backwards with
+operator-specific adjoint kernels. The shipped consumers are
+surface-emission footprints and the cubed-sphere 4D-Var cost/gradient and
+optimizer workflows. A small inversion script provides a runnable driver,
+but the reverse operators remain in the same source tree as the forward code.
 
 See [Adjoints on top of the binary](adjoints.md).
 
@@ -171,11 +167,12 @@ To make the binary-as-contract pattern work, three things go away:
 
 In return, you get a runtime that:
 
-- starts in 2–3 seconds (no MPI bootstrap, no MAPL warmup),
-- spends ~90 % of its wall clock in physics kernels rather than I/O,
-- runs the same source code on a laptop CPU and an A100 / H100 / L40S,
-- has a single deterministic file you can `scp` to another machine and
-  reproduce the run bit-for-bit.
+- reads one self-describing transport product instead of reconstructing a
+  forcing schema at every model step;
+- targets CPU, CUDA, and Metal from the same operator implementations;
+- exposes window loading, backend copies, and physics as separate timing
+  sections; and
+- carries the numerical schedule and mass-basis contract with the data.
 
 ## Reading order from here
 

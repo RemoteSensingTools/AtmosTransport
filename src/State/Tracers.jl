@@ -13,7 +13,7 @@
     allocate_tracers(names::NTuple{N, Symbol}, Nx, Ny, Nz;
                      FT=Float64, ArrayType=Array, fill_value=zero(FT))
 
-Allocate a NamedTuple of 3D tracer mass arrays. Still useful for test
+Allocate a NamedTuple of 3D model tracer-storage arrays. Still useful for test
 fixtures that want to pre-build per-tracer 3D arrays for a
 `CellState(m; tracers...)` keyword-form constructor call.
 """
@@ -68,7 +68,7 @@ tracer_name(state::CubedSphereState, idx::Integer) = state.tracer_names[Int(idx)
     get_tracer(state::CellState, name::Symbol)
     get_tracer(state::CellState, idx::Integer)
 
-Return a view of the tracer mass slice. For a structured grid with
+Return a view of the model tracer-storage slice. For a structured grid with
 `state.tracers_raw :: Array{FT, 4}`, this is
 `selectdim(state.tracers_raw, 4, idx)`, a contiguous
 `SubArray{FT, 3}` (because Julia is column-major and the tracer axis

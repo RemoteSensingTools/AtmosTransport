@@ -12,8 +12,8 @@ provides CPU/GPU portability.
   possible.
 - Evidence, not speculation. If output looks unphysical, treat it as a bug
   until measurements prove otherwise.
-- Persistent docs record facts, not hypotheses. Design memos and reference
-  docs get reused as ground truth.
+- Persistent docs record facts, not hypotheses. The rendered manual under
+  `docs/src/` is the current documentation; dated memos preserve history.
 - For transport bugs: read the reference implementation first, find the exact
   semantic diff, and make one evidence-backed change at a time.
 - Before committing, check whether the diff changes public behavior, scripts,
@@ -39,13 +39,13 @@ mass basis, supported operators, and load-time consistency gates.
 
 - Entry point: `scripts/run_transport.jl` ->
   `run_driven_simulation(cfg)` in `src/Models/DrivenRunner.jl`
-- Module order:
-  `Architectures -> Parameters -> Grids -> State -> MetDrivers -> Operators -> Kernels -> Models`
+- Top-level include order follows `src/AtmosTransport.jl`:
+  `Architectures -> Quantities -> Parameters -> Grids -> State -> Output ->`
+  `MetDrivers -> Operators -> Tape -> Adjoints -> Regridding -> Preprocessing ->`
+  `Visualization -> Models -> Downloads`.
 - Later modules may depend on earlier ones, never the reverse.
 - Active code lives in `src/`, tests in `test/`, tools in `scripts/`, configs
-  in `config/`, and detailed docs in `docs/reference/`.
-- `src_legacy/`, `test_legacy/`, and related legacy folders are parked
-  reference material, not the active runtime.
+  in `config/`, and the maintained manual in `docs/src/`.
 - Physics should dispatch on types, not on ad-hoc grid or scheme conditionals.
 - GPU extensions load when `using CUDA` or `using Metal` happens before
   `using AtmosTransport`; `scripts/run_transport.jl` preloads the requested
@@ -121,13 +121,12 @@ mass basis, supported operators, and load-time consistency gates.
 
 ## Detailed References
 
-- Quick start: `docs/reference/QUICKSTART.md`
-- Architecture: `docs/reference/ARCHITECTURE.md`
-- Grid and data conventions: `docs/reference/GRID_CONVENTIONS.md`,
-  `docs/reference/DATA_LAYOUT.md`
-- Advection details: `docs/reference/ADVECTION_SCHEMES.md`
-- Preprocessing and binary formats: `docs/reference/PREPROCESSING_GUIDE.md`,
-  `docs/reference/BINARY_FORMAT.md`
-- Algorithm comparisons: `docs/reference/TRANSPORT_COMPARISON.md`,
-  `docs/reference/FROM_TM5.md`, `docs/reference/FROM_GCHP.md`
-- Historical design notes: `docs/memos/`, `docs/resources/`
+- Quick start: `docs/src/getting_started/quickstart.md`
+- Architecture: `docs/src/concepts/architecture.md`
+- Grid and data conventions: `docs/src/concepts/grids.md`,
+  `docs/src/preprocessing/conventions.md`, `docs/src/config/data_sources.md`
+- Advection details: `docs/src/theory/advection_schemes.md`
+- Preprocessing and binary formats: `docs/src/preprocessing/overview.md`,
+  `docs/src/concepts/binary_format.md`
+- TM5/GCHP mappings: `docs/src/for_tm5_gchp_users/`
+- Historical design and debugging records: `docs/memos/`, `docs/resources/`

@@ -4,8 +4,12 @@ const REPOSITORY_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 const MAINTAINED_DOCUMENTS = let
     documents = [
         joinpath(REPOSITORY_ROOT, "README.md"),
-        joinpath(REPOSITORY_ROOT, "src", "README.md"),
+        joinpath(REPOSITORY_ROOT, "benchmarking", "README.md"),
+        joinpath(REPOSITORY_ROOT, "config", "preprocessing", "README.md"),
+        joinpath(REPOSITORY_ROOT, "config", "runs", "README.md"),
         joinpath(REPOSITORY_ROOT, "docs", "README.md"),
+        joinpath(REPOSITORY_ROOT, "scripts", "downloads", "README.md"),
+        joinpath(REPOSITORY_ROOT, "test", "README.md"),
     ]
 
     for name in (
@@ -19,15 +23,18 @@ const MAINTAINED_DOCUMENTS = let
         push!(documents, joinpath(REPOSITORY_ROOT, "docs", name))
     end
 
-    for directory in (joinpath(REPOSITORY_ROOT, "docs", "src"),
-                      joinpath(REPOSITORY_ROOT, "docs", "reference"))
+    for directory in (joinpath(REPOSITORY_ROOT, "docs", "src"),)
         for (root, _, files) in walkdir(directory)
             append!(documents,
                     joinpath.(Ref(root), filter(file -> endswith(file, ".md"), files)))
         end
     end
 
-    sort!(documents)
+    for (root, _, files) in walkdir(joinpath(REPOSITORY_ROOT, "src"))
+        "README.md" in files && push!(documents, joinpath(root, "README.md"))
+    end
+
+    sort!(unique!(documents))
 end
 
 function local_document_targets(path::AbstractString)
@@ -47,7 +54,7 @@ function local_document_targets(path::AbstractString)
         target = first(split(target))
         isempty(target) && continue
         windows_absolute = occursin(r"^[A-Za-z]:[\\/]", target)
-        ignored_prefixes = ("#", "@ref")
+        ignored_prefixes = ("#", "@ref", "@id")
         any(prefix -> startswith(target, prefix), ignored_prefixes) && continue
         occursin(r"^[A-Za-z][A-Za-z0-9+.-]*:", target) &&
             !windows_absolute && continue

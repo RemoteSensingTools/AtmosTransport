@@ -1,11 +1,10 @@
 # Adjoint status
 
-This page is a candid statement of what is shipped on the adjoint
-side. As of 2026-05-17 the picture is significantly different from
-what earlier drafts of this page claimed: the LinRood adjoint and
-TM5-style inversion scaffold are largely shipped, and the inversion
-stack is on CI. The roadmap section below tracks what is and is not
-done.
+This page marks the current boundary of the adjoint implementation: what can
+be run and tested today, and which combinations are deliberately rejected.
+The LinRood adjoint and TM5-style inversion scaffold are implemented and
+covered by the core test suite, but real-data parity with TM5-4DVAR remains a
+validation gap.
 
 ## What is shipped
 
@@ -14,8 +13,8 @@ done.
 The forward transport model — advection (four schemes: `UpwindScheme`,
 `SlopesScheme`, `PPMScheme`, `LinRoodPPMScheme`), convection (CMFMC +
 TM5), implicit vertical diffusion (Beljaars–Viterbo / Holtslag–Boville
-Kz fields), surface flux source — is fully shipped, GPU-portable,
-mass-conserving, and covered by the test suite documented in
+Kz fields), and surface flux sources — is implemented for the runtime's
+supported topology/backend combinations and covered by the test suite documented in
 [Conservation budgets](@ref).
 
 ### Tape, checkpoint, and reverse pass
@@ -47,7 +46,7 @@ The adjoint supports the following advection schemes (full union in
 
 The supporting kernel adjoints in
 `src/Operators/Advection/linrood_adjoint_kernels.jl` are
-transposition-tested (`test/test_linrood_kernel_adjoints.jl`) and
+transposition-tested (`test/core/test_linrood_kernel_adjoints.jl`) and
 finite-difference VJP-tested via single-panel and cross-panel halo
 compositions.
 
@@ -66,20 +65,21 @@ selectable via the `checkpoint` kwarg of `cs_surface_emission_footprint`:
 | --- | --- | --- |
 | `FullCheckpoint` | O(N) state snapshots | none — fastest reverse pass |
 | `StrideCheckpoint(stride)` | O(N/stride) | replays each stride forward |
-| `RevolveCheckpoint(budget)` | O(log N) | bisection-based; logarithmic-memory variant of Griewank–Walther |
+| `RevolveCheckpoint()` | O(log N) | recursive bisection; each step may be replayed once per recursion level |
 
-`RevolveCheckpoint` is a bisection variant rather than the optimal
-binomial Revolve, but it ships the logarithmic-memory contract and is
-on the test suite (`test_cs_stride_checkpoint.jl`,
-`test_cs_revolve_checkpoint.jl`).
+`RevolveCheckpoint()` has no snapshot-budget argument. It is a recursive
+bisection variant rather than the optimal binomial Revolve: peak snapshots are
+proportional to the recursion depth and total replay work is
+`O(N log N)`. It is covered in `test/core/test_cs_stride_checkpoint.jl`.
 
 ### Tape storage backends
 
-Tape records can live on the device, in pinned-host memory (default
-for GPU runs), or on disk via mmap — selectable via the `tape_storage`
+Split-sweep tape records can live on the device (the default), in pinned-host
+memory, or on disk via mmap — selectable via the `tape_storage`
 kwarg (`:device` / `:pinned_host` / `:mmap`). Storage backends are
 defined in `src/Tape/TapeStorage.jl` and `src/Tape/MmapTapeStorage.jl`;
-the mmap path is covered by `test_cs_tape_mmap_roundtrip.jl`.
+the mmap path is covered by `test_cs_tape_mmap_roundtrip.jl`. LinRood tape
+records currently require `:device` storage.
 
 ### Inversion scaffold
 
@@ -108,7 +108,6 @@ These are all on CI. Full inversion tests:
 | Item | Notes |
 | --- | --- |
 | **Optimal binomial Revolve** | `RevolveCheckpoint` ships as the bisection variant — logarithmic memory but not the Griewank–Walther optimal recompute count. Optimal binomial Revolve is the next refinement. |
-| **`copy_corners` reverse** | Cubed-sphere halo-corner exchange in the reverse pass is the remaining CS-side gap. |
 | **Optimized/clamped convection adjoints** | CMFMC `clamp = true` and TM5/CMFMC-matrix collaborative, truncated, or merged solves are rejected by the footprint API until their exact branches are taped and transposed. |
 | **TM5-4DVAR cross-validation** | Synthetic truth-recovery via `test_cs_inversion_truth_recovery.jl` is on CI; a side-by-side parity run against TM5-4DVAR on real data has not been published. |
 | **Tangent-linear model** | Forward TL is not exposed as a separate driver. If you need it, use the reverse pass plus identity seeding. |
@@ -136,23 +135,21 @@ Three concrete forward-design choices that pay off in the adjoint:
 
 ## How to use the adjoint today
 
-```julia
-using AtmosTransport
-using AtmosTransport.Adjoints
+The maintained command-line path is the inversion driver:
 
-# Run the forward + tape + reverse pipeline for a single objective.
-result = cs_surface_emission_footprint(
-    driver, model;
-    scheme       = LinRoodPPMScheme(; ppm_order = 5),
-    objective    = SiteConcentrationObjective(:MLO; lev = 1),
-    checkpoint   = RevolveCheckpoint(budget = 8),
-    tape_storage = :pinned_host,
-)
-# result.footprints[t] :: NTuple{6, Matrix{FT}} — dJ/dE_t at step t.
+```bash
+julia --project=. scripts/inversions/cs_4dvar.jl \
+    config/inversions/example_synthetic.toml
 ```
 
-For an end-to-end inversion (synthetic truth recovery), see
-`test/test_cs_inversion_truth_recovery.jl` as the runnable template.
+That configuration owns observations, controls, covariance, optimizer, and
+checkpoint choices. For the lower-level Julia API, start with
+`test/core/test_cs_inversion_truth_recovery.jl`; it constructs the panel
+arrays, step sequences, mesh, and objective required by
+`cs_surface_emission_footprint`. Use `RevolveCheckpoint()` (without arguments)
+for recursive bisection, or `StrideCheckpoint(K)` for an explicit interval.
+LinRood checkpoints currently require `tape_storage = :device`; split-sweep
+schemes also support `:pinned_host` and `:mmap`.
 
 ## Where to read next
 

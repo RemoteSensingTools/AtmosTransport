@@ -20,7 +20,8 @@ Cell-centered prognostic state for transport.
 - `air_mass :: A` — air mass per cell [kg] on the basis carried by `Basis`.
   Layout matches grid:
   `(Nx, Ny, Nz)` for structured, `(ncells, Nz)` for unstructured.
-- `tracers_raw :: Raw` — packed tracer mass storage. Shape is
+- `tracers_raw :: Raw` — packed model tracer storage, conventionally
+  `dry VMR × dry-air mass` (not physical kg species). Shape is
   `(size(air_mass)..., Nt)`: `(Nx, Ny, Nz, Nt)` on structured grids,
   `(ncells, Nz, Nt)` on face-indexed grids. Kernels dispatch directly
   on this field; non-kernel code uses the accessor API
@@ -34,7 +35,7 @@ Cell-centered prognostic state for transport.
 into `tracers_raw`).
 
 # Invariant
-After each transport step, `sum(air_mass)` and the per-tracer mass
+After each closed transport step, `sum(air_mass)` and the per-tracer storage
 sum `sum(view(tracers_raw, ..., t))` must each be conserved (within
 floating-point tolerance).
 """
@@ -187,7 +188,7 @@ end
 """
     mixing_ratio(state::CellState, name::Symbol)
 
-Compute mixing ratio `q = tracer_mass / air_mass` for the named tracer.
+Compute mixing ratio `q = tracer_storage / air_mass` for the named tracer.
 """
 mixing_ratio(state::CellState, name::Symbol) =
     get_tracer(state, name) ./ state.air_mass
@@ -195,7 +196,9 @@ mixing_ratio(state::CellState, name::Symbol) =
 """
     total_mass(state::CellState, name::Symbol) -> scalar
 
-Sum of tracer mass across all cells and levels.
+Sum the named tracer's conservative model storage across all cells and levels.
+For dry VMR tracers this is `sum(χ_dry × dry_air_mass)`, not physical kg
+species unless an explicit molecular-weight conversion is applied.
 """
 total_mass(state::CellState, name::Symbol) = sum(get_tracer(state, name))
 

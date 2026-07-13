@@ -245,8 +245,8 @@ edge profile and reuses this kernel).
 # Arguments
 - `F`:    mass flux through the face [kg] (positive = left-to-right)
 - `m_l`:  air mass in the left cell [kg]
-- `rm_l`: tracer mass in the left cell [kg]
-- `sx_l`: limited edge-offset first moment of the left cell [kg]
+- `rm_l`: conservative tracer storage in the left cell [carrier-air kg]
+- `sx_l`: limited edge-offset first moment of tracer storage [carrier-air kg]
 - `m_r`, `rm_r`, `sx_r`: same for the right cell
 
 # Equations

@@ -2,64 +2,110 @@
 CurrentModule = AtmosTransport
 ```
 
-# AtmosTransport.jl
+```@raw html
+---
+layout: home
 
-![AtmosTransport.jl](assets/brand/AtmosTransport_banner.png)
+hero:
+  name: "AtmosTransport.jl"
+  tagline: "Mass-conserving offline atmospheric tracer transport on CPUs and GPUs."
+  image:
+    src: /assets/brand/AtmosTransport_card.png
+    alt: AtmosTransport
+  actions:
+    - theme: brand
+      text: Get started
+      link: /getting_started/installation
+    - theme: alt
+      text: Run the quickstart
+      link: /getting_started/quickstart
+    - theme: alt
+      text: View on GitHub
+      link: https://github.com/RemoteSensingTools/AtmosTransport.jl
+---
+```
 
-A Julia-based, GPU-portable atmospheric tracer transport model for offline
-chemistry / chemical-transport applications. Designed for **mass-conserving**
-advection, convection, and boundary-layer diffusion on **lat-lon, reduced
-Gaussian, and cubed-sphere** grids, driven by **ERA5** or **GEOS** met data,
-with a clean separation between offline preprocessing and runtime stepping.
+AtmosTransport transports atmospheric trace gases through prescribed
+meteorology. It supports regular latitude-longitude, reduced-Gaussian, and
+cubed-sphere grids; ERA5 and GEOS meteorology; and the same typed model on a
+CPU, NVIDIA GPU, or Apple GPU.
 
-## At a glance
+The package is under active development. It is a good fit for research and
+method development when you want the mass budget, preprocessing assumptions,
+and operator ordering to be explicit. It is not an online weather or climate
+model: winds and air-mass fluxes are prepared before the transport run.
 
-- **Multi-grid**: regular lat-lon, reduced Gaussian, cubed-sphere (gnomonic
-  and GEOS-native panel conventions).
-- **Multi-source**: ERA5 spectral (vorticity / divergence / log-PS GRIB),
-  GEOS-IT C180 native NetCDF, GEOS-FP C720 native hourly NetCDF, and a
-  preview MERRA-2 wind-derived cubed-sphere preprocessor.
-- **GPU-portable**: single codebase for CPU, NVIDIA CUDA, and Apple Silicon
-  Metal via [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl).
-  Metal is restricted to `Float32` runtime numerics.
-- **Mass-conserving**: dry-basis air-mass bookkeeping, with **write-time
-  replay gates** in the preprocessor and **opt-in load-time replay
-  validation** at runtime.
-- **Operator-modular**: every physics operator is behind an abstract type
-  with a `No<Operator>` no-op default; swap schemes via type dispatch.
-- **TM5-faithful core**: Russell-Lerner slopes advection with Strang
-  splitting; CMFMC convection (GCHP-style for GEOS sources) and TM5
-  convection (entrainment / detrainment for ERA5 sources) sharing one
-  runtime carrier.
+## Your first successful run
 
-## When to use AtmosTransport
+You do not need meteorological credentials, a GPU, or prior Julia experience.
+After [installing the repository](@ref Installation), two commands create a
+small current-format forcing file and run a four-hour CPU simulation:
 
-- You have offline meteorological fields (winds, mass fluxes, surface pressure,
-  optionally moist physics) and want to integrate one or more passive or
-  reactive trace gases at coarse-to-medium resolution.
-- You need GPU performance with bit-reproducible CPU fallback.
-- You want a model where the mass-conservation contract is explicit at every
-  layer (preprocessor output ↔ runtime state ↔ snapshot output).
+```bash
+julia --project=. examples/generate_synthetic_quickstart.jl
+julia --project=. scripts/run_transport.jl config/examples/minimal_template.toml
+```
 
-If you need a fully online dynamical core (LES, GCM), look elsewhere —
-AtmosTransport assumes a precomputed mass-flux time series.
+The result is `data/quickstart/synthetic_output.nc`. The
+[Quickstart](@ref Quickstart) explains every step and the
+[Julia orientation](@ref Julia-orientation) explains what `julia`,
+`--project=.`, and `using AtmosTransport` mean.
 
-## Where to start
+## The model in one picture
 
-The recommended reading order is:
+```mermaid
+flowchart LR
+    RAW[Raw meteorology<br/>ERA5 or GEOS]
+    PRE[Preprocessing<br/>balance and verify]
+    BIN[Version-4<br/>transport binary]
+    CFG[Run configuration<br/>TOML]
+    RUN[Typed runtime<br/>grid + state + operators]
+    OUT[Snapshots<br/>NetCDF or ATMSNAP]
+    RAW --> PRE --> BIN --> RUN --> OUT
+    CFG --> RUN
+```
 
-1. [Installation](getting_started/installation.md) and
-   [Quickstart](getting_started/quickstart.md).
-2. [Concepts](concepts/grids.md) — grids, state, operators, and binaries.
-3. [Preprocessing](preprocessing/overview.md) — raw meteorology to transport binaries.
-4. [Theory and verification](theory/mass_conservation.md).
-5. [API reference](api/index.md).
+Preprocessing owns data conversion, grid transforms, dry-air bookkeeping, and
+continuity checks. The runtime memory-maps the resulting binary, constructs the
+correct grid and operators from its header plus a TOML file, and advances one
+meteorological window at a time. See [Architecture tour](@ref Architecture-tour)
+for the objects and source directories behind this flow.
 
-The most useful repository entry points are:
+## Choose a path
 
-- `scripts/run_transport.jl` — runtime driver script.
-- `scripts/preprocessing/preprocess_transport_binary.jl` — preprocessing CLI.
-- `scripts/diagnostics/inspect_transport_binary.jl` — inspect a transport binary.
-- `config/runs/` — example run configurations (TOML).
-- The repository `README.md` and `docs/reference/` pages carry the current
-  status, invariants, and project map.
+| If you want to… | Start with… |
+|---|---|
+| Try the model on any laptop | [Installation](@ref Installation) → [Quickstart](@ref Quickstart) |
+| Learn just enough Julia to follow examples | [Julia orientation](@ref Julia-orientation) |
+| Run with your own ERA5 or GEOS data | [Run with real meteorology](@ref Run-with-real-meteorology) → [Preprocessing overview](@ref) |
+| Understand mass, grids, and physics choices | [Architecture tour](@ref Architecture-tour) → [State & basis](@ref) → [Operators](@ref Operator-concepts) |
+| Map familiar TM5/GCHP concepts onto this code | [Design philosophy](@ref Design-philosophy) |
+| Extend or call the library directly | [Curated public API](@ref) and the generated API pages |
+
+## Core capabilities
+
+- **Mass-conserving transport.** Air mass and conservative tracer storage
+  follow the same discrete fluxes, with write-time replay and positivity gates.
+- **Several horizontal topologies.** Lat-lon, reduced Gaussian, and
+  cubed-sphere use one public driver and model interface.
+- **Composable physics.** Advection, vertical diffusion, convection, surface
+  fluxes, and simple chemistry are typed operators selected at configuration
+  time.
+- **Portable execution.** CPU is the simplest starting point; CUDA and Metal
+  are optional backends. Metal uses `Float32`.
+- **Explicit provenance.** Only transport-binary format version 4 is accepted;
+  incompatible forcing fails at load time rather than being guessed.
+
+## Where things live
+
+| Repository path | Purpose |
+|---|---|
+| `examples/` | Small runnable examples that need no external data. |
+| `config/examples/` | Canonical, copyable TOML run templates. |
+| `scripts/run_transport.jl` | One command-line entry point for simulations. |
+| `scripts/preprocessing/preprocess_transport_binary.jl` | One command-line entry point for meteorology preprocessing. |
+| `src/` | Package implementation, organized by grids, state, operators, drivers, models, preprocessing, and output. |
+| `test/core/` | Synthetic regression tests that do not require private datasets. |
+
+The top-level repository `README.md` carries the current capability status.
+These pages provide the learning path, workflows, theory, and generated API.

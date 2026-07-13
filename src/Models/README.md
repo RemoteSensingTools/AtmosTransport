@@ -27,8 +27,7 @@ read.
 - `TransportModel.step!` runs:
   - transport block (advection, with diffusion and surface flux at
     the Strang midpoint)
-  - convection block (`CMFMCConvection` live on LatLon, RG, CS via
-    plan 22D; `TM5Convection` in progress under plan 23)
+  - convection block (CMFMC, matrix CMFMC, or TM5 on supported topologies)
   - chemistry block
 
 ## File Map
@@ -59,12 +58,11 @@ read.
   surface-flux loader + LL/RG/CS `build_surface_flux_source` builders
   with conservative regrid + cell-area integration,
   `FileInitialConditionSource` / `FileSurfaceFluxField` containers
-  (plan 40 Commits 1b–1d + 2)
 - [`BinaryPathExpander.jl`](BinaryPathExpander.jl) —
   `expand_binary_paths(input_cfg)` resolves either an explicit
   `binary_paths = [...]` list or a `folder + start_date + end_date
   (+ file_pattern)` shape to a sorted `Vector{String}`; continuity
-  check on the closed date range (plan 40 Commit 4)
+  check on the closed date range
 - [`DrivenRunner.jl`](DrivenRunner.jl) — library-level
   `run_driven_simulation(cfg)` entry point for all driven runs. Owns the
   runtime flow behind `scripts/run_transport.jl`: first-driver

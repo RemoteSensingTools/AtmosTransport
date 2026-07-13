@@ -1,15 +1,17 @@
 # Output schema
 
-The runtime writes **NetCDF4** snapshot files declared by `[output] path` in
-the run config. `split = "single"` writes one file per run; `split = "daily"`
-writes one file per daily binary. This page documents the exact variable
-layout, dimensions, units, and per-topology conventions, so a downstream tool
-(Python / Julia / NCO / CDO) can consume the output without having to look up
-the writer source.
+The default runtime output is a **NetCDF4** snapshot file declared by
+`[output] path`. `split = "single"` writes one file per run; `split = "daily"`
+writes one file per daily binary. This page documents the exact NetCDF
+variables, dimensions, units, and per-topology conventions.
 
-The writer entry point is `src/Output/netcdf_writer.jl`
-(`write_snapshot_netcdf` at line 81) which dispatches on the runtime
-mesh type into one of three per-topology writers.
+For long runs, `format = "binary_mmap"` writes Float32 ATMSNAP files first;
+convert them to this same NetCDF schema with
+`scripts/postprocess/binary_to_netcdf.jl`. See [TOML schema](@ref) for that
+throughput-oriented workflow.
+
+The `write_snapshot_netcdf` entry point in `src/Output/netcdf_writer.jl`
+dispatches on the runtime mesh type into one of three per-topology writers.
 
 The variable list is controlled by `[output.fields]`. By default every field
 below is written. Setting `layers = "none"` suppresses per-level tracer VMR
@@ -36,17 +38,16 @@ Every snapshot file carries a CF-style global header set by
 | `framework` | `"AtmosTransport.jl"` |
 | `framework_commit` | git SHA of the source tree at run time (or `"unknown"`) |
 | `framework_dirty` | `"clean"` or `"dirty"` (uncommitted changes flag) |
-| `runtime` | Julia + backend string (e.g. `"julia 1.10.5 / CUDA 12.4"`) |
+| `runtime` | Julia version plus machine, kernel, and operating-system summary |
 | `hostname` | `Base.Libc.gethostname()` at run start |
 | `user` | `$USER` (or `$USERNAME` on Windows; `"unknown"` if neither is set) |
 | `output_options` | `float_type=…, deflate_level=…, shuffle=…` (only present when writer options are passed) |
 | `history` | CF-canonical chain; the writer prepends `"<creation_date>: written by AtmosTransport.Output (commit <sha>[+dirty]) with N frame(s)"` |
 
-Every value is best-effort: non-git checkouts get `framework_commit =
-"unknown"`; environments without a `USER` env var get `user =
-"unknown"`. No attribute is required at read time — but they are
-written unconditionally, so downstream tooling can rely on the keys
-being present.
+Every provenance value is best-effort: non-git checkouts get
+`framework_commit = "unknown"`; environments without a `USER` variable get
+`user = "unknown"`. `output_options` is present when writer options are passed;
+the other listed attributes are written by the current NetCDF writer.
 
 ## Lat-lon snapshot
 
@@ -69,10 +70,10 @@ Coordinate variables:
 | `lon_bounds` | `(lon, nv)` (`nv = 2`) | `degrees_east` |
 | `lat_bounds` | `(lat, nv)` (`nv = 2`) | `degrees_north` |
 | `cell_area` | `(lon, lat)` | `m2` |
-| `time` | `(time,)` | `hours since 2000-01-01 00:00:00` |
+| `time` | `(time,)` | `hours` since the configured simulation start |
 | `lev` | `(lev,)` | `1` (dimensionless level index; `positive = "down"`) |
 
-Per-topology mass diagnostics (always written):
+Per-topology mass diagnostics (enabled by default):
 
 | Variable | Shape | Units (writer string) | Meaning |
 |---|---|---|---|
@@ -87,10 +88,12 @@ Per-tracer fields (one set per `[tracers.<name>]` block). The
 |---|---|---|---|
 | `<tracer>` | `(lon, lat, lev, time)` | `mol mol-1 dry` | `mol mol-1` |
 | `<tracer>_column_mean` | `(lon, lat, time)` | `mol mol-1 dry` | `mol mol-1` |
-| `<tracer>_column_mass_per_area` | `(lon, lat, time)` | `kg m-2` | `kg m-2` |
+| `<tracer>_column_mass_per_area` | `(lon, lat, time)` | `kg m-2` model storage | `kg m-2` model storage |
 
-The per-tracer full-3D field `<tracer>` is the **mixing ratio**, not
-the mass; for mass × area use `<tracer>_column_mass_per_area`.
+The per-tracer full-3D field `<tracer>` is the mixing ratio. The
+`<tracer>_column_mass_per_area` diagnostic is the sum of the model's
+`χ × carrier-air-mass` storage divided by area; no molecular-weight conversion
+to physical kg species is applied.
 
 ## Reduced-Gaussian snapshot
 
@@ -134,8 +137,8 @@ Dimensions:
 | `nf` | `6` (panel face index, ordered by the active `panel_convention`) |
 | `lev`, `time` | as for LL |
 
-The per-panel arrays are stacked into the `nf` dimension at write
-time (`_cs_stack3` / `_cs_stack2` in `netcdf_writer.jl:36-52`).
+The per-panel arrays are stacked into the `nf` dimension at write time by
+`_cs_stack3` / `_cs_stack2` in `src/Output/netcdf_writer.jl`.
 
 Per-topology fields:
 
@@ -166,20 +169,18 @@ ncdump -h ~/data/.../my_run.nc | head -40
 ### Python (NetCDF4)
 
 ```python
+from os.path import expanduser
 import netCDF4 as nc
 
-ds = nc.Dataset("~/data/.../my_run.nc")
-print(ds.dimensions)
-print(list(ds.variables.keys()))
+with nc.Dataset(expanduser("~/data/.../my_run.nc")) as ds:
+    print(ds.dimensions)
+    print(list(ds.variables.keys()))
+    co2_cm = ds["co2_bl_column_mean"][:]  # (time, lat, lon) in netCDF4
+    print(co2_cm.shape, co2_cm.min(), co2_cm.max(), co2_cm.mean())
 
-# LL example
-co2_cm = ds["co2_bl_column_mean"][:]   # shape (time, lat, lon)
-print(co2_cm.shape, co2_cm.min(), co2_cm.max(), co2_cm.mean())
-
-# CS example
-ds_cs = nc.Dataset("~/data/.../my_cs_run.nc")
-co2_cs = ds_cs["co2_bl_column_mean"][:]   # shape (time, nf, Ydim, Xdim)
-panel = co2_cs[-1, 0, :, :]               # last frame, panel 1
+with nc.Dataset(expanduser("~/data/.../my_cs_run.nc")) as ds:
+    co2_cs = ds["co2_bl_column_mean"][:]  # (time, nf, Ydim, Xdim)
+    panel = co2_cs[-1, 0, :, :]            # last frame, panel 1
 ```
 
 ### Julia (NCDatasets.jl)
@@ -187,11 +188,11 @@ panel = co2_cs[-1, 0, :, :]               # last frame, panel 1
 ```julia
 using NCDatasets
 
-ds = NCDataset("~/data/.../my_run.nc")
-@show keys(ds.variables)
-
-co2_cm = ds["co2_bl_column_mean"][:, :, end]   # last frame, (lon, lat) for LL
-co2_air = ds["air_mass"][:, :, :, end]         # full 3D, (lon, lat, lev) for LL
+NCDataset(expanduser("~/data/.../my_run.nc")) do ds
+    @show keys(ds.variables)
+    co2_cm = ds["co2_bl_column_mean"][:, :, end] # last frame, (lon, lat)
+    co2_air = ds["air_mass"][:, :, :, end]       # (lon, lat, lev)
+end
 ```
 
 ## Fill value
@@ -213,9 +214,10 @@ reaches them.
 | `[output] deflate_level` | `0` (no compression) | NetCDF4 zlib level 0..9 |
 | `[output] shuffle` | `true` | shuffle filter (only effective when `deflate_level > 0`) |
 
-For long production runs, `deflate_level = 4, shuffle = true` cuts
-file size ~3-4× with negligible compute overhead. Higher levels
-(`6+`) hit diminishing returns and slow the writer noticeably.
+Compression trades writer time for disk space and depends strongly on the
+field. Benchmark `deflate_level = 1` through `4` on representative output
+before choosing a production setting; high levels usually have diminishing
+returns.
 
 `float_type` is determined by the runtime's
 `[numerics].float_type` — F32 runs write F32 NetCDF, F64 runs write

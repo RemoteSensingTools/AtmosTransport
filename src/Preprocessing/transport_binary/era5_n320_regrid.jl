@@ -335,7 +335,7 @@ function process_era5_n320_to_cs_day(date::Date,
         # dry-mass drift that ERA reanalysis carries through PS/Q, so the
         # binary's absolute dry mass matches a fixed target shared with the
         # GEOS path (consistency across driver families; see
-        # docs/reference/GEOS_PREPROCESSING_MASS_BALANCE.md). Applied to each
+        # docs/src/theory/mass_conservation.md). Applied to each
         # freshly derived endpoint mass; `ps` is recomputed from the pinned
         # mass so the stored surface pressure stays consistent. The fixed
         # `target_ps_dry`-derived target is independent of the start

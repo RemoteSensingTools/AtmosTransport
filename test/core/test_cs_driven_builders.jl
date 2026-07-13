@@ -96,6 +96,11 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test build_runtime_advection(Dict("advection" => Dict("scheme" => "upwind")), latlon_grid) isa UpwindScheme
         @test build_runtime_advection(Dict("advection" => Dict("scheme" => "slopes")), latlon_grid) isa SlopesScheme
         @test build_runtime_advection(Dict("advection" => Dict("scheme" => "ppm")), latlon_grid) isa PPMScheme
+        @test build_runtime_advection(Dict("advection" => Dict("scheme" => "upwind")), reduced_grid) isa UpwindScheme
+        @test_throws ArgumentError build_runtime_advection(
+            Dict("advection" => Dict("scheme" => "slopes")), reduced_grid)
+        @test_throws ArgumentError build_runtime_advection(
+            Dict("advection" => Dict("scheme" => "ppm")), reduced_grid)
         @test_throws ArgumentError build_runtime_advection(
             Dict("advection" => Dict("scheme" => "linrood")), latlon_grid)
     end
@@ -244,6 +249,19 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
             Float64)
         @test op_rg isa ImplicitVerticalDiffusion
         @test field_value(op_rg.kz_field, (1, 1)) == 1.5
+
+        # RG's face-indexed transport currently implements only midpoint
+        # surface-flux splitting. Reject the other policy while materializing
+        # the recipe instead of silently ignoring it during the first step.
+        @test_throws ArgumentError build_runtime_physics_recipe(
+            Dict("diffusion" => Dict(
+                "kind" => "constant",
+                "value" => 1.5,
+                "surface_flux_boundary" => true,
+            )),
+            reduced_grid,
+            Float64,
+        )
     end
 
     @testset "DiffusionSpec parse + materialize" begin

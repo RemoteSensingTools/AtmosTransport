@@ -9,10 +9,11 @@ CPU-resident snapshot of one model state at one output time.
 - RG: `(cell, lev)`
 - CS: `NTuple{6, Array{T, 3}}` with panel interiors `(Xdim, Ydim, lev)`
 
-Tracer arrays store tracer mass, not mixing ratio. Derived VMR and column
-diagnostics are computed by [`write_snapshot_netcdf`](@ref), which keeps the
-runtime capture contract lossless enough for per-level extraction and
-area-normalized mass diagnostics.
+Tracer arrays store the model's conservative `χ × carrier-air-mass` quantity,
+not mixing ratio or physical kg species. Derived VMR and column diagnostics are
+computed by [`write_snapshot_netcdf`](@ref), which keeps the runtime capture
+contract lossless enough for per-level extraction and area-normalized storage
+diagnostics.
 """
 struct SnapshotFrame{A}
     time_hours::Float64
@@ -92,7 +93,8 @@ end
 """
     capture_snapshot(model; time_hours=0, halo_width=0) -> SnapshotFrame
 
-Capture full air-mass and tracer-mass fields from a `TransportModel`.
+Capture full air-mass and conservative tracer-storage fields from a
+`TransportModel`.
 
 The result is CPU-resident and topology-native. For cubed-sphere states,
 `halo_width` strips panel halos before writing. GPU-backed arrays are copied to

@@ -88,29 +88,17 @@ end
 
 using AtmosTransport
 
-function _quickstart_configs()
-    dir = joinpath(@__DIR__, "..", "config", "runs", "quickstart")
-    isdir(dir) || return String[]
-    return sort([joinpath("config", "runs", "quickstart", f)
-                 for f in readdir(dir) if endswith(f, ".toml")])
-end
-
 function _print_help(io::IO = stdout)
     println(io, "Usage:")
     println(io, "  julia --project=. scripts/run_transport.jl <config.toml>")
     println(io)
     println(io, "Canonical runtime entry point for AtmosTransport run TOMLs.")
-    println(io, "Configs may use ~/..., \$ATMOSTRANSPORT_DATA_ROOT/..., or")
-    println(io, "\$ATMOSTRANSPORT_DATA_ROOT_quickstart/... paths.")
-    println(io)
-    println(io, "Quickstart configs:")
-    for cfg in _quickstart_configs()
-        println(io, "  ", cfg)
-    end
+    println(io, "Configs may use ~/..., \$ATMOSTRANSPORT_DATA_ROOT/..., or other")
+    println(io, "environment-variable paths.")
     println(io)
     println(io, "Example:")
-    println(io, "  bash scripts/download_quickstart_data.sh ll")
-    println(io, "  julia --project=. scripts/run_transport.jl config/runs/quickstart/ll72x37_advonly.toml")
+    println(io, "  julia --project=. examples/generate_synthetic_quickstart.jl")
+    println(io, "  julia --project=. scripts/run_transport.jl config/examples/minimal_template.toml")
     return nothing
 end
 

@@ -53,10 +53,10 @@ The heuristic compares `mean(DELP[:, :, :, 1, 1])` against
 `mean(DELP[:, :, :, Nz, 1])` — the surface DELP is `O(1000 Pa)` and
 the TOA DELP is `O(1 Pa)`, so the ordering is unambiguous.
 
-NetCDF `lev:positive` attributes are not consulted in the current
-GEOS reader; level orientation comes purely from the DELP-magnitude
-heuristic above. (The fallback to attributes is on the roadmap for
-non-GMAO reanalyses where the DELP heuristic might not apply.)
+NetCDF `lev:positive` attributes are not consulted in the current GEOS reader;
+level orientation comes from the DELP-magnitude heuristic above. A non-GMAO
+source for which that heuristic is invalid needs a dedicated reader method
+instead of relying on this path.
 
 ERA5 spectral output is already top-down; no flip needed.
 
@@ -105,9 +105,8 @@ multiplication by `dt` at apply time.
 
 !!! note "Current format only"
     Maintained writers emit transport-binary version 4 and maintained readers
-    reject earlier formats. A few configuration or dataset filenames still
-    contain historical `_v2` labels; those names do not select an older binary
-    contract.
+    reject earlier formats. Use `inspect_binary` to verify data rather than
+    inferring a format from a directory name.
 
 ## Replay tolerances
 

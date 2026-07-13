@@ -1,118 +1,140 @@
-# Installation
+# [Installation](@id Installation)
 
-This page covers getting AtmosTransport.jl onto a machine and verifying the
-install with the synthetic-fixture test suite. No external met data is
-required to complete this page.
+This guide installs AtmosTransport from source and verifies that Julia can load
+it. The first simulation on the next page uses the CPU and synthetic data, so
+you do not need a GPU, meteorological credentials, Python, or NetCDF command-line
+tools.
 
-## Prerequisites
+## 1. Install Julia and Git
 
-| Requirement | Notes |
-|---|---|
-| **Julia** | 1.10 or newer; tested on 1.10 and 1.12. [juliaup](https://github.com/JuliaLang/juliaup) is the recommended installer. |
-| **Git** | Standard. |
-| **Disk** | ~2 GB for source + dependencies + precompiled artifacts. Real meteorological datasets are separate (tens to hundreds of GB). |
-| **GPU backend** *(optional)* | NVIDIA CUDA or Apple Silicon Metal can enable GPU acceleration. The CPU backend works without any GPU drivers. |
+AtmosTransport requires Julia 1.10 or later. Install Julia with
+[juliaup](https://github.com/JuliaLang/juliaup), the installer recommended by
+the Julia project, then open a new terminal and check the version:
 
-Metal runs require `Float32` numerics. The runtime rejects Metal with
-`float_type = "Float64"` before model construction.
+```bash
+julia --version
+```
 
-## Get the code
+Any result beginning with `julia version 1.10` or newer is suitable. You also
+need [Git](https://git-scm.com/downloads):
+
+```bash
+git --version
+```
+
+!!! tip "New to terminals or Julia?"
+    Read [Julia orientation](@ref Julia-orientation) for the difference between
+    terminal commands, the `julia>` prompt, and Julia's `pkg>` prompt. You can
+    return here after the two-minute overview.
+
+## 2. Clone the repository
+
+AtmosTransport is not installed from Julia's General registry yet. Clone the
+source and enter the repository directory:
 
 ```bash
 git clone https://github.com/RemoteSensingTools/AtmosTransport.jl.git
-cd AtmosTransport
+cd AtmosTransport.jl
 ```
 
-## Install Julia dependencies
+All commands in this documentation assume that your terminal remains in this
+directory. A quick check is:
 
-The repository pins its dependencies via `Project.toml` and `Manifest.toml`.
-Instantiate them once:
+```bash
+test -f Project.toml && echo "repository root found"
+```
+
+On Windows PowerShell, use `Test-Path Project.toml` instead.
+
+## 3. Install the Julia environment
+
+Instantiate the packages declared by `Project.toml`:
 
 ```bash
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```
 
-Dependencies include `KernelAbstractions`, `NCDatasets`, `FFTW`,
-`StaticArrays`, and (as weak deps) `CUDA` and `Metal`. Plan on a ~5–10 minute
-first-time precompile.
+The first run downloads packages and precompiles them. It can take several
+minutes and may appear quiet for short periods. Later starts reuse the compiled
+cache.
 
-## Verify the install
+## 4. Verify the package loads
 
-The core test suite runs end-to-end on **synthetic fixtures** — no external
-met data needed. It exercises the preprocessor, the runtime, and the
-diagnostic tools across all three grid topologies.
+```bash
+julia --project=. -e 'using AtmosTransport; println("AtmosTransport is ready")'
+```
+
+Expected final line:
+
+```text
+AtmosTransport is ready
+```
+
+That is enough to continue. The [Quickstart](@ref Quickstart) performs a more
+useful end-to-end check by creating a current transport binary, running the
+model, and writing NetCDF output.
+
+## Optional: run the regression suite
+
+The complete synthetic CPU suite is intended for contributors and takes much
+longer than the load check:
 
 ```bash
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
-Expected output (abbreviated):
+It requires no private meteorological data. Real-data and large diagnostic
+campaigns are separate opt-in test tiers.
 
-```text
-Test Summary:                | Pass  Total  Time
-Met source trait             |   18     18  0.2s
-IdentityRegrid passthrough   |   15     15  3.7s
-GEOS reader                  |   48     48  8.3s
-GEOS → CS passthrough        | 3467   3467 11.4s
-GEOS convection wiring       |   26     26 12.8s
-…
-```
+## Optional: GPU support
 
-If `Pkg.test()` finishes green, the install is sound and you can proceed
-to [First run](@ref).
-
-## Optional: GPU stack
-
-If you have a GPU and want runtime acceleration, use the backend selector in
-your run TOML:
+Start on the CPU. Once the quickstart works, a run can request an available
+backend through TOML:
 
 ```toml
 [architecture]
 use_gpu = true
-backend = "auto"   # or "cuda" / "metal"
+backend = "auto"    # or "cuda" / "metal"
 
 [numerics]
 float_type = "Float32"
 ```
 
-The driver script (`scripts/run_transport.jl`) preloads CUDA or Metal before
-AtmosTransport when needed.
+- NVIDIA runs use CUDA. `Float32` is the practical production default on most
+  GPUs; `Float64` is supported where hardware performance permits.
+- Apple Silicon runs use Metal and require `Float32`.
+- The runtime fails clearly if a requested GPU backend is unavailable; it does
+  not silently change the execution path to CPU.
 
-To verify the GPU is visible to Julia:
+Backend packages are optional weak dependencies, so a fresh CPU installation
+does not fetch them. Add only the backend you need to your Julia user
+environment:
+
+```bash
+julia -e 'using Pkg; Pkg.add("CUDA")'  # NVIDIA
+julia -e 'using Pkg; Pkg.add("Metal")' # Apple Silicon
+```
+
+Then diagnose it after the base installation succeeds:
 
 ```bash
 julia --project=. -e 'using CUDA; CUDA.versioninfo()'
 julia --project=. -e 'using Metal; Metal.versioninfo()'
 ```
 
-CUDA can run either `Float32` or `Float64` depending on the hardware and
-validation goal:
+Run only the command appropriate for your hardware.
 
-```toml
-# in your run config TOML
-[architecture]
-use_gpu    = true
-backend    = "cuda"
+## Troubleshooting
 
-[numerics]
-float_type = "Float32"   # or "Float64" on CUDA / CPU
-```
+| Symptom | Fix |
+|---|---|
+| `julia: command not found` | Open a new terminal after installing Julia, or finish the juliaup PATH setup. |
+| `Package AtmosTransport not found` | Run from the cloned repository and include `--project=.`. |
+| A dependency “does not seem to be installed” | Re-run `julia --project=. -e 'using Pkg; Pkg.instantiate()'`. |
+| Julia loads the wrong checkout | Run `Base.active_project()` in the REPL; it should end in this repository's `Project.toml`. |
+| GPU package fails to load | Keep `[architecture].use_gpu = false` and finish the CPU quickstart before debugging drivers. |
 
-Note that the L40S and most consumer / data-center GPUs lack first-class
-F64 throughput; F32 is the recommended default for production runs.
+## Next step
 
-## Optional: multi-threaded I/O
-
-For double-buffered I/O overlap (disk reads in parallel with GPU compute),
-start Julia with multiple threads:
-
-```bash
-julia --threads=2 --project=. scripts/run_transport.jl <config.toml>
-```
-
-The runtime detects available threads automatically.
-
-## What's next
-
-- [First run](@ref) — invoke the runtime on an existing config.
-- [Inspecting output](@ref) — verify a transport binary or snapshot NetCDF.
+Run the [Quickstart](@ref Quickstart). If the syntax is unfamiliar, keep the
+[Julia orientation](@ref Julia-orientation) page open alongside it.

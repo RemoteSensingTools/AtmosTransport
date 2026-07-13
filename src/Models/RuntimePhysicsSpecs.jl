@@ -211,12 +211,19 @@ function advection_spec(section)
     return LinRoodAdvectionSpec(_spec_int(section, "ppm_order", 5, "[advection]"))  # :linrood
 end
 
-# materialize — upwind/slopes/ppm/none are topology-independent; LinRood is
-# cubed-sphere only (the structured method throws, matching the old builder). This
-# collapses the old ~14 `Val`-dispatch methods to these 6.
+# Materialize with topology gates close to construction: RG currently accepts
+# only Upwind/NoAdvection, while LinRood is cubed-sphere only.
 materialize(::UpwindAdvectionSpec, ::AbstractRuntimeRecipeStyle) = UpwindScheme()
 materialize(::SlopesAdvectionSpec, ::AbstractRuntimeRecipeStyle) = SlopesScheme()
 materialize(::PPMAdvectionSpec,    ::AbstractRuntimeRecipeStyle) = PPMScheme()
+materialize(::SlopesAdvectionSpec, ::ReducedGaussianRuntimeRecipeStyle) =
+    throw(ArgumentError(
+        "[advection] `scheme = \"slopes\"` is not implemented for reduced-Gaussian runs; " *
+        "use `scheme = \"upwind\"` or `scheme = \"none\"`."))
+materialize(::PPMAdvectionSpec, ::ReducedGaussianRuntimeRecipeStyle) =
+    throw(ArgumentError(
+        "[advection] `scheme = \"ppm\"` is not implemented for reduced-Gaussian runs; " *
+        "use `scheme = \"upwind\"` or `scheme = \"none\"`."))
 materialize(::NoAdvectionSpec,     ::AbstractRuntimeRecipeStyle) = NoAdvection()
 materialize(s::LinRoodAdvectionSpec, ::CubedSphereRuntimeRecipeStyle) = LinRoodPPMScheme(s.order)
 materialize(::LinRoodAdvectionSpec, ::AbstractStructuredRuntimeRecipeStyle) = throw(ArgumentError(
@@ -398,8 +405,16 @@ function diffusion_spec(section)
     return TM5DkgDiffusionSpec(sfb)
 end
 
-@inline _diffusion_surface_coupling(b::Bool) =
+@inline _diffusion_surface_coupling(b::Bool, ::AbstractRuntimeRecipeStyle) =
     b ? DiffusiveSurfaceFluxBoundary() : SplitSurfaceFluxCoupling()
+
+function _diffusion_surface_coupling(b::Bool, ::ReducedGaussianRuntimeRecipeStyle)
+    b && throw(ArgumentError(
+        "[diffusion] `surface_flux_boundary = true` is not implemented for " *
+        "reduced-Gaussian runs; omit the key or set it to false to use " *
+        "V(dt/2) -> S(dt) -> V(dt/2)."))
+    return SplitSurfaceFluxCoupling()
+end
 
 # materialize — uniform `(spec, style, FT, context)` signature so the recipe calls
 # every diffusion kind identically. `NoDiffusion`/`constant` ignore `context`; the
@@ -412,7 +427,7 @@ materialize(s::ConstantDiffusionSpec, style::AbstractRuntimeRecipeStyle, ::Type{
             _context) where {FT} =
     ImplicitVerticalDiffusion(;
         kz_field = _constant_runtime_kz_field(style, FT(s.value)),
-        surface_flux_coupling = _diffusion_surface_coupling(s.surface_flux_boundary))
+        surface_flux_coupling = _diffusion_surface_coupling(s.surface_flux_boundary, style))
 
 function materialize(s::WindowPBLKzDiffusionSpec, ::CubedSphereRuntimeRecipeStyle,
                      ::Type{FT}, context) where {FT}
@@ -425,7 +440,8 @@ function materialize(s::WindowPBLKzDiffusionSpec, ::CubedSphereRuntimeRecipeStyl
     host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
     return ImplicitVerticalDiffusion(;
         kz_field = WindowPBLKzField(host_cache),
-        surface_flux_coupling = _diffusion_surface_coupling(s.surface_flux_boundary))
+        surface_flux_coupling = _diffusion_surface_coupling(
+            s.surface_flux_boundary, CubedSphereRuntimeRecipeStyle()))
 end
 materialize(::WindowPBLKzDiffusionSpec, ::AbstractRuntimeRecipeStyle, ::Type{FT},
             _context) where {FT} =
@@ -445,7 +461,8 @@ function materialize(s::HoltslagBovilleVdiffDiffusionSpec, ::CubedSphereRuntimeR
     host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
     return ImplicitVerticalDiffusion(;
         kz_field = LocalHoltslagBovilleKzField(host_cache),
-        surface_flux_coupling = _diffusion_surface_coupling(s.surface_flux_boundary))
+        surface_flux_coupling = _diffusion_surface_coupling(
+            s.surface_flux_boundary, CubedSphereRuntimeRecipeStyle()))
 end
 materialize(::HoltslagBovilleVdiffDiffusionSpec, ::AbstractRuntimeRecipeStyle, ::Type{FT},
             _context) where {FT} =
@@ -464,7 +481,8 @@ function materialize(s::TM5DkgDiffusionSpec, ::CubedSphereRuntimeRecipeStyle,
     field = PrecomputedCSDkgField(host_cache)
     return ImplicitVerticalDiffusion(;
         kz_field = field,
-        surface_flux_coupling = _diffusion_surface_coupling(s.surface_flux_boundary))
+        surface_flux_coupling = _diffusion_surface_coupling(
+            s.surface_flux_boundary, CubedSphereRuntimeRecipeStyle()))
 end
 materialize(::TM5DkgDiffusionSpec, ::AbstractRuntimeRecipeStyle, ::Type{FT},
             _context) where {FT} =

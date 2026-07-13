@@ -121,7 +121,7 @@ Three gates are now in place:
    not the driver/grid; see plan 39 NOTES.
 
 3. **Regression tests (plan 39 Commit H)** —
-   [`test/test_replay_consistency.jl`](../test/test_replay_consistency.jl),
+   [`test/core/test_replay_consistency.jl`](../test/core/test_replay_consistency.jl),
    18 tests covering continuity-consistent tuples, deliberately broken
    cm, deliberately broken horizontal flux, and the zero-flux /
    nonzero-dm pattern used by legacy test helpers.
@@ -155,7 +155,7 @@ quantified it; Codex's replay identified the math.
 
 ## See also
 
-- Transport-binary contract docs: [`reference/BINARY_FORMAT.md`](reference/BINARY_FORMAT.md)
+- Transport-binary contract docs: [`src/concepts/binary_format.md`](src/concepts/binary_format.md)
 - Runtime/preprocessing contract docs: [`30_BINARY_AND_DRIVERS.md`](30_BINARY_AND_DRIVERS.md)
 - Plan 24 Commit 4 NOTES — cross-references this bug (the "contract breach at
   day boundaries" deferred investigation closes here)

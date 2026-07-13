@@ -1,210 +1,212 @@
-# First run
+# [Run with real meteorology](@id Run-with-real-meteorology)
 
-This page covers the **general** runtime invocation pattern — the TOML
-config schema, where met data comes from, and how runs flow through
-`scripts/run_transport.jl`.
+The [Quickstart](@ref Quickstart) uses synthetic forcing so that everyone can
+run it. A scientific run uses the same runner and TOML structure, but points at
+one or more transport binaries generated from ERA5 or GEOS meteorology.
 
-!!! tip "Just want to try it?"
-    For the fastest path from a fresh clone to a real simulation +
-    NetCDF + plot, see [Quickstart with example data](@ref). It ships a
-    250 MB downloadable bundle of preprocessed transport binaries and
-    four ready-to-run configs (LL at two resolutions + CS at two
-    resolutions, all F32, 3 days of December 2021 ERA5).
+## What you need
 
-A general run needs (1) a TOML config, (2) preprocessed met binaries
-(produced once by the preprocessor), and optionally (3) emissions /
-initial-condition files. The quickstart bundle gives you (1) and (2);
-this page documents the pattern so you can swap in your own.
+A forward run has three inputs:
 
-## The runtime invocation
+1. **Transport binaries**—one or more version-4 files produced by the current
+   preprocessor. They contain grid geometry, air mass, mass fluxes, timing, and
+   any requested diffusion or convection fields.
+2. **A run TOML**—selects precision, architecture, operators, tracers, initial
+   conditions, emissions, and output.
+3. **Optional scientific data**—file-backed initial conditions or emissions
+   inventories referenced by the TOML.
 
-There is one runtime entrypoint:
+Raw ERA5 GRIB or GEOS NetCDF is not opened by the runtime. See
+[Preprocessing overview](@ref Preprocessing-overview) when you need to create
+transport binaries.
 
-```bash
-julia --project=. scripts/run_transport.jl <config.toml>
-```
+## 1. Inspect the forcing first
 
-The script reads the TOML, opens the first transport binary referenced by
-`[input]`, dispatches on the binary's `grid_type` header
-(`:latlon`, `:reduced_gaussian`, `:cubed_sphere`), and runs the simulation
-loop. All topology-specific behavior — initial-condition pipeline,
-surface fluxes, snapshot output, GPU-residency assertions, capability
-validation — lives in `src/Models/DrivenRunner.jl` and dispatches on the
-mesh type via Julia's multiple dispatch.
-
-For double-buffered I/O overlap on GPU runs:
+Before writing a run configuration, inspect one file:
 
 ```bash
-julia --threads=2 --project=. scripts/run_transport.jl <config.toml>
+julia --project=. scripts/diagnostics/inspect_transport_binary.jl \
+    /path/to/era5_transport_20211201_float32.bin
 ```
 
-## Data roots
+Confirm:
 
-Run configs can use `~/...`, `$ATMOSTRANSPORT_DATA_ROOT/...`, and
-`$ATMOSTRANSPORT_DATA_ROOT_quickstart/...` paths. The defaults are:
+- `format_version` is 4 (older files are rejected);
+- `grid_type` and vertical level count match the intended experiment;
+- `mass_basis` is `dry` for the standard runtime;
+- the required capability is present for every requested operator—for example,
+  TM5 convection needs `entu`, `detu`, `entd`, and `detd`.
 
-| Variable | Default | Used by |
-|---|---|---|
-| `ATMOSTRANSPORT_DATA_ROOT` | `~/data/AtmosTransport` | Production and campaign configs. |
-| `ATMOSTRANSPORT_DATA_ROOT_quickstart` | `~/data/AtmosTransport_quickstart` | Downloaded quickstart bundle. |
+This check catches incompatible data before model allocation or GPU startup.
 
-Set these variables when your data lives somewhere else:
+## 2. Copy the canonical template
 
 ```bash
-export ATMOSTRANSPORT_DATA_ROOT=/scratch/$USER/AtmosTransport
-export ATMOSTRANSPORT_DATA_ROOT_quickstart=/scratch/$USER/AtmosTransport_quickstart
+cp config/examples/minimal_template.toml my_run.toml
 ```
 
-## A worked TOML walkthrough
+The template uses the current section names. Replace its synthetic input and
+output paths, then adjust the physics and tracers for the experiment.
 
-`config/runs/quickstart/ll72x37_advonly.toml` (the smallest of the four
-quickstart configs) is a concise 3-day advection-only run on a 5°
-lat-lon grid with a Gaussian CO2 anomaly initial condition. The
-schema is the canonical one consumed by `scripts/run_transport.jl` via
-`expand_binary_paths`:
+### Input: explicit files
+
+Use an explicit list for a short run or files without a date naming pattern:
 
 ```toml
 [input]
-folder     = "$ATMOSTRANSPORT_DATA_ROOT_quickstart/met/era5_ll72x37_dec2021_f32/"
-start_date = "2021-12-01"
-end_date   = "2021-12-03"
-# Alternative: explicit list
-#   binary_paths = ["~/.../day1.bin", "~/.../day2.bin", …]
+binary_paths = [
+    "/data/transport/era5_transport_20211201_float32.bin",
+    "/data/transport/era5_transport_20211202_float32.bin",
+]
+```
 
+### Input: folder and date range
+
+Use folder expansion for daily production files:
+
+```toml
+[input]
+folder = "$ATMOSTRANSPORT_DATA_ROOT/met/era5/ll72x37/transport"
+start_date = "2021-12-01"
+end_date = "2021-12-10"
+
+# Add this only when the filename needs an exact pattern:
+# file_pattern = "era5_transport_{YYYYMMDD}_float32.bin"
+```
+
+The range is inclusive. The runner verifies that every date exists and rejects
+duplicates or gaps.
+
+### Architecture and precision
+
+Start on CPU when validating a new configuration:
+
+```toml
 [architecture]
-use_gpu = true               # false for CPU
+use_gpu = false
+backend = "cpu"
 
 [numerics]
-float_type = "Float32"       # "Float64" on CUDA / CPU debug
+float_type = "Float32"
+```
 
+After the CPU smoke run succeeds, set `use_gpu = true` and choose `"cuda"`,
+`"metal"`, or `"auto"`. Metal requires `Float32`.
+
+### Operators
+
+```toml
 [advection]
-scheme = "slopes"            # "slopes" (Russell-Lerner) or "ppm" (Putman-Lin)
+scheme = "slopes"
 
-[tracers.co2_bl]
-[tracers.co2_bl.init]
-kind          = "gaussian_blob"  # uniform | gaussian_blob | latitude_step | file | netcdf
-background    = 4.0e-4           # ~400 ppm dry VMR
-amplitude     = 8.0e-5           # +80 ppm anomaly
-lon0_deg      = -80.0
-lat0_deg      = 35.0
-sigma_lon_deg = 35.0
-sigma_lat_deg = 18.0
+[diffusion]
+kind = "none"
+
+[convection]
+kind = "none"
+```
+
+Operator selection must agree with the binary capabilities. Omitting an
+optional physics block or using `kind = "none"` selects its typed no-op. See
+[Operators](@ref Operator-concepts) for the available schemes and [TOML schema](@ref) for every
+key.
+
+### Tracers and output
+
+```toml
+[tracers.co2.init]
+kind = "uniform"
+background = 400.0e-6       # dry mol/mol = 400 ppm
 
 [output]
-hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
-path  = "$ATMOSTRANSPORT_DATA_ROOT_quickstart/output/ll72x37_advonly.nc"
+cadence_hours = 6
+path = "$ATMOSTRANSPORT_DATA_ROOT/output/my_run.nc"
+split = "single"
 ```
 
-Things to know:
+Tracer initial conditions are dry volume mixing ratios. Internally the model
+converts them to conservative `mixing ratio × carrier-air-mass` storage.
+Output converts back to mixing ratio and writes
+the mass diagnostics needed to reproduce column means.
 
-- **`[input]`** accepts either a `folder` + `start_date` / `end_date` pair
-  (the runtime expands to one binary per day under that folder) or an
-  explicit `binary_paths = […]` list. See `BinaryPathExpander.jl`.
-- **Topology** is auto-detected from the binary's `grid_type` header
-  field. The runtime then dispatches `DrivenRunner` on the mesh type;
-  no explicit `[grid]` block is needed for a run.
-- **`[advection] scheme`** picks the advection scheme (`"upwind"` /
-  `"slopes"` / `"ppm"` / `"linrood"`). `[run] scheme` is the legacy
-  alias; if `[advection]` is present, `[run].scheme` is rejected.
-  `LinRoodPPMScheme` is CS-only and takes `ppm_order = 5` or `7`
-  (orders 5 and 7 are the only valid choices; `"ppm"` does not accept
-  `ppm_order`).
-- **`[tracers.<name>.init]`** declares the initial condition. All topologies
-  support `uniform | latitude_step | gaussian_blob | file | netcdf |
-  file_field | catrine_co2`; specialized kinds have additional topology
-  restrictions documented in the [TOML schema](@ref).
-- **`[output]`** writes a single NetCDF at `path` containing per-
-  tracer `<name>_column_mean` and `<name>_column_mass_per_area` plus the
-  `column_air_mass_per_area` diagnostic (dimensions vary with topology — see
-  [Inspecting output](@ref)).
+## 3. Validate and run
 
-## Where the met data comes from
-
-The runtime consumes **transport binaries** (`format_version = 4`) — a
-self-describing flat format produced by the preprocessor. There are two
-preprocessing paths today:
-
-1. **ERA5 spectral**. Reads vorticity, divergence, and log-PS GRIB files;
-   synthesizes mass fluxes via Holton's continuity-consistent approach;
-   pins global mean PS for mass closure. Configs in
-   `config/preprocessing/era5_*.toml`.
-
-2. **GEOS native cubed-sphere**. Reads GEOS-IT C180 NetCDF
-   (CTM_A1 hourly, CTM_I1 instantaneous, optionally A3mstE / A3dyn for
-   convection); applies dry-basis conversion, column-balanced fluxes,
-   and chained cross-day mass continuity. Configs in
-   `config/preprocessing/geosit_*.toml`.
-
-CLI:
+The command-line runner performs inexpensive configuration checks before
+opening the full simulation:
 
 ```bash
-julia --project=. scripts/preprocessing/preprocess_transport_binary.jl \
-    <preprocessing-config.toml> --day YYYY-MM-DD
-# or
-julia --project=. scripts/preprocessing/preprocess_transport_binary.jl \
-    <preprocessing-config.toml> --start YYYY-MM-DD --end YYYY-MM-DD
+julia --project=. scripts/run_transport.jl my_run.toml
 ```
 
-The preprocessor writes one binary per day to the path declared in the
-config's `[output] directory`. A subsequent run config points at that
-directory via `[input] folder`.
+The script may restart itself with two Julia threads so NetCDF writes can
+overlap computation. Set `ATMOSTR_NO_AUTO_THREADS=1` only when debugging a
+single-threaded path.
 
-See [Preprocessing overview](@ref) for the detailed preprocessor guide.
-
-## Synthetic-fixture route (no external data)
-
-The following test files build complete transport binaries from synthetic
-fixtures and exercise the runtime end-to-end. They are the most accurate
-"minimal working example" today:
-
-| File | What it covers |
-|---|---|
-| `test/test_geos_cs_passthrough.jl` | GEOS native C8 fixture → CS passthrough preprocessor → write-time replay gate (3467 cases). |
-| `test/test_geos_convection.jl` | The same fixture extended with synthetic A3mstE/A3dyn → convection forcing → binary payload sections. |
-| `test/test_driven_simulation.jl` | Synthetic LL binary loaded by `DrivenRunner` and stepped forward. |
-
-To run just one of them without the full suite:
-
-```bash
-julia --project=. test/test_driven_simulation.jl
-```
-
-See the [Tutorial: synthetic lat-lon end-to-end](@ref) for a Literate-rendered
-version of one of these flows — a runnable script that also doubles as an
-HTML docs page.
-
-## What you should see
-
-A successful run prints, roughly (output trimmed from a real
-`config/runs/quickstart/ll72x37_advonly.toml` invocation):
+A successful startup summary identifies the choices that matter:
 
 ```text
-[ Info: Preloading CUDA (GPU backend)
-[ Info: [gpu verified] backend=cuda backing=CuArray device=NVIDIA L40S
-[ Info: Backend: GPU (CUDA, NVIDIA L40S)
-[ Info: Physics: advection=SlopesScheme diffusion=NoDiffusion convection=NoConvection
-[ Info: Snapshot 1 at t=0h
-[ Info: Running era5_transport_20211201_merged1000Pa_float32.bin with SlopesScheme on 72×37 LatLonMesh{Float32} (24 windows)
-…
-[ Info: Saved snapshots: ~/data/AtmosTransport_quickstart/output/ll72x37_advonly.nc (13 frame(s), 72×37 LatLonMesh{Float32}, mass_basis=dry)
-[ Info: Final air-mass change vs initial state:  -1.071e-07
-[ Info: Final tracer-mass drift for co2_bl:         0.000e+00
+Driven runtime
+|-- grid:      ...
+|-- numerics:  scheme=Slopes, FT=Float32, backend=CPU
+|-- physics:   diffusion=NoDiffusion, convection=NoConvection
+|-- schedule:  window_dt=3600s, steps/window=..., binaries=...
+|-- tracers:   co2
+`-- output:    .../my_run.nc
 ```
 
-Two diagnostic lines worth watching for:
+At completion, check the final air-mass and per-tracer storage-budget lines. Their
+tolerance depends on precision and enabled sources/sinks; unexplained drift in
+a closed advection-only run is a failure, not a cosmetic warning.
 
-- `[gpu verified]` — the runtime asserts that `state.air_mass` lives on the
-  selected GPU backend when `use_gpu = true`. If you see CPU residency
-  despite the flag, the dispatch chain is mis-wired.
-- The closing `Final tracer-mass drift` line should be exactly `0.000e+00`
-  for advection-only runs (the mass-fixer is on by default and any drift
-  beyond F32 noise indicates a regression).
+## Data roots
 
-## What's next
+`$ATMOSTRANSPORT_DATA_ROOT` defaults to `~/data/AtmosTransport`. Set it once to
+keep configs portable across machines:
 
-- [Inspecting output](@ref) — verify the snapshot NetCDF and the input
-  binary.
-- [TOML schema](@ref) — the full runtime and preprocessing configuration
-  reference.
-- [Tutorial: synthetic lat-lon end-to-end](@ref) — an executable Literate.jl
-  example.
+```bash
+export ATMOSTRANSPORT_DATA_ROOT=/scratch/$USER/AtmosTransport
+```
+
+Paths beginning with `~/` and environment variables are expanded by the
+runtime. Relative paths are interpreted from the directory where the command is
+run, which is another reason to run from the repository root.
+
+## Create current forcing from raw data
+
+The canonical preprocessing command is:
+
+```bash
+julia --project=. --threads=8 \
+    scripts/preprocessing/preprocess_transport_binary.jl \
+    config/preprocessing/<source-and-grid>.toml \
+    --day 2021-12-01
+```
+
+Use `--start` and `--end` where the selected source supports a range. The
+preprocessor performs dry-air conversion, topology/vertical transforms,
+continuity balancing, adaptive substep selection, and write-time replay and
+positivity gates before committing the binary.
+
+Choose the source-specific guide next:
+
+- [ERA5 spectral path](@ref) for lat-lon, reduced Gaussian, or cubed sphere.
+- [GEOS native cubed-sphere](@ref) for GEOS-IT or GEOS-FP native panels.
+- [Data sources](@ref) for authentication and raw-file layout.
+
+## Common first-run failures
+
+| Message or symptom | Meaning and first action |
+|---|---|
+| `unsupported transport binary version` | Regenerate the forcing with the current version-4 preprocessor. |
+| `resolved path does not exist` | Check the active data root and run from the repository root. |
+| Missing convection/diffusion payload | The preprocessing config did not include the fields required by the selected operator. |
+| GPU backend unavailable | Set CPU in TOML, verify the run, then diagnose the optional backend separately. |
+| Date range has gaps | Add the missing daily binary or use an explicit `binary_paths` list. |
+| Extreme CFL or positivity failure | Inspect the binary schedule and preprocessing gates; do not work around it by suppressing the error. |
+
+## Next steps
+
+- [Inspecting output](@ref) explains variables and dimension order.
+- [Architecture tour](@ref Architecture-tour) connects the runner to the typed
+  source structure.
+- [TOML schema](@ref) is the complete configuration reference.

@@ -193,7 +193,7 @@ end
 Gamma-clamped upwind tracer flux (legacy cubed_sphere_mass_flux.jl pattern).
 
 Given mass flux `F` [kg] through a face, donor cell mass `m_donor` [kg],
-and donor tracer mass `rm_donor` [kg]:
+and conservative donor tracer storage `rm_donor` [carrier-air kg]:
 
     γ = clamp(F / m_donor, {0, 1} or {-1, 0})
     tracer_flux = γ × rm_donor
@@ -201,7 +201,7 @@ and donor tracer mass `rm_donor` [kg]:
 This ensures:
 - When CFL = |F|/m ≤ 1 (normal): `γ = F/m`, recovering first-order upwind.
 - When CFL > 1 (overshooting): `γ` is clamped to ±1, so the tracer flux
-  never exceeds the donor cell's total tracer mass. This guarantees
+  never exceeds the donor cell's total tracer storage. This guarantees
   `rm_new ≥ 0` when `rm ≥ 0` (positivity preservation).
 - Mass update `m_new = m + F_west − F_east` is EXACT (unclamped), so total
   mass is conserved. Only the tracer distribution is limited.

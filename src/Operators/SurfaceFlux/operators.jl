@@ -6,7 +6,7 @@ Top of the surface emission operator hierarchy. Concrete subtypes:
 - [`NoSurfaceFlux`](@ref) — identity (default).
 - [`SurfaceFluxOperator`](@ref) — wraps a
   [`PerTracerFluxMap`](@ref) and applies each tracer's surface flux
-  to `k = Nz` of the tracer mass array.
+  to `k = Nz` of the conservative tracer-storage array.
 
 Every concrete subtype implements two entry points:
 
@@ -42,7 +42,7 @@ struct NoSurfaceFlux <: AbstractSurfaceFluxOperator end
     SurfaceFluxOperator(sources::SurfaceFluxSource...)
 
 Applies a `PerTracerFluxMap` of surface sources to the `k = Nz` slab
-of the tracer mass array.
+of the conservative tracer-storage array.
 
 For every tracer named in the flux map, the operator launches the
 layout-appropriate surface-flux kernel and adds `rate × dt` to the
@@ -56,8 +56,10 @@ surface layer `k = Nz` of the matching tracer:
 Tracer indices are resolved on the host from `state.tracer_names`.
 Tracers absent from the map are untouched.
 
-The rate is in kg/s per cell (already area-integrated); no cell-area
-multiplier appears in the kernel.
+The rate is a model-storage amount per second per cell (already
+area-integrated); no cell-area multiplier appears in the kernel. File-based
+physical kg-species rates are converted by the source builder before they
+reach this operator.
 
 # `apply!` contract
 

@@ -108,7 +108,7 @@ time-varying field contracts consumed by operators.
 - Topology status:
   [`../Operators/TOPOLOGY_SUPPORT.md`](../Operators/TOPOLOGY_SUPPORT.md)
 - Tests:
-  - [`../../test/test_basis_explicit_core.jl`](../../test/test_basis_explicit_core.jl)
-  - [`../../test/test_fields.jl`](../../test/test_fields.jl)
-  - [`../../test/test_reduced_gaussian_mesh.jl`](../../test/test_reduced_gaussian_mesh.jl)
-  - [`../../test/test_cubed_sphere_runtime.jl`](../../test/test_cubed_sphere_runtime.jl)
+  - [`../../test/core/test_basis_explicit_core.jl`](../../test/core/test_basis_explicit_core.jl)
+  - [`../../test/orphan/test_fields.jl`](../../test/orphan/test_fields.jl)
+  - [`../../test/core/test_reduced_gaussian_mesh.jl`](../../test/core/test_reduced_gaussian_mesh.jl)
+  - [`../../test/orphan/test_cubed_sphere_runtime.jl`](../../test/orphan/test_cubed_sphere_runtime.jl)

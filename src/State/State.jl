@@ -4,7 +4,7 @@
 Prognostic and diagnostic state containers for the basis-explicit transport architecture.
 
 Provides:
-- `CellState` — cell-centered air mass + tracer masses (prognostic)
+- `CellState` — cell-centered air mass + conservative tracer storage
 - `AbstractFaceFluxState` hierarchy — face mass fluxes
   - `AbstractStructuredFaceFluxState` → `StructuredFaceFluxState` (am, bm, cm)
   - `AbstractUnstructuredFaceFluxState` → `FaceIndexedFluxState`

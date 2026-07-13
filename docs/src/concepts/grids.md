@@ -48,11 +48,9 @@ reconstruct the grid at runtime, so a **run** config does **not** need
 a `[grid]` block:
 
 ```toml
-# config/runs/quickstart/ll72x37_advonly.toml
+# config/examples/minimal_template.toml
 [input]
-folder     = "~/data/.../era5_ll72x37_dec2021_f32/"
-start_date = "2021-12-01"
-end_date   = "2021-12-03"
+binary_paths = ["data/quickstart/synthetic_latlon_v4.bin"]
 # (no [grid] block needed — read from the binary header)
 ```
 
@@ -60,12 +58,8 @@ The runtime calls `inspect_binary` on the first file, reads the
 `grid_type` field (`:latlon | :reduced_gaussian | :cubed_sphere`), and
 constructs the correct mesh + driver.
 
-!!! note "Legacy run configs"
-    Some older `config/runs/*.toml` files still carry a `[grid]` block.
-    The current runner ignores it for grid construction (the binary
-    header wins), but be aware when reading examples — newer configs
-    in `config/runs/quickstart/` and `config/runs/advresln/` follow the
-    no-`[grid]` pattern.
+The binary header is authoritative even if an experimental config also carries
+a `[grid]` table. New runtime configs should omit that table.
 
 A **preprocessing** config is where you declare the target grid, since
 that's the act of choosing one:
@@ -190,7 +184,7 @@ The definition is the geometry contract:
 | Panel convention | Orders/orients the six panels in file/index space. | `GnomonicPanelConvention`, `GEOSNativePanelConvention` |
 | Longitude offset | Final rigid rotation about the polar axis. | `0°` for synthetic, `-10°` for GEOS |
 
-`EquiangularCubedSphereDefinition()` is the legacy synthetic target. It uses
+`EquiangularCubedSphereDefinition()` is the idealized synthetic target. It uses
 
 ```math
 \xi_s = \tan\left(-\frac{\pi}{4} + (s-1)\frac{\pi}{2N_c}\right)
@@ -291,12 +285,14 @@ The most useful per-topology helpers are:
 | `ReducedGaussianMesh` | `face_length(mesh, f)` | Length of face `f` in m. |
 | `CubedSphereMesh` | `mesh.cell_areas`, `mesh.Δx`, `mesh.Δy` | Per-panel area and edge-length matrices. |
 
-A unified cross-topology API for area / face length is on the roadmap but
-not yet implemented. Today, geometry-aware code dispatches on the mesh
-type and reaches into the appropriate per-topology helper.
+`cell_area` is the shared area interface. `face_length` has indexed methods
+for lat-lon and reduced-Gaussian meshes; cubed-sphere code uses the panel-wise
+`mesh.Δx` and `mesh.Δy` matrices because its edge geometry is naturally
+two-dimensional. Geometry-aware algorithms dispatch on the mesh type where
+those representations differ.
 
 ## What's next
 
 - [State & basis](@ref) — how prognostic state is laid out on a grid.
-- [Operators](@ref) — physics interfaces dispatched on grid type.
+- [Operators](@ref Operator-concepts) — physics interfaces dispatched on grid type.
 - [Binary format](@ref) — the on-disk preprocessed-met layout.

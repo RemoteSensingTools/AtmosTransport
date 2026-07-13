@@ -10,7 +10,8 @@ Panel-native prognostic state for cubed-sphere transport.
 # Fields
 - `air_mass :: NTuple{6, A3}` — halo-padded panel air mass arrays with shape
   `(Nc + 2Hp, Nc + 2Hp, Nz)`.
-- `tracers_raw :: NTuple{6, Raw4}` — packed per-panel tracer storage with shape
+- `tracers_raw :: NTuple{6, Raw4}` — packed per-panel model tracer storage
+  (conventionally `dry VMR × dry-air mass`, not physical kg species) with shape
   `(Nc + 2Hp, Nc + 2Hp, Nz, Nt)`.
 - `tracer_names :: Names` — names of the tracer axis in storage order.
 - `halo_width :: Int` — halo width `Hp` needed to recover the physical interior.

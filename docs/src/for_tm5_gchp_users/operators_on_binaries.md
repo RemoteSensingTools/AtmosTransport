@@ -26,13 +26,16 @@ hand:
 Operators consume these directly; no operator builds a flux field
 from raw winds at run time.
 
-## The Strang palindrome
+## Transport composition
 
-Each `step!(model, dt)` runs a fixed palindrome composing transport,
-diffusion, surface flux, convection, and chemistry:
+Each transport substep uses a directional advection palindrome with a
+policy-selected center. Convection and chemistry are separate window-cadence
+blocks:
 
 ```
-transport:  X → Y → Z → V(dt/2) → S(dt) → V(dt/2) → Z → Y → X
+transport shell:  X → Y → Z → CENTER → Z → Y → X
+default CENTER:   V(dt/2) → S(dt) → V(dt/2)
+LL/CS alternate:  S(dt) → V(dt)
 convection: apply!(state, convection_forcing, grid, convection, dt)
 chemistry:  apply!(state, meteo, grid, chemistry, dt)
 ```
@@ -42,8 +45,9 @@ Where:
 - `X`, `Y`, `Z` are half-step directional sweeps,
 - `V` is vertical diffusion (the Thomas implicit solve),
 - `S` is the surface flux deposition,
-- the palindrome symmetry makes the composition second-order accurate
-  in time.
+- the default midpoint center is the time-symmetric Strang composition,
+- the `surface_flux_boundary = true` LL/CS center is GCHP-style
+  source-before-full-solve ordering and is not a symmetric Strang split.
 
 For binary-scheduled drivers the full `step!` is bypassed; the
 runtime calls `transport_step!` per substep and
@@ -166,7 +170,7 @@ diffusivity profile is supplied by an `AbstractKzField`:
 | `ProfileKzField` | Static profile from TOML | Production |
 | `DerivedKzField` | Beljaars–Viterbo local Kz from `(ps, u, v, T, q, z0)` | Production |
 | `WindowPBLKzField` | PBL-aware variant of Beljaars–Viterbo | Production |
-| `LocalHoltslagBovilleKzField` | GEOS/VDIFF local Holtslag–Boville Kz | Preview |
+| `LocalHoltslagBovilleKzField` | GEOS/VDIFF local Holtslag–Boville Kz | Supported when the v4 binary carries all VDIFF fields |
 
 For TM5 users: `DerivedKzField` is the closest analogue to the
 Holtslag–Boville-with-Beljaars-correction profile TM5 ships with.
@@ -174,23 +178,25 @@ For GCHP users: `LocalHoltslagBovilleKzField` follows the local GCHP/VDIFF
 formulation almost line-for-line, with the same `(R_dry, cp_dry,
 karman)` parameters and the same non-local counter-gradient term.
 
-### Surface-flux as a Dirichlet (current) vs Neumann (target)
+### Surface-flux and diffusion ordering
 
-The diffusion operator pairs with a surface flux operator through a
-boundary-condition trait:
+The diffusion operator pairs with a surface-flux operator through a typed
+composition policy:
 
-- `NoSurfaceFluxBoundary` — no coupling.
-- `DiffusiveSurfaceFluxBoundary` — surface flux is added to the
-  bottom cell mass **before** the Thomas solve, then the solve runs
-  with a zero-flux lower boundary.
+- `SplitSurfaceFluxCoupling` — two half diffusion steps bracket the surface
+  source: `V(dt/2) → S(dt) → V(dt/2)`.
+- `DiffusiveSurfaceFluxBoundary` — surface mass is injected first and then
+  participates in one full implicit solve: `S(dt) → V(dt)`.
 
-The current `DiffusiveSurfaceFluxBoundary` is an approximation of
-GCHP's VDIFF lower-boundary treatment. GCHP modifies the bottom row
-of the Thomas tridiagonal directly (`b[Nz]`, `d[Nz]`) to inject the
-flux as a Neumann condition. The two are equivalent only for
-`Kz · dt / dz² ≪ 1`. The roadmap is to switch to the Thomas-RHS
-formulation; until then, the approximation is documented at
-`Operators/Diffusion/operators.jl`.
+Despite its historical name, `DiffusiveSurfaceFluxBoundary` is an ordering
+policy, not a distinct lower-boundary discretization. It reproduces GCHP's
+placement of fresh surface mass inside the diffusive step, but it does not
+insert the source into the bottom row of the Thomas system as a literal
+Neumann boundary term. On lat-lon and cubed-sphere grids, use
+`surface_flux_boundary = true` for the supported GCHP-style placement.
+Reduced-Gaussian transport currently supports the midpoint split only and
+rejects that setting. Treat exact discrete VDIFF parity as unvalidated
+until the full-model comparison listed in [Validation status](@ref) exists.
 
 ## Convection
 
@@ -224,7 +230,7 @@ We place convection **after** the FV transport block — once per met
 window, between the palindrome's last `X` sweep and chemistry. TM5
 interleaves convection inside the palindrome's vertical legs
 (`xyzvvzyx` → convection inside the `vv`). The GCHP placement is
-faithful to the GCHP CTM code (`gchp_chunk_mod.F90:1164-1174`); the
+faithful to the corresponding GCHP CTM placement in `gchp_chunk_mod.F90`; the
 TM5 placement is faithful to TM5-4DVAR's documented order.
 
 For research questions where convective tracer transport in the
@@ -284,7 +290,7 @@ or GCHP workflow:
   decay (`ExponentialDecay`) is shipped; this is enough for
   `222Rn → 222Pb` and similar half-life tracers.
 
-The roadmap explicitly tracks each of these gaps; see
+The current validation boundary is summarized in
 [Validation status](../theory/validation_status.md).
 
 ## Reading next

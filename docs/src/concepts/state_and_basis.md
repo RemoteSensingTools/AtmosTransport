@@ -1,7 +1,7 @@
 # State & basis
 
 Once the [Grids](@ref) are set, prognostic state lives in a
-**state object** that carries air mass and one or more tracers. There
+**state object** that carries air mass and one or more tracer-storage fields. There
 are two state types — one for `LatLon` (structured) and `Reduced
 Gaussian` (face-indexed / unstructured) sharing the same `CellState`
 layout, and one for the panel-native cubed-sphere — but they share
@@ -46,14 +46,14 @@ classDiagram
 ```julia
 struct CellState{Basis <: AbstractMassBasis, A, Raw, Names}
     air_mass     :: A         # per-cell mass (kg) on the chosen basis
-    tracers_raw  :: Raw       # packed mass storage (size(air_mass)..., Nt)
+    tracers_raw  :: Raw       # packed χ × carrier-air-mass storage
     tracer_names :: Names     # NTuple{Nt, Symbol}
 end
 ```
 
 User-facing surface:
 - `state.air_mass` — per-cell mass, shape `(Nx, Ny, Nz)` or `(ncells, Nz)`.
-- `state.tracers.<name>` — non-allocating view of one tracer's raw mass.
+- `state.tracers.<name>` — non-allocating view of one tracer's conservative storage.
 - `state.tracer_names` — tuple of symbols.
 - `mass_basis(state)` — `DryBasis()` or `MoistBasis()`.
 
@@ -78,12 +78,16 @@ is interpreted on a **dry-VMR contract**. This is the single most
 important runtime invariant in the project: trace-gas VMRs are always
 dry VMRs, including column averages.
 
-A subtle point: **what's stored in `state.tracers_raw` is tracer mass,
-not VMR.** The "dry-VMR contract" describes the user-facing semantics
-(initial conditions, snapshot output, column means) — the storage
-representation is mass for numerical reasons (it composes naturally
-with mass-conserving advection). The conversion happens at the
-boundaries:
+A subtle point: **`state.tracers_raw` is model storage, not physical kilograms
+of the chemical species.** On `DryBasis`, the stored quantity is
+
+```math
+r_m = \chi_{dry}\,m_{dry},
+```
+
+so it has a mass-like carrier unit and divides directly by dry-air mass to
+recover dry mole fraction. This representation composes naturally with
+mass-flux advection. The conversion happens at the boundaries:
 
 - **Initial conditions.** A TOML entry
   ```toml
@@ -91,18 +95,24 @@ boundaries:
   kind       = "uniform"
   background = 4.0e-4
   ```
-  is read as a *dry VMR* (`background`) and converted to mass via
-  `χ × air_mass` at construction time (the `kind = "uniform"` branch
-  of `build_initial_mixing_ratio`).
-- **In the loop.** Operators consume `state.tracers_raw` as mass; the
+  is read as a *dry VMR* (`background`) and converted to storage through
+  `pack_initial_tracer_mass`, which applies `χ × air_mass` on `DryBasis`.
+- **In the loop.** Operators consume `state.tracers_raw` as a conservative
+  mass-like field; the
   mass-conservation contract holds because both `air_mass` and the
-  tracer-mass slices are pinged through the same flux divergence.
-- **Snapshot output.** `<tracer>_column_mean` is `column-integrated
-  tracer mass / column-integrated air mass` — a dry VMR by
-  construction.
+  tracer-storage slices are pinged through the same flux divergence.
+- **Snapshot output.** `<tracer>_column_mean` is
+  `sum(r_m) / sum(m_dry)` — a dry VMR by construction.
 - **Programmatic readout.** `mixing_ratio(state, :CO2)` (in
   `CellState.jl`) gives you the dry VMR directly:
   `get_tracer(state, :CO2) ./ state.air_mass`.
+
+Physical surface inventories are different: a rate in kg species s⁻¹ is
+multiplied by ``M_{dry\ air} / M_{species}`` before entering model storage.
+Known tracer names provide molar masses; custom emitting tracers must set
+`molar_mass_kg_mol`. The output variable
+`<tracer>_column_mass_per_area` is the **model storage mass** per area and does
+not undo that molecular-weight scaling.
 
 What this means for the binary side:
 
@@ -114,7 +124,7 @@ What this means for the binary side:
 
 Operators dispatch on the basis tag so a `MoistBasis` state would
 automatically take a different code path; in practice the runtime is
-exclusively dry today and the moist path exists for legacy / future
+exclusively dry today; the moist path exists for explicit experiments and future
 diagnostic comparisons. **Mixing a moist binary with a dry runtime
 contract is a load-time error**, not a silent corruption.
 
@@ -142,14 +152,14 @@ arrays cached before construction** (per the project's testing rules).
 ### Reading a tracer
 
 ```julia
-co2_mass = get_tracer(state, :CO2)        # SubArray view of tracer MASS
-ch4_mass = state.tracers.CH4              # property access; same view
+co2_storage = get_tracer(state, :CO2)     # non-allocating χ × air-mass view
+ch4_storage = state.tracers.CH4            # property access; same view
 
-co2_vmr  = mixing_ratio(state, :CO2)      # CO2 mass / air mass — dry VMR
+co2_vmr  = mixing_ratio(state, :CO2)      # storage / carrier-air mass — dry VMR
 ```
 
 `get_tracer` returns a view into the last dimension of `tracers_raw`
-— **tracer mass**, not VMR. On `CellState` this is a 3-D / 2-D view of
+— **model storage**, not VMR or physical species mass. On `CellState` this is a 3-D / 2-D view of
 the right shape; on `CubedSphereState` it returns one slice per panel.
 For dry VMR use `mixing_ratio(state, name)` (or compute the ratio
 yourself if you need a backend-specialized variant).
@@ -157,8 +167,8 @@ yourself if you need a backend-specialized variant).
 ### Iterating
 
 ```julia
-for (name, χ) in eachtracer(state)
-    @info name extrema(χ) sum(χ .* state.air_mass)
+for (name, rm) in eachtracer(state)
+    @info name vmr_range=extrema(rm ./ state.air_mass) storage_total=sum(rm)
 end
 ```
 
@@ -178,7 +188,7 @@ set_uniform_mixing_ratio!(state, :CO2, 4.0e-4)   # sets mass = χ × air_mass
 For more involved initialization (loading from a NetCDF file, regridding
 from a different mesh), the runtime's `InitialConditionIO.jl` is the
 canonical entry point; user-facing IC kinds are described in the
-[First run](@ref) and [Quickstart with example data](@ref) pages.
+[Run with real meteorology](@ref) and [Quickstart](@ref) pages.
 
 ## GPU residency
 
@@ -208,19 +218,21 @@ types currently in the tree:
 |---|---|
 | `ConstantField{FT, N}` | Scalar broadcast to a fixed value. |
 | `ProfileKzField{FT, V, N}` | Fixed vertical profile, uniform horizontally. |
-| `PreComputedKzField{FT, N, A}` | Wrap a precomputed spatial field. |
-| `DerivedKzField{FT, SF, DELP, A, P}` | Beljaars-Viterbo Kz derived from surface fields (u\*, T\*). |
+| `PreComputedKzField{FT, N, A}` | Wrap a precomputed spatial Kz field. |
+| `DerivedKzField{FT, SF, DELP, A, P}` | Beljaars-Viterbo Kz derived from meteorological fields. |
 | `StepwiseField{FT, N, A, B, W}` | Piecewise-constant in time (read from binary). |
+| `WindowPBLKzField` | Cubed-sphere local Kz from `pblh/ustar/pbl_hflux/t2m`. |
+| `LocalHoltslagBovilleKzField` | GEOS/VDIFF local Kz from surface and column fields. |
+| `PrecomputedCSDkgField` | Exact interface exchange read from a `:dkg` payload. |
 
-!!! note "TOML wiring is partial today"
-    The runtime recipe currently auto-builds only
-    `[diffusion] kind = "none"`, `kind = "constant"`, and
-    cubed-sphere `kind = "tm5_beljaars_viterbo_local_kz"` when the binary carries raw
-    `pblh/ustar/hflux/t2m` surface sections. Other field types above
-    remain building blocks unless a runtime recipe wires them.
+The runtime recipe exposes `none`, `constant`, and three cubed-sphere modes:
+`tm5_beljaars_viterbo_local_kz`, `geoschem_holtslag_boville_vdiff`, and
+`tm5_dkg`. Each mode validates its required version-4 payload sections before
+constructing the field. Other field types remain useful for direct Julia API
+experiments.
 
 ## What's next
 
-- [Operators](@ref) — Advection, Convection, Diffusion, Sources behind
+- [Operators](@ref Operator-concepts) — Advection, Convection, Diffusion, Sources behind
   abstract types with `No<Operator>` defaults.
 - [Binary format](@ref) — the on-disk layout the runtime consumes.

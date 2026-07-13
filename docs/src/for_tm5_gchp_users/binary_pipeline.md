@@ -14,7 +14,7 @@ NetCDF entirely.
 
 ```mermaid
 flowchart LR
-    H[JSON header<br/>~131 KB padded]
+    H[JSON header<br/>padded to header_bytes]
     PAY[Flat payload<br/>fixed bytes per window]
     H --> PAY
     subgraph Header
@@ -32,54 +32,46 @@ flowchart LR
     end
 ```
 
-One file per day. JSON metadata up front (pretty-printable with `head
--c 131072 file.bin | python -m json.tool`). After the header, the
-payload is a fixed number of bytes per met window, identical stride
-for every window, identical layout for every day. **The runtime's
-read pattern is `mmap → window_offset + k * bytes_per_window`** —
-there is no per-window directory, no compression, no schema
-indirection.
+Preprocessing normally writes one file per day. JSON metadata comes first,
+padded to the declared `header_bytes`; after that, every meteorological window
+has the same section order and element stride. The reader memory-maps the flat
+payload and computes `window_offset + k * elems_per_window`. Use
+`inspect_binary(path)` or `scripts/diagnostics/inspect_transport_binary.jl`
+instead of parsing padded header bytes by hand.
 
-Concrete sizes: a 137-level Float32 lat-lon 0.5° daily binary with the
-optional TM5 convection sections is ~7 GB; a C180 cubed-sphere daily
-binary with `cmfmc` + `dtrain` is ~3 GB. ERA5 GEOS-IT C180 binaries
-land around 4 GB once flux deltas are included.
+File size depends directly on grid resolution, vertical levels, precision,
+window count, and optional sections. Inspect `payload_sections` before
+comparing two products; a full-physics binary is intentionally much larger
+than an advection-only binary.
 
 ## Why "one daily binary" instead of NetCDF
 
-TM5's boundary archive is split across many files per day. GCHP reads
-NetCDF through MAPL ExtData. Both designs share two costs that the
-binary avoids:
+TM5's boundary archive and GCHP's MAPL ExtData layer are flexible interfaces
+to collections of meteorological variables. AtmosTransport instead performs
+that interpretation once during preprocessing. Runtime then sees one header,
+one fixed section order, and one numerical schedule. The flat payload also
+avoids chunk decompression during model stepping; it stores raw `Float32` or
+`Float64` values.
 
-1. **Per-read parsing.** NetCDF needs to interpret the schema (dim
-   maps, variable indices, type codes) on every read; the binary
-   needs only an offset arithmetic step.
-2. **Decompression on the hot path.** NetCDF compressed chunks need
-   per-read inflate; the binary stores raw `Float32` (or `Float64` on
-   research configs), with no compression.
-
-The trade-off is **disk**. A compressed NetCDF day might be
-1.5–2× smaller than the equivalent binary. We pay that cost because
-the runtime read pattern is then dominated by *page-cache hits* on a
-file that is already laid out in the exact order the runtime walks.
-On warm caches the binary's per-window read is below 100 µs even at
-C180.
+The trade-off is **disk**. The transport payload is uncompressed so its
+sections have fixed offsets and can be copied directly from the memory map.
+Actual read time depends on filesystem, cache state, payload size, precision
+conversion, and—on accelerators—the host-to-device copy. The runtime reports
+those stages separately when `ATMOSTR_TIMERS=1`.
 
 !!! tip "If disk is tight"
-    Compress the binaries *at rest* with `zstd` (typical 2× reduction
-    on Float32 mass-flux payloads, ~5 s/day on a modern CPU) and
-    decompress to local NVMe before a campaign run. The runtime then
-    operates on uncompressed files and pays no per-read cost.
-    `zstd --long=27 transport_binary_2021-12-01.bin` works well; the
-    JSON header compresses to a few KB, the payload to about half its
-    raw size.
+    Binaries may be compressed *at rest* with a general-purpose tool such as
+    `zstd` and decompressed before a run. Compression ratio and decompression
+    time vary with the fields and precision. The runtime itself requires the
+    uncompressed version-4 file.
 
 ## The mass-conservation contract
 
-Every binary that the runtime is willing to read satisfies a written
-contract. The contract is enforced at write time in the preprocessor,
-re-checked optionally at load time in the runtime, and the JSON header
-carries the metadata that lets either side verify it.
+Every binary that the runtime is willing to read satisfies the structural
+version-4 contract. The unified preprocessor additionally runs numerical
+positivity and replay checks before publishing a file. Runtime replay checking
+is optional because it redoes work already performed by that writer; enable it
+for imported, copied, or otherwise suspect files.
 
 ### Dry-basis cm closure
 
@@ -92,10 +84,9 @@ runs. The fall-out invariant is
 m[t+1] = m[t] + dm = m[t] + Δt · (∂xa + ∂yb + ∂zc)
 ```
 
-with `dm` written to disk and `cm` reconstructed from it. This means
-the runtime is replaying *exactly* the mass field the preprocessor
-wrote — no rounding from "compute cm from divergence of am/bm at run
-time" leaks in.
+with `dm` written to disk and `cm` reconstructed from it. This means the
+runtime uses the preprocessor's explicit mass target rather than diagnosing a
+new target from horizontal divergence at run time.
 
 For GEOS-native cubed-sphere sources we additionally use the raw GEOS
 `DELP_dry` endpoint as the mass target. The pressure-fixer's implied
@@ -105,18 +96,16 @@ and the column balance and `cm` diagnosis both target it.
 
 ### Write-time replay gate
 
-After every window write, the preprocessor evolves `m_n` one window
-forward with the just-written flux fields and asserts
+For every written window, the preprocessor evolves `m_n` forward with the
+stored flux fields and asserts
 
 ```
 ‖m_evolved - m_stored[n+1]‖ / ‖m_stored[n+1]‖  ≤  tol
 ```
 
-with `tol = 1e-4` (Float32) or `1e-10` (Float64). Output is staged
-under a temporary name; on failure the staged file is removed, while
-on success it is promoted to the canonical path. A binary that fails
-the gate is therefore never visible to the runtime under its canonical
-name.
+with `tol = 1e-4` (Float32) or `1e-10` (Float64). Output is staged under a
+temporary name; a failed product is removed instead of being promoted to its
+canonical path.
 
 ### Per-window adaptive substeps
 
@@ -156,11 +145,9 @@ flowchart TD
 
 Three checkpoints in this pipeline are load-bearing for TM5 users:
 
-- **`pin_global_mean_ps!`** removes the few-Pa global-mean drift that
-  raw ERA5 analyses carry. Without it the long-run mass budget walks
-  off by a few percent per year. TM5's tm5-meteo applies an
-  equivalent fix; the JSON header records
-  `ps_offsets_pa_per_window` for traceability.
+- **`pin_global_mean_ps!`** aligns each ERA5 window with the configured
+  global dry-pressure target before mass fluxes are built. The JSON header
+  records `ps_offsets_pa_per_window` for traceability.
 - **Poisson balance.** Horizontal fluxes from spectral divergence have
   a non-zero divergence residual at the discrete grid level; we solve
   one Poisson equation per layer per window to balance them against
@@ -210,10 +197,13 @@ isn't present.
 
 | Section(s) | Operator unlocked |
 | --- | --- |
-| `:dm` (and `:dam`, `:dbm`, `:dcm`) | Endpoint mass/flux deltas → load-time replay gate |
+| `:dm` plus topology-specific flux deltas | Endpoint interpolation and opt-in load-time replay checks |
 | `:qv_start`/`:qv_end` | Specific-humidity endpoints for interpolation and moist-bookkeeping helpers |
 | `:cmfmc` (+ optional `:dtrain`) | `CMFMCConvection` (GCHP-style) |
 | `:entu`, `:detu`, `:entd`, `:detd` (all four) | `TM5Convection` (TM5 four-field updraft/downdraft) |
+| `:pblh`, `:ustar`, `:pbl_hflux`, `:t2m` | Cubed-sphere PBL-derived diffusion fields |
+| `:vdiff_u`, `:vdiff_v`, `:vdiff_t`, `:vdiff_qv` | `LocalHoltslagBovilleKzField` when the PBL surface fields are also present |
+| `:dkg` | `PrecomputedCSDkgField` interface exchange |
 
 The capability surface is queryable from Julia:
 
@@ -236,49 +226,52 @@ sequenceDiagram
     participant FS as Filesystem
     participant MMAP as mmap
     participant RDR as Reader
-    participant RT as Runtime loop
+    participant HOST as Host window
+    participant RT as Runtime/backend loop
     FS->>MMAP: open + mmap full payload
     MMAP-->>RDR: virtual address
     loop per window k
-        RDR->>RDR: offset = header_bytes + k * bytes_per_window
-        RDR->>RT: reinterpret slices (m, am, bm, cm, ps, ...)
+        RDR->>RDR: offset = header_bytes + k * elems_per_window
+        RDR->>HOST: copy/convert required sections
+        HOST->>RT: use on CPU or copy to device buffers
         RT->>RT: run Strang palindrome (substep × steps_per_window[k])
     end
 ```
 
-Three details matter:
+Four details matter:
 
-- **`reinterpret`, not copy.** The reader returns array views over the
-  mmap'd region. Float32 LL slices of shape `(Nx, Ny, Nz)` come out as
-  `reinterpret(Float32, view(payload, off:off+nbytes))` reshaped to
-  the right dimensions. No allocation on the hot path.
-- **Per-window stride is constant.** `bytes_per_window` is computed
+- **The mmap is CPU-side storage.** Window loaders copy required sections into
+  typed host arrays. That copy also converts precision when the configured
+  runtime `FT` differs from the on-disk float type.
+- **Per-window stride is constant.** `elems_per_window` is computed
   from the header at construction time. Walking from window `k` to
   window `k+1` is a single addition, regardless of which optional
   sections are present.
-- **Page cache does the rest.** The OS pages in the relevant slice on
-  demand; on a warm cache the per-window cost is below the kernel
-  launch latency.
+- **Cubed-sphere loading adds halos.** On-disk panels are unpadded;
+  `load_transport_window` constructs the halo-padded runtime fields.
+- **GPU runs perform an explicit backend copy.** Persistent device-side window
+  buffers are refreshed from the host load. With multiple Julia threads, the
+  next host window can be prefetched while the current window is computed.
 
 The runtime side of the contract lives in:
 
-- [`MetDrivers/TransportBinary.jl`](https://github.com/cfranken/AtmosTransportModel/blob/main/src/MetDrivers/TransportBinary.jl)
+- `src/MetDrivers/TransportBinary.jl`
   (header schema and section-aware reader)
-- [`MetDrivers/transport_binary/cubed_sphere_reader.jl`](https://github.com/cfranken/AtmosTransportModel/blob/main/src/MetDrivers/transport_binary/cubed_sphere_reader.jl)
+- `src/MetDrivers/transport_binary/cubed_sphere_reader.jl`
   (cubed-sphere geometry specializations)
-- [`MetDrivers/transport_binary/driver.jl`](https://github.com/cfranken/AtmosTransportModel/blob/main/src/MetDrivers/transport_binary/driver.jl)
+- `src/MetDrivers/transport_binary/driver.jl`
   (window loop + replay-gate)
 
 ## Comparison with the TM5 and GCHP I/O models
 
 | Concern | TM5 tm5-meteo archive | GCHP MAPL ExtData | AtmosTransport binary |
 | --- | --- | --- | --- |
-| File count per day | ~30–60 small files | ~10–20 NetCDF files | 1 |
-| Schema | Implicit (folder + filename) | NetCDF attributes | JSON header (~131 KB) |
-| Read cost per window | NetCDF parse + decompress | NetCDF parse + ExtData interp | Offset arithmetic |
+| Runtime input grouping | Boundary archive | ExtData collections | Normally one v4 file per day |
+| Schema | Archive conventions | NetCDF attributes and connectors | Padded JSON header + fixed payload |
+| Per-window operation | Archive reads | NetCDF/ExtData reads | Offset lookup + typed host copy |
 | Mass-balance gate | TM5 mass_correction (write-time) | Per-operator at run time | Write-time + opt-in load-time |
 | Compression | gzip (per-variable) | NetCDF DEFLATE | None at rest, optional zstd at rest |
-| GPU readiness | Read-then-copy | Read-then-copy | mmap → kernel-ready slice |
+| Accelerator transfer | Runtime-specific | Runtime-specific | Host window → persistent backend buffer |
 
 The binary is the smallest possible commitment to "the runtime should
 not have to think about I/O." Once you accept that one-line tenet, the
@@ -290,7 +283,7 @@ schedule — follows.
 - For the operator-side consequences of having `m`, `am`, `bm`, `cm`,
   `dm` on hand at every step, jump to
   [Operators on top of the binary](operators_on_binaries.md).
-- For the I/O performance details (mmap, page cache, kernel-ready
-  slices), see [Kernel architecture](kernel_architecture.md).
+- For runtime data movement, prefetch, and profiling, see
+  [Kernel architecture](kernel_architecture.md).
 - For the on-disk schema details (every field, the JSON layout, the
   CS-specific extras), see [Binary format](../concepts/binary_format.md).

@@ -31,7 +31,7 @@ Offline atmospheric transport runtime with:
 - **Diffusion**: live on LatLon, RG, CS (see `Operators/Diffusion/`)
 - **Surface flux**: live on LatLon, RG, CS (see `Operators/SurfaceFlux/`)
 - **Convection (CMFMC)**: live on LatLon, RG, CS
-  `Operators/Convection/CMFMCConvection.jl`)
+  (`Operators/Convection/CMFMCConvection.jl`)
 - **Chemistry** (`ExponentialDecay`, `CompositeChemistry`): live on
   `CellState` (LatLon, RG) and `CubedSphereState` topologies
   (CS dispatch shipped in commit `bcd4fea`)
@@ -49,7 +49,7 @@ Canonical operator × topology matrix:
 ## What is intentionally deferred
 
 - Remaining adjoint coverage for physics operators
-- Additional user-facing tutorials and validation pages
+- Real-data user tutorials and campaign-scale validation reports
 - Additional observation operators and campaign-scale 4D-Var validation
 
 ## Current phase
@@ -61,4 +61,4 @@ transport-binary I/O, and selected adjoint/inversion tooling. The top-level
 
 ---
 
-*Last verified against `src/` on 2026-07-11.*
+*Last verified against `src/` on 2026-07-13.*

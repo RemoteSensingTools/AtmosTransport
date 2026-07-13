@@ -55,10 +55,11 @@ Runnable advection scheme families:
 
 ## Topology contract
 
-Two first-class horizontal representations are supported:
+Three first-class horizontal representations are supported:
 
 - `StructuredFluxTopology`
 - `FaceIndexedFluxTopology`
+- panel-native cubed-sphere storage (`NTuple{6}` with halo-padded panels)
 
 The common numerical model is still conservative tracer-mass transport, but the
 storage and kernel pathways are allowed to differ by topology.

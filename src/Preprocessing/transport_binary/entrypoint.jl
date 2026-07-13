@@ -318,7 +318,7 @@ function _process_day_native(cfg::AbstractDict;
     # cm-closure status (2026-06-03): `:endpoint_balanced` is the ONLY validated
     # production default. ALL of `:pressure_fixer`, `:moisture_filtered`, and
     # `:pfix_corrected` are DIAGNOSTIC-ONLY — they explore the SH-UTLS fingering
-    # but each fails at the tracer level (see docs/reference/GEOS_MASS_FLUX_UTLS_FINGERING.md):
+    # but each fails at the tracer level (see docs/src/preprocessing/geos_native_cs.md):
     #   :pressure_fixer    → smooth cm but unbounded ps drift / negative mass.
     #   :moisture_filtered → VERIFIED NO-OP (balancing re-injects the noise).
     #   :pfix_corrected    → reduces upper-UTLS noise but makes ~164-280 hPa WORSE
@@ -336,7 +336,7 @@ function _process_day_native(cfg::AbstractDict;
     if cm_closure !== :endpoint_balanced
         @warn "[numerics].geos_cm_closure=$(cm_closure) is DIAGNOSTIC/CANDIDATE, NOT " *
               "the science-validated production default (see " *
-              "docs/reference/GEOS_MASS_FLUX_UTLS_FINGERING.md). Use " *
+              "docs/src/preprocessing/geos_native_cs.md). Use " *
               ":endpoint_balanced for production and the ERA5/wind-derived path " *
               "for UTLS-sensitive science. :omega_consistent is binary-validated " *
               "and under tracer validation."

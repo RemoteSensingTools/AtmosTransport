@@ -10,8 +10,8 @@ julia --project=. scripts/downloads/download_data.jl config/downloads/<recipe>.t
 ```
 
 Download recipe TOMLs are in `config/downloads/`. They reference met source
-definitions in `config/met_sources/`. Output paths follow the canonical
-Data Layout hierarchy (`docs/reference/DATA_LAYOUT.md`).
+definitions in `config/met_sources/`. See `docs/src/config/data_sources.md` for
+the maintained data-layout guidance.
 
 ### Available recipes
 

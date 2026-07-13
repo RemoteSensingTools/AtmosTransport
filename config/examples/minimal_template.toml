@@ -5,13 +5,9 @@
 # for the full schema.
 
 [input]
-# Required. Point at a folder of daily transport binaries, one per date.
-# Supports ~/..., $ATMOSTRANSPORT_DATA_ROOT/..., and set environment variables.
-folder = "$ATMOSTRANSPORT_DATA_ROOT_quickstart/met/era5_ll72x37_dec2021_f32/"
-
-# Required with folder input. Inclusive date range; every day must be present.
-start_date = "2021-12-01"
-end_date = "2021-12-03"
+# The newcomer generator writes this current format-v4 fixture locally:
+#   julia --project=. examples/generate_synthetic_quickstart.jl
+binary_paths = ["data/quickstart/synthetic_latlon_v4.bin"]
 
 # Optional. Use only if filenames need a strict date pattern.
 # file_pattern = "era5_transport_{YYYYMMDD}_merged1000Pa_float32.bin"
@@ -55,7 +51,7 @@ sigma_lat_deg = 18.0
 
 [output]
 # Optional. Hours since run start to save to NetCDF.
-hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
+hours = [0, 1, 2, 3, 4]
 
 # Required if snapshots are enabled. Parent directories are created as needed.
-path = "$ATMOSTRANSPORT_DATA_ROOT_quickstart/output/minimal_template.nc"
+path = "data/quickstart/synthetic_output.nc"

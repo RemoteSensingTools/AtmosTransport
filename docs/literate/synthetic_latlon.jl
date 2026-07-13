@@ -1,6 +1,6 @@
 # # Tutorial: synthetic lat-lon end-to-end
 #
-# This tutorial builds a tiny synthetic transport binary in memory,
+# This tutorial builds a tiny synthetic transport binary locally,
 # loads it with the runtime driver, runs a couple of advection steps,
 # and checks mass conservation — all without any external met data.
 # Everything here uses public API; the same pattern underlies
@@ -11,14 +11,18 @@
 # - smoke-test the runtime on a fresh install,
 # - explore the data flow (binary → driver → state → simulation),
 # - build a custom synthetic case for a unit test.
+#
+# Run the source directly from the repository root with
+# `julia --project=. docs/literate/synthetic_latlon.jl`, or read the executed
+# version in the documentation site.
 
 using AtmosTransport
 
-# ## 1. Build a tiny synthetic binary in memory
+# ## 1. Build a tiny synthetic binary locally
 #
-# We assemble two windows of trivially flat fields on an 8 × 4 × 2
-# lat-lon grid. Mass fluxes are zero (no actual transport), so air
-# mass should hold constant and tracer mixing ratio should not move.
+# We assemble two windows on an 8 × 4 × 2 lat-lon grid. A small constant
+# eastward mass flux is periodic and divergence-free: it moves a tracer blob
+# while total air mass and conservative tracer storage remain constant.
 
 function build_demo_latlon_binary(path::AbstractString;
                                   FT::Type{<:AbstractFloat} = Float64,
@@ -30,7 +34,7 @@ function build_demo_latlon_binary(path::AbstractString;
 
     windows = [
         (; m  = ones(FT, Nx, Ny, Nz),
-           am = zeros(FT, Nx + 1, Ny, Nz),
+           am = fill(FT(0.03), Nx + 1, Ny, Nz),
            bm = zeros(FT, Nx, Ny + 1, Nz),
            cm = zeros(FT, Nx, Ny, Nz + 1),
            ps = fill(FT(95_000 + 100w), Nx, Ny),
@@ -82,14 +86,19 @@ caps
 
 driver = TransportBinaryDriver(bin_path; FT = Float64, arch = CPU())
 
-# `CellState` stores tracers as **mass**, not VMR. With `air_mass = 1`
-# everywhere, a dry VMR of 4e-4 corresponds to a tracer mass of 4e-4
-# per cell (since `tracer_mass = χ × air_mass`).
+# `CellState` stores the conservative model quantity `χ × air_mass`, not VMR
+# and not physical kilograms of CO₂. We initialize a Gaussian-like dry-VMR
+# enhancement so the transport is visible.
 air_mass_arr = ones(Float64, 8, 4, 2)
-co2_vmr      = 400e-6
+co2_vmr = [400e-6 + 80e-6 * exp(-((i - 3) / 1.2)^2 - ((j - 2) / 0.8)^2)
+           for i in 1:8, j in 1:4, _ in 1:2]
 state = CellState(DryBasis,
                   air_mass_arr;
-                  CO2 = fill(co2_vmr * air_mass_arr[1, 1, 1], 8, 4, 2))
+                  CO2 = co2_vmr .* air_mass_arr)
+
+initial_air_mass = total_air_mass(state)
+initial_storage = total_mass(state, :CO2)
+initial_vmr = copy(co2_vmr)
 
 fluxes = allocate_face_fluxes(grid.horizontal, 2; FT = Float64,
                               basis = DryBasis)
@@ -111,8 +120,8 @@ step!(sim)
 
 # ## 5. Confirm mass conservation
 #
-# With zero mass fluxes everywhere, air mass should be exactly 1.0
-# and the dry CO₂ VMR should be exactly 4.0e-4.
+# The checks below verify all three promises of the example: air-mass
+# conservation, tracer-storage conservation, and actual displacement.
 
 using Statistics
 m_min, m_max = extrema(sim.model.state.air_mass)
@@ -122,18 +131,21 @@ vmr = mixing_ratio(sim.model.state, :CO2)
 vmr_min, vmr_max = extrema(vmr)
 @info "CO2 dry-VMR extrema after 3 steps" vmr_min vmr_max
 
+@assert isapprox(total_air_mass(sim.model.state), initial_air_mass; rtol = 1e-12)
+@assert isapprox(total_mass(sim.model.state, :CO2), initial_storage; rtol = 1e-12)
+@assert maximum(abs.(vmr .- initial_vmr)) > 1e-8
+
 # Cleanup the driver (closes the memory map):
 close(driver)
 
 # ## What's next
 #
-# - Replace the zero-flux `windows` builder with one that diverges
-#   actual mass — the runtime will then transport the CO₂ tracer.
+# - Change the synthetic fluxes or initial blob and inspect how transport
+#   responds while the two conservation assertions remain satisfied.
 # - Swap `UpwindScheme()` for `SlopesScheme()` or `PPMScheme()` to
 #   see scheme-dependent behavior on the same forcing.
-# - Add a non-trivial initial condition to `CellState`'s `CO2 = …`
-#   keyword (e.g. a Gaussian blob, remembering tracer storage is mass
-#   not VMR) and watch advection move it.
+# - Add another tracer with its own initial pattern and compare how both
+#   conservative storage fields move through the same air-mass fluxes.
 # - Swap the synthetic binary for a real preprocessed ERA5 day
 #   produced by `scripts/preprocessing/preprocess_transport_binary.jl`
 #   and the same code structure runs against real meteorology.

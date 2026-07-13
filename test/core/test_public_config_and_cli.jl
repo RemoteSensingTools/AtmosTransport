@@ -4,6 +4,8 @@ using Test
 using JSON3
 using TOML
 using Dates
+using NCDatasets
+using AtmosTransport
 
 const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
@@ -15,6 +17,71 @@ function _script_module(name::Symbol, relative_path::AbstractString)
         Base.include(mod, joinpath(REPO_ROOT, relative_path))
     end
     return mod
+end
+
+@testset "documented synthetic quickstart runs end to end" begin
+    generator_module = _script_module(
+        :SyntheticQuickstartTest,
+        "examples/generate_synthetic_quickstart.jl",
+    )
+    generate = getfield(generator_module, :generate_synthetic_quickstart)
+
+    mktempdir() do dir
+        binary_path = generate(joinpath(dir, "synthetic_latlon_v4.bin"))
+        @test isfile(binary_path)
+
+        reader = TransportBinaryReader(binary_path; FT = Float32)
+        try
+            @test grid_type(reader) == :latlon
+            @test reader.header.nwindow == 4
+        finally
+            close(reader)
+        end
+
+        cfg = TOML.parsefile(joinpath(
+            REPO_ROOT,
+            "config",
+            "examples",
+            "minimal_template.toml",
+        ))
+        output_path = joinpath(dir, "synthetic_output.nc")
+        cfg["input"]["binary_paths"] = [binary_path]
+        cfg["output"]["path"] = output_path
+
+        ok, errors = validate_config(cfg)
+        @test ok
+        @test isempty(errors)
+        run_driven_simulation(cfg)
+        @test isfile(output_path)
+
+        NCDataset(output_path) do ds
+            column_mean = ds["co2_bl_column_mean"][:, :, :]
+            @test size(column_mean) == (36, 18, 5)
+            @test all(isfinite, column_mean)
+
+            # The documented output schedule is part of the public example.
+            @test ds["time"][:] == collect(0.0:4.0)
+
+            # Constant periodic mass flux should move the Gaussian east while
+            # conserving both air mass and the model's mass-like tracer
+            # storage. Multiplying column storage per area by cell area
+            # recovers the domain-integrated conservative storage quantity.
+            @test maximum(abs.(
+                @view(column_mean[:, :, end]) .-
+                @view(column_mean[:, :, 1]))) > 1f-6
+
+            air_mass = ds["air_mass"][:, :, :, :]
+            air_totals = [sum(@view air_mass[:, :, :, t])
+                          for t in axes(air_mass, 4)]
+            @test all(x -> isapprox(x, air_totals[1]; rtol = 2f-6), air_totals)
+
+            cell_area = ds["cell_area"][:, :]
+            storage_per_area = ds["co2_bl_column_mass_per_area"][:, :, :]
+            storage_totals = [sum(@view(storage_per_area[:, :, t]) .* cell_area)
+                              for t in axes(storage_per_area, 3)]
+            @test all(x -> isapprox(x, storage_totals[1]; rtol = 2f-6), storage_totals)
+        end
+    end
 end
 
 @testset "runtime editor schema follows public config contract" begin

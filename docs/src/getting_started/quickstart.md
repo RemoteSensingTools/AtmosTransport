@@ -1,207 +1,174 @@
-# Quickstart with example data
+# [Quickstart](@id Quickstart)
 
-This is the fastest path from a fresh clone to a real simulation, a
-NetCDF output file, and a plot. We host a small bundle of preprocessed
-ERA5 transport binaries (3 days, December 2021) so you can skip the
-preprocessor and jump straight to running.
+This is the shortest path to a complete AtmosTransport run. It creates a tiny
+version-4 forcing file locally, transports a Gaussian CO₂ anomaly for four
+hours on the CPU, and writes five NetCDF snapshots. No download, account, GPU,
+or external data tool is required.
 
-The bundle covers two grid topologies at two resolutions each, split
-into a small **lat-lon tarball** and a larger **cubed-sphere tarball**
-so newcomers can grab just LL on a slow connection:
+!!! note "Before you start"
+    Complete [Installation](@ref Installation), then run every command from the
+    repository root. If `--project=.` is unfamiliar, read
+    [Julia orientation](@ref Julia-orientation).
 
-| Bundle | Grid | Resolution | Points | Approx raw size |
-|---|---|---|---|---|
-| `quickstart_ll_dec2021_v2.tar.gz` | regular lat-lon | 5°    | 72 × 37   | ~260 MB |
-| `quickstart_ll_dec2021_v2.tar.gz` | regular lat-lon | 2.5°  | 144 × 73  | ~1.0 GB |
-| `quickstart_cs_dec2021_v2.tar.gz` | cubed-sphere    | C24   | 6 × 24²   | ~175 MB |
-| `quickstart_cs_dec2021_v2.tar.gz` | cubed-sphere    | C90 (~1°) | 6 × 90² | ~2.4 GB |
-
-All four are **F32**, dry-basis, level-merged to ~34 tropospheric
-layers, written by the canonical
-`scripts/preprocessing/preprocess_transport_binary.jl` from raw ERA5
-spectral GRIB. They give you something concrete to run, modify, and
-benchmark — without depending on a multi-TB ERA5 archive.
-
-## 1. Download the bundle
-
-Both tarballs are hosted as assets on the
-[`data-quickstart-v2`](https://github.com/RemoteSensingTools/AtmosTransport.jl/releases/tag/data-quickstart-v2)
-GitHub Release.
-
-| Tarball | SHA-256 | Approx compressed |
-|---|---|---|
-| `quickstart_ll_dec2021_v2.tar.gz` | `656fde3472014adc3b60ebc3fd1666a2ffe4e46761ec363ec9e61c98300fd735` | ~1.0 GB |
-| `quickstart_cs_dec2021_v2.tar.gz` | `ab554354a4d6a4289e5b68f9d53f3cdf97d00eb3568ada381334f49d5b59eec6` | ~1.9 GB |
+## 1. Generate synthetic meteorology
 
 ```bash
-# Just LL (newcomer path; small download)
-bash scripts/download_quickstart_data.sh ll
-
-# Just CS
-bash scripts/download_quickstart_data.sh cs
-
-# Both (default; everything ready for the four example configs)
-bash scripts/download_quickstart_data.sh
+julia --project=. examples/generate_synthetic_quickstart.jl
 ```
 
-The script downloads, verifies SHA-256, validates the tar contents
-against absolute / parent-traversing paths, and extracts under
-`~/data/AtmosTransport_quickstart/met/`. After extraction (with
-`all`):
+Expected final lines:
 
-```
-~/data/AtmosTransport_quickstart/
-└── met/
-    ├── era5_ll72x37_dec2021_f32/      (3 binaries, ~88 MB each)
-    ├── era5_ll144x73_dec2021_f32/     (3 binaries, ~352 MB each)
-    ├── era5_cs_c24_dec2021_f32/       (3 binaries, ~58 MB each)
-	    └── era5_cs_c90_dec2021_f32/       (3 binaries, ~806 MB each)
+```text
+Wrote current transport binary: .../data/quickstart/synthetic_latlon_v4.bin
+Next: julia --project=. scripts/run_transport.jl config/examples/minimal_template.toml
 ```
 
-For a different storage location, set the quickstart data root before
-downloading and running:
+The generated file contains a 36 × 18 × 3 latitude-longitude grid, four hourly
+forcing windows, constant eastward mass flux, and zero mass divergence. It is a
+small teaching fixture, but it uses the same version-4 header, reader, runtime
+driver, state, and advection operators as a preprocessed ERA5 or GEOS run.
+
+You can inspect it before running:
 
 ```bash
-export ATMOSTRANSPORT_DATA_ROOT_quickstart=/scratch/$USER/AtmosTransport_quickstart
-bash scripts/download_quickstart_data.sh ll
+julia --project=. scripts/diagnostics/inspect_transport_binary.jl \
+    data/quickstart/synthetic_latlon_v4.bin
 ```
 
-The quickstart run configs use
-`$ATMOSTRANSPORT_DATA_ROOT_quickstart/...` for both input and output paths. If
-the variable is unset, AtmosTransport resolves it to
-`~/data/AtmosTransport_quickstart`.
+Look for `basis: dry`, `windows: 4`, and check marks beside advection and the
+replay gate.
 
-## 2. Run the simulation
-
-Four ready-to-run example configs ship in `config/runs/quickstart/`,
-one per topology / resolution combination:
+## 2. Run the model
 
 ```bash
-# Lat-lon, 5° (smallest, fastest)
-julia --project=. scripts/run_transport.jl config/runs/quickstart/ll72x37_advonly.toml
-
-# Lat-lon, 2.5° (still fast, more spatial detail)
-julia --project=. scripts/run_transport.jl config/runs/quickstart/ll144x73_advonly.toml
-
-# Cubed-sphere C24 (smallest CS — see panel-edge transport on a coarse grid)
-julia --project=. scripts/run_transport.jl config/runs/quickstart/cs_c24_advonly.toml
-
-# Cubed-sphere C90 (~1°, the highest-resolution entry — best demo)
-julia --project=. scripts/run_transport.jl config/runs/quickstart/cs_c90_advonly.toml
+julia --project=. scripts/run_transport.jl config/examples/minimal_template.toml
 ```
 
-The four configs all run a **3-day advection-only** simulation (no
-diffusion, no convection, no chemistry) with a single passive tracer
-named `co2_bl`. They start from a localized Gaussian anomaly:
-a 400 ppm background plus an 80 ppm plume centered over the northern
-midlatitudes. Output is 13 frames every 6 hours (t=0…72h), written as
-a single NetCDF per run under `~/data/AtmosTransport_quickstart/output/`.
-Output variables are `<tracer>_column_mean(…)`,
-`<tracer>_column_mass_per_area(…)`, and
-`column_air_mass_per_area(…)` — see [Inspecting output](@ref) for
-the full per-topology schema.
+The first invocation may pause for compilation. A successful run ends with
+messages like:
 
-The configs default to `use_gpu = true` with automatic backend
-detection: CUDA on NVIDIA hosts and Metal on Apple Silicon. The runtime
-does not silently fall back to CPU if no usable GPU backend is available;
-it fails so the execution path is explicit. For CPU execution edit
-`[architecture] use_gpu = false` in the chosen config — every example
-in the bundle runs comfortably on a recent CPU at these resolutions, with
-the C90 run being the slowest at a few minutes per day.
+```text
+[ Info: Saved snapshots: data/quickstart/synthetic_output.nc (5 frame(s), 36×18 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Final air-mass change vs initial state:  0.000e+00
+[ Info: Final tracer-storage drift for co2_bl:   0.000e+00
+```
 
-## 3. Inspect the output
+The two zero-drift lines are the important result: the run preserved the air
+mass and conservative tracer-storage budgets for this closed synthetic case.
 
-A successful run writes
-`~/data/AtmosTransport_quickstart/output/<config-name>.nc`. The
-cheapest way to confirm the run produced sensible numbers:
+## 3. Inspect the result in Julia
+
+This command opens the NetCDF file and prints the dimensions and value range of
+the column-mean CO₂ field:
 
 ```bash
-ncdump -h ~/data/AtmosTransport_quickstart/output/ll72x37_advonly.nc | head -30
+julia --project=. -e '
+using NCDatasets
+NCDataset("data/quickstart/synthetic_output.nc") do ds
+    co2 = ds["co2_bl_column_mean"][:, :, :]
+    println("shape = ", size(co2))
+    println("range = ", extrema(co2))
+end'
 ```
 
-You should see variables like `co2_bl(time, lev, lat, lon)` (full-3D
-tracer), `co2_bl_column_mean(time, lat, lon)`,
-`co2_bl_column_mass_per_area(time, lat, lon)`,
-`column_air_mass_per_area(time, lat, lon)`, plus the coordinate
-variables `time`, `lev`, `lon`, `lat`. CS snapshots have a
-`(time, lev, nf, Ydim, Xdim)` layout per panel — see
-[Inspecting output](@ref) for the full schema.
+Expected shape and approximate range:
 
-The C90 cubed-sphere quickstart produces a filled column-mean heatmap
-like this after 72 hours:
-
-```@raw html
-<video src="../assets/quickstart/cs_c90_advonly.mp4"
-       controls="controls"
-       loop="loop"
-       muted="muted"
-       playsinline="playsinline"
-       poster="../assets/quickstart/cs_c90_advonly_t72.png"
-       style="width: 100%; border: 1px solid var(--vp-c-divider); border-radius: 8px;"></video>
+```text
+shape = (36, 18, 5)
+range = (0.0004f0, 0.000479...f0)
 ```
 
-The movie was generated from the NetCDF snapshot with the topology-aware
-visualization CLI:
+The first two dimensions are longitude and latitude; the third contains the
+five output times (0–4 hours). Mixing ratios are mol/mol, so `0.0004` is
+400 ppm.
 
-```bash
-julia --project=. scripts/visualization/atmos_viz.jl \
-    --input ~/data/AtmosTransport_quickstart/output/cs_c90_advonly.nc \
-    --tracer co2_bl \
-    --kind movie \
-    --transform column_mean \
-    --ppm \
-    --fps 4 \
-    --out ~/data/AtmosTransport_quickstart/output/cs_c90_advonly.mp4
+## 4. Read the configuration
+
+The run is controlled by `config/examples/minimal_template.toml`. Its essential
+shape is:
+
+```toml
+[input]
+binary_paths = ["data/quickstart/synthetic_latlon_v4.bin"]
+
+[architecture]
+use_gpu = false
+backend = "cpu"
+
+[numerics]
+float_type = "Float32"
+
+[advection]
+scheme = "slopes"
+
+[diffusion]
+kind = "none"
+
+[convection]
+kind = "none"
+
+[tracers.co2_bl.init]
+kind = "gaussian_blob"
+background = 4.0e-4
+amplitude = 8.0e-5
+lon0_deg = -80.0
+lat0_deg = 35.0
+sigma_lon_deg = 35.0
+sigma_lat_deg = 18.0
+
+[output]
+hours = [0, 1, 2, 3, 4]
+path = "data/quickstart/synthetic_output.nc"
 ```
 
-For a quick numeric sanity check from Python:
+Notice what is *not* configured: the grid. A runtime run reads topology,
+coordinates, vertical levels, timing, mass basis, and available physics fields
+from the transport-binary header. The TOML selects how to use that forcing.
 
-```python
-import os
-import netCDF4 as nc
-ds = nc.Dataset(os.path.expanduser("~/data/AtmosTransport_quickstart/output/cs_c90_advonly.nc"))
-cm = ds["co2_bl_column_mean"][:]
-print(cm.shape, "min", cm.min(), "max", cm.max(), "mean", cm.mean())
-# Expect: shape (90, 90, 6, 13)  min ~4.00e-4  max ~4.80e-4  mean ~4.06e-4
-```
+## 5. Change one thing
 
-## 4. Modify and re-run
+Try one edit at a time, then rerun the same command:
 
-The four bundled configs are deliberately minimal so you can use
-them as starting points:
-
-| To try… | Edit |
+| Experiment | TOML edit |
 |---|---|
-| A different IC | `[tracers.co2_bl.init]` block. `kind = "uniform"` with `background = 4.0e-4` is the simplest; `kind = "latitude_step"` with `south_value`, `north_value`, `split_lat_deg` works on LL/RG/CS; `kind = "gaussian_blob"` with `background`, `amplitude`, `lon0_deg`, `lat0_deg`, `sigma_lon_deg`, `sigma_lat_deg`; `kind = "bl_enhanced"` (LL only) with `background`, `enhancement`, `n_layers`; `kind = "file"` / `"netcdf"` to load from disk (see `config/runs/catrine_*.toml` for file-init examples). |
-| A second tracer | Add `[tracers.<name>]` and `[tracers.<name>.init]` blocks; the runtime advects all tracers in lockstep. |
-| Different snapshot times | Edit `[output] snapshot_hours = […]`. |
-| F64 instead of F32 | Just set `[numerics] float_type = "Float64"` in the run config — the runtime reads the same F32 binary and casts on load (no re-preprocessing). F64 needs an A100-class GPU or the CPU backend. (If you write `[output] format = "binary_mmap"` snapshots, they stay Float32 on disk regardless — the F64 precision is in the transport.) |
-| Time-varying emission | Under `[tracers.<name>.surface_flux]` add `time_varying = true` (+ optional `temporal_scheme = "stepwise"`) for sources with sub-monthly slices (e.g. `lmdz_co2`) — drives the diurnal cycle instead of a monthly mean. |
-| A different advection scheme | `[run] scheme = "ppm"` for Putman-Lin PPM, or `scheme = "linrood"` (CS only) which also accepts `ppm_order = 5` or `7`. The plain `ppm` path has no `order` parameter. |
-| Different grid topology | Pick the matching bundle config; the runtime auto-dispatches on the binary's `grid_type` header. |
+| More diffusive first-order transport | Set `[advection] scheme = "upwind"`. |
+| Putman–Lin PPM | Set `[advection] scheme = "ppm"`. |
+| A weaker initial anomaly | Set `amplitude = 2.0e-5` (20 ppm). |
+| Fewer snapshots | Set `hours = [0, 2, 4]`. |
+| Double precision on CPU | Set `[numerics] float_type = "Float64"`. |
 
-## What this quickstart does *not* cover
+The output file is replaced on each run.
 
-- **Preprocessing**. The bundle ships preprocessed binaries; the
-  ERA5-spectral preprocessor itself is documented under
-  [ERA5 spectral path](@ref).
-- **GEOS native CS**. The bundle is ERA5-only. GEOS-IT C180 native
-  preprocessing is covered under
-  [GEOS native cubed-sphere](@ref).
-- **Convection / diffusion**. The bundled configs are advection-only.
-  See `config/runs/c180_uniform_*.toml` for full-physics templates
-  (these need the larger GEOS-IT dataset — out of scope for a
-  newcomer's first run).
+## What this example teaches
 
-## What's next
+```mermaid
+flowchart LR
+    GEN[Example generator] --> BIN[Version-4 forcing binary]
+    TOML[Run TOML] --> RUN[scripts/run_transport.jl]
+    BIN --> RUN
+    RUN --> MODEL[Typed grid, state, and operators]
+    MODEL --> NC[NetCDF snapshots]
+```
 
-- [TOML schema](@ref) — the full run/preprocessing config reference: every
-  operator `kind` (incl. `cmfmc_matrix`/`tm5` convection with
-  `use_collab_lu`/`n_merge`, and `tm5_dkg` diffusion), time-varying
-  surface flux, `binary_mmap` output, rolling input staging, and the
-  `geos_cm_closure` fingering cure.
-- [Inspecting output](@ref) — deeper coverage of the diagnostic tools.
-- [Grids](@ref) and [Operators](@ref) — how the model is organized
-  internally.
-- [Tutorial: synthetic lat-lon end-to-end](@ref) — an executable Literate.jl
-  example.
+- Meteorology and its numerical contracts live in the binary.
+- Experiment choices live in TOML.
+- The runner constructs concrete Julia types and dispatches on topology and
+  physics.
+- State stores the conservative quantity `mixing ratio × carrier-air-mass`
+  internally and reports dry volume mixing ratio at the output boundary. This
+  is mass-like model storage, not physical kilograms of tracer species.
+
+The generator itself is intentionally separate from the runtime. In a real
+workflow, [meteorology preprocessing](@ref Preprocessing-overview) replaces the
+synthetic generator; the runner and TOML pattern remain the same.
+
+## Where to go next
+
+- [Architecture tour](@ref Architecture-tour) — understand the objects that
+  just ran without diving into implementation details.
+- [Run with real meteorology](@ref Run-with-real-meteorology) — point the same
+  runtime at current ERA5 or GEOS transport binaries.
+- [Inspecting output](@ref) — variable names, dimensions, and visualization
+  options.
+- [Tutorial: synthetic lat-lon end-to-end](@ref) — assemble the driver, state,
+  model, and simulation directly through the Julia API.

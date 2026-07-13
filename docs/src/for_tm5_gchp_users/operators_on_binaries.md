@@ -142,21 +142,17 @@ inside the update kernel.
 ```mermaid
 flowchart TD
     A[Window k starts] --> B[Read binary substep count<br/>steps_per_window_by_window[k]]
-    B --> C[Run palindrome substep]
-    C --> D{Positivity check<br/>2·out/min(m_start,m_end) < safety?}
-    D -->|yes| E[advance substep counter]
-    E --> F{All substeps done?}
-    F -->|no| C
+    B --> C[Fix inner directional<br/>subcycle count to 1]
+    C --> D[Run one palindrome substep]
+    D --> E[Advance substep counter]
+    E --> F{Stored substeps done?}
+    F -->|no| D
     F -->|yes| G[Window k complete]
-    D -->|no| H[Refine: bump n_sub for this leg]
-    H --> C
 ```
 
-The runtime positivity check is a second line of defense: the
-preprocessor already chose the substep count so the worst window
-hits a healthy budget. The runtime check exists for floating-point
-edge cases and for binaries that did not run with adaptive substeps
-enabled.
+The positivity budget is a write-time preprocessing gate. A v4 runtime trusts
+that verified contract and does not alter the schedule; a failing product must
+be regenerated with a safer preprocessing schedule.
 
 ## Diffusion
 
@@ -166,7 +162,6 @@ diffusivity profile is supplied by an `AbstractKzField`:
 
 | Kz field | Source | Status |
 | --- | --- | --- |
-| `PreComputedKzField` | Direct from binary (`:Kz` payload section) | Planned |
 | `ProfileKzField` | Static profile from TOML | Production |
 | `DerivedKzField` | Beljaars–Viterbo local Kz from `(ps, u, v, T, q, z0)` | Production |
 | `WindowPBLKzField` | PBL-aware variant of Beljaars–Viterbo | Production |
@@ -198,7 +193,7 @@ formulation; until then, the approximation is documented at
 
 ## Convection
 
-Two production operators today:
+Three production operators today:
 
 ### `TM5Convection`
 
@@ -215,6 +210,12 @@ Consumes `:cmfmc` (and optionally `:dtrain`) from the binary and
 runs the GCHP-style upwind moist convection scheme. This is the
 path for GEOS-driven runs. The CFL substep is chosen at met-window
 start from the maximum cell-relative mass flux.
+
+### `CMFMCMatrixConvection`
+
+Consumes `:cmfmc` and `:dtrain`, derives TM5-style entrainment and detrainment
+rates, and delegates to the implicit `TM5Convection` column solve. This offers
+the GEOS forcing contract with matrix-solve numerics on LL, RG, and CS.
 
 ### Placement note (important for TM5 users)
 

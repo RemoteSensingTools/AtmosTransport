@@ -17,8 +17,8 @@
 #  2. **Raw dry endpoint mass + diagnosed cm.** FV3's pressure-fixer rule is
 #     useful for closing a local vertical flux, but its implied dry endpoint
 #     can go negative in GEOS-IT's very thin upper layers even when the raw
-#     next-hour GEOS dry mass is healthy. Plan-41 binary v3 therefore makes
-#     the raw GEOS DELP_dry endpoint the written mass target. The native
+#     next-hour GEOS dry mass is healthy. The v4 contract therefore makes the
+#     raw GEOS DELP_dry endpoint the written mass target. The native
 #     horizontal fluxes are column-balanced to that target, then `cm` is
 #     diagnosed from `(am, bm, dm)` so replay and endpoint positivity are both
 #     checked against the same physical endpoint.

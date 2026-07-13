@@ -102,7 +102,7 @@ end
 
 Parse optional ERA5 single-level surface input for raw PBL diffusion fields.
 The daily LL writer stores the raw `pblh/t2m/ustar/pbl_hflux` payload; CS
-regridding preserves it and runtime `[diffusion] kind="pbl"` derives Kz.
+regridding preserves it and runtime `[diffusion] kind="tm5_beljaars_viterbo_local_kz"` derives Kz.
 """
 function resolve_surface_settings(cfg)
     surface_cfg = get(cfg, "surface", Dict{String, Any}())

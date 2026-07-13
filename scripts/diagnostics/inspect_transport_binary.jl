@@ -15,10 +15,6 @@ function _argparse_settings()
         description = "Inspect a transport binary — header, grid, capability summary, and driver compatibility.",
         prog = "inspect_transport_binary.jl")
     @add_arg_table! s begin
-        "--allow-legacy"
-            action = :store_true
-            help = "Deprecated. Obsolete format_version<2 binaries are no longer " *
-                   "loaded by runtime readers; regenerate them with the current preprocessor."
         "path"
             arg_type = String
             required = true
@@ -40,10 +36,6 @@ end
 function main(args)
     parsed = parse_args(args, _argparse_settings())
     path = abspath(parsed["path"])
-
-    if parsed["allow-legacy"]
-        @warn "inspect: --allow-legacy is deprecated; obsolete transport binaries are rejected"
-    end
 
     # `inspect_binary` prints a rich report (header, geometry, semantics,
     # payload sections, capability rows with ✓/✗) and returns a

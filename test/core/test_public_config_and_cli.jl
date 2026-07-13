@@ -32,8 +32,7 @@ end
           Set(["none", "tm5", "cmfmc", "cmfmc_matrix"])
     @test Set(String.(properties.diffusion.properties.kind.enum)) == Set([
         "none", "constant", "tm5_beljaars_viterbo_local_kz",
-        "beljaars_viterbo_local_kz", "pbl",
-        "geoschem_holtslag_boville_vdiff", "precomputed_kz",
+        "geoschem_holtslag_boville_vdiff", "tm5_dkg",
     ])
 
     output = schema.definitions.output.properties

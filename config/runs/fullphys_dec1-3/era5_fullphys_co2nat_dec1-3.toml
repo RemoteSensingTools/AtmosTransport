@@ -10,7 +10,7 @@
 # binaries:
 #   - convection: precomputed TM5 entrainment (entu/detu/entd/detd), NOT
 #     CMFMC -> use [convection] kind = "tm5".
-#   - diffusion: exact TM5 interface exchange (:dkg) -> kind = "precomputed_kz".
+#   - diffusion: exact TM5 interface exchange (:dkg) -> kind = "tm5_dkg".
 # Single tracer co2_natural (passive — chemistry = none).
 #
 # Runner:
@@ -43,7 +43,7 @@ scheme = "ppm"
   temporal_scheme = "stepwise"   # GC/HEMCO piecewise-constant CAMS hold (parity)
 
 [diffusion]
-kind = "precomputed_kz"
+kind = "tm5_dkg"
 
 [convection]
 kind = "tm5"

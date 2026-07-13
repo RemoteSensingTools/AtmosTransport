@@ -6,7 +6,7 @@ include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.Preprocessing: ERA5C180RegridFields,
     ERA5C180RawConvectionFields, ERA5C180TM5ConvectionFields,
-    allocate_era5_n320_tm5_derive_scratch, derive_c180_tm5_convection!,
+    allocate_tm5_convection_column_scratch, derive_c180_tm5_convection!,
     ec2tm_from_rates!, dz_hydrostatic_virtual!, TM5CleanupStats
 
 @testset "ERA convection converts after target-grid mapping" begin
@@ -30,7 +30,7 @@ using .AtmosTransport.Preprocessing: ERA5C180RegridFields,
     A = FT[0, 20, 100, 500, 2000, 10_000]
     B = FT[0, 0.01, 0.08, 0.3, 0.65, 1]
     vc = HybridSigmaPressure(A, B)
-    scratches = [allocate_era5_n320_tm5_derive_scratch(FT, Nz)
+    scratches = [allocate_tm5_convection_column_scratch(FT, Nz)
                  for _ in 1:Threads.maxthreadid()]
     stats = TM5CleanupStats()
     derive_c180_tm5_convection!(out, raw, thermo, vc, scratches; stats)

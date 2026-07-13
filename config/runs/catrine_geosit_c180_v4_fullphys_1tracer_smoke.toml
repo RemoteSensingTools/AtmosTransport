@@ -33,7 +33,7 @@ scheme = "ppm"
   kind = "lmdz_co2"
 
 [diffusion]
-kind = "pbl"
+kind = "tm5_beljaars_viterbo_local_kz"
 
 [convection]
 kind = "cmfmc"

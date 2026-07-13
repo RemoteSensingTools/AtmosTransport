@@ -102,13 +102,7 @@ end
     @test field_value(op32.decay_rates[1], ()) === Float32(log(2) / Float32(T))
 end
 
-@testset "RuntimePhysicsRecipe — chemistry field default + override" begin
-    # 3-arg legacy constructor defaults chemistry to NoChemistry
-    rec3 = AT.Models.RuntimePhysicsRecipe(
-        AT.UpwindScheme(), AT.NoDiffusion(), AT.NoConvection())
-    @test rec3.chemistry isa AT.Operators.Chemistry.NoChemistry
-
-    # 4-arg explicit chemistry
+@testset "RuntimePhysicsRecipe stores explicit chemistry" begin
     chem = AT.Operators.Chemistry.ExponentialDecay(; rn222 = 330350.4)
     rec4 = AT.Models.RuntimePhysicsRecipe(
         AT.UpwindScheme(), AT.NoDiffusion(), AT.NoConvection(), chem)

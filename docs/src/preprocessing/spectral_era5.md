@@ -4,7 +4,7 @@ The ERA5 spectral path takes ECMWF model-level **vorticity (VO)**,
 **divergence (D)**, and **log surface pressure (LNSP)** GRIB fields,
 synthesizes mass-conserving wind / mass-flux fields on a target grid
 via Holton-style continuity-consistent reconstruction, and writes a
-transport binary (`format_version = 3`).
+transport binary (`format_version = 4`).
 
 All three target topologies (LL, RG, CS) run through the unified driver
 `run_unified_preprocessor_day!` with the source axis fixed to

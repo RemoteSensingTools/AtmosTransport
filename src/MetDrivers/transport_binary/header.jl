@@ -10,7 +10,7 @@ const _PBL_SURFACE_PAYLOAD_SECTIONS = (:pblh, :ustar, :pbl_hflux, :t2m)
 const _PBL_SURFACE_FIELD_NAMES = (:pblh, :ustar, :hflux, :t2m)
 const _GCHP_VDIFF_PAYLOAD_SECTIONS = (:vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv)
 const _GCHP_VDIFF_FIELD_NAMES = (:u, :v, :t, :qv)
-const TRANSPORT_BINARY_FORMAT_VERSION = 3
+const TRANSPORT_BINARY_FORMAT_VERSION = 4
 
 @inline _is_pbl_surface_payload_section(section::Symbol) =
     section in _PBL_SURFACE_PAYLOAD_SECTIONS

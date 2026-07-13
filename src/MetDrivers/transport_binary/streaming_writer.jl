@@ -86,6 +86,9 @@ function open_streaming_transport_binary(
         mass_basis::Symbol = :moist,
         extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}())
 
+    flux_kind === :substep_mass_amount || throw(ArgumentError(
+        "reduced-Gaussian transport binaries require flux_kind=:substep_mass_amount"))
+
     mesh = grid.horizontal
     vc   = grid.vertical
     ncell   = ncells(mesh)

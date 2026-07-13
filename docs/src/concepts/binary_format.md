@@ -60,7 +60,7 @@ the runtime actually dispatches on:
 | `longitude_offset_deg` | `Float64` | CS only — final longitude rotation, `-10.0` for GEOS native |
 | `dt_met_seconds` | `Float64` | met-window cadence (typically 3600 s for hourly ERA5) |
 | `steps_per_window` | `Int` | compatibility scalar, equal to `maximum(steps_per_window_by_window)` |
-| `steps_per_window_by_window` | `Vector{Int}` | required v2 per-window substep schedule used by replay gates and runtime stepping |
+| `steps_per_window_by_window` | `Vector{Int}` | required v4 per-window substep schedule used by replay gates and runtime stepping |
 | `time_step_schedule` | `Symbol` | `:constant` or `:per_window` |
 | `flux_sampling` | `Symbol` | currently `:window_constant` (same flux at every substep) |
 | `flux_kind` | `Symbol` | currently `:substep_mass_amount` (kg per substep, not integrated over window) |
@@ -68,8 +68,8 @@ the runtime actually dispatches on:
 | `nwindow` | `Int` | windows per day (typically 24) |
 | `payload_sections` | `Vector{Symbol}` | which arrays this binary actually contains |
 
-`format_version` is currently `3`; older transport binaries are intentionally
-rejected and must be regenerated. The v3 contract requires
+`format_version` is currently `4`; all other transport binaries are intentionally
+rejected and must be regenerated. The v4 contract requires
 `steps_per_window_by_window :: Vector{Int}` (per-window adaptive substep
 schedule) and `poisson_balance_target_scale_by_window :: Vector{Float64}` in
 the header. `header_bytes` and a few sampling-metadata fields
@@ -81,7 +81,7 @@ The full list lives in `src/MetDrivers/TransportBinary.jl`.
 
 ### Required for any transport binary
 
-- `:m` — air mass per cell, kg / m². Shape `(Nx, Ny, Nz)` for LL,
+- `:m` — air mass per cell, kg. Shape `(Nx, Ny, Nz)` for LL,
   `(ncells, Nz)` for RG, `NTuple{6, (Nc, Nc, Nz)}` for CS.
 - **Horizontal mass fluxes**:
   - LL / CS: `:am`, `:bm` through x-faces and y-faces. Shapes have
@@ -105,11 +105,12 @@ The full list lives in `src/MetDrivers/TransportBinary.jl`.
 | `:cmfmc` (+ optional `:dtrain`) | `CMFMCConvection` operator (GCHP-style). |
 | `:entu`, `:detu`, `:entd`, `:detd` (all four) | `TM5Convection` operator (TM5 four-field). |
 | `:pblh`, `:ustar`, `:pbl_hflux`, `:t2m` | Surface payload — feeds the `WindowPBLKzField` runtime Kz path. |
-| `:vdiff_u`, `:vdiff_v`, `:vdiff_t`, `:vdiff_qv` | GCHP VDIFF preprocessing payload — feeds the `GCHPHoltslagBovilleKzField` non-local Kz. |
+| `:vdiff_u`, `:vdiff_v`, `:vdiff_t`, `:vdiff_qv` | GEOS VDIFF state — feeds the `LocalHoltslagBovilleKzField` local Kz. |
+| `:dkg` | Exact TM5 dry-air interface exchange [kg s⁻¹] between layers `k` and `k+1`; the final level is the zero-flux surface boundary. |
 
 The PBL surface and GCHP VDIFF sections together replace the older "constant
 or profile-shaped Kz from runtime config" model. Cubed-sphere runs with
-`diffusion.kind = "pbl"` (alias for `tm5_beljaars_viterbo_local_kz`) consume
+`diffusion.kind = "tm5_beljaars_viterbo_local_kz"` consumes
 the four surface fields from the binary at each window; the GCHP VDIFF
 non-local Kz path consumes the four `:vdiff_*` fields. The `ImplicitVerticalDiffusion`
 operator still also supports static `ProfileKzField` / `ConstantField` when no

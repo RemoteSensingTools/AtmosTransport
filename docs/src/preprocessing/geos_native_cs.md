@@ -153,7 +153,7 @@ four extra payload sections:
 | `:vdiff_u`, `:vdiff_v` | Substep-cadence horizontal wind components |
 | `:vdiff_t`, `:vdiff_qv` | Substep-cadence temperature and specific humidity |
 
-These feed the `GCHPHoltslagBovilleKzField` non-local Kz at runtime.
+These feed the `LocalHoltslagBovilleKzField` local Kz at runtime.
 The binary's capability surface advertises `gchp_vdiff = true` once all
 four are present. The runtime's `[diffusion].kind =
 "geoschem_holtslag_boville_vdiff"` requires this capability.

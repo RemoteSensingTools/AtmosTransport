@@ -215,7 +215,7 @@ types currently in the tree:
 !!! note "TOML wiring is partial today"
     The runtime recipe currently auto-builds only
     `[diffusion] kind = "none"`, `kind = "constant"`, and
-    cubed-sphere `kind = "pbl"` when the binary carries raw
+    cubed-sphere `kind = "tm5_beljaars_viterbo_local_kz"` when the binary carries raw
     `pblh/ustar/hflux/t2m` surface sections. Other field types above
     remain building blocks unless a runtime recipe wires them.
 

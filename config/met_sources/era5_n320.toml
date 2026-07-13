@@ -34,10 +34,8 @@ level_orientation = "top_down"
 # Toggle the optional GRIB streams the reader opens.
 include_surface      = true
 include_convection   = true
-include_vdiff_fields = true
 # Precompute the TM5 boundary-layer diffusion (`bldiff`, Holtslag-Boville
 # non-local PBL) interface mass exchange into the binary `:dkg` payload,
-# consumed at runtime by `[diffusion] kind = "precomputed_kz"` (legacy config
-# name). Needs sshf + slhf + ustar
+# consumed at runtime by `[diffusion] kind = "tm5_dkg"`. Needs sshf + slhf + ustar
 # from the surface stream (requires include_surface = true).
 include_tm5_diffusion = true

@@ -91,6 +91,8 @@ function write_transport_binary(path::AbstractString,
                                 mass_basis::Symbol = :dry,
                                 extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}(),
                                 threaded::Bool = Threads.nthreads() > 1)
+    flux_kind === :substep_mass_amount || throw(ArgumentError(
+        "lat-lon transport binaries require flux_kind=:substep_mass_amount"))
     isempty(windows) && throw(ArgumentError("write_transport_binary requires at least one window"))
 
     mesh = grid.horizontal
@@ -178,6 +180,8 @@ function write_transport_binary(path::AbstractString,
                                 mass_basis::Symbol = :dry,
                                 extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}(),
                                 threaded::Bool = Threads.nthreads() > 1)
+    flux_kind === :substep_mass_amount || throw(ArgumentError(
+        "reduced-Gaussian transport binaries require flux_kind=:substep_mass_amount"))
     isempty(windows) && throw(ArgumentError("write_transport_binary requires at least one window"))
 
     mesh = grid.horizontal

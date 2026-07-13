@@ -25,7 +25,7 @@
 #       [--float-type Float32|Float64]   # default Float64 (matches LL source)
 #       [--mass-basis dry|moist]         # default: match source header
 #       [--convention gnomonic|geos_native]
-#       [--definition equiangular_gnomonic|gmao]
+#       [--definition equiangular_gnomonic|gmao_equal_distance]
 #       [--steps-per-window 12]          # override source's substep count
 #                                         # (smaller per-substep flux; needed
 #                                         # for high-res CS output that
@@ -50,7 +50,7 @@ Usage: julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.
            --input <ll.bin> --output <cs.bin> --Nc <int>
            [--float-type Float32|Float64] [--mass-basis dry|moist]
            [--convention gnomonic|geos_native]
-           [--definition equiangular_gnomonic|gmao]
+           [--definition equiangular_gnomonic|gmao_equal_distance]
            [--cache-dir <dir>]
            [--steps-per-window <int>] [--allow-positivity-violation]
 """
@@ -105,17 +105,14 @@ function _parse_args(argv)
         error("--float-type must be Float32 or Float64, got $(float_type)")
     mass_basis === nothing || mass_basis in ("dry", "moist") ||
         error("--mass-basis must be dry or moist, got $(mass_basis)")
-    norm_convention = lowercase(replace(convention, '-' => '_', ' ' => '_'))
-    norm_convention in ("gnomonic", "gnomic", "geos_native", "geosnative") ||
+    norm_convention = lowercase(convention)
+    norm_convention in ("gnomonic", "geos_native") ||
         error("--convention must be gnomonic or geos_native, got $(convention)")
-    convention = norm_convention in ("geos_native", "geosnative") ? "geos_native" : "gnomonic"
+    convention = norm_convention
     if definition !== nothing
-        norm_definition = lowercase(replace(definition, '-' => '_', ' ' => '_'))
-        norm_definition in ("equiangular", "equiangular_gnomonic", "legacy",
-                            "gmao", "geos", "geos_it", "geosit", "geos_fp",
-                            "geosfp", "gmao_equal_distance",
-                            "gmao_equal_distance_gnomonic") ||
-            error("--definition must be equiangular_gnomonic or gmao, got $(definition)")
+        norm_definition = lowercase(definition)
+        norm_definition in ("equiangular_gnomonic", "gmao_equal_distance") ||
+            error("--definition must be equiangular_gnomonic or gmao_equal_distance, got $(definition)")
         definition = norm_definition
     end
 

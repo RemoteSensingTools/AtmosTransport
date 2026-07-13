@@ -90,7 +90,7 @@ for day in $(seq -w "$START_DAY" "$END_DAY"); do
     --float-type "$FLOAT_TYPE" \
     --mass-basis dry \
     --convention geos_native \
-    --definition gmao \
+    --definition gmao_equal_distance \
     --steps-per-window "$STEPS_PER_WINDOW" \
     >"${LOG_DIR}/regrid_geosnative_${ymd}_steps${STEPS_PER_WINDOW}.log" 2>&1
   mv "$tmp_bin" "$cs_bin"

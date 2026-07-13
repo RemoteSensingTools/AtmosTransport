@@ -92,7 +92,7 @@ schematic.
 | `:dtrain`   | kg / m² / s | dry-converted by the GEOS reader | NZ centers |
 | `:entu`, `:detu`, `:entd`, `:detd` | kg / m² / s | dry | NZ centers, all four required together for `TM5Convection` |
 | `:pblh`, `:ustar`, `:pbl_hflux`, `:t2m` | SI surface quantities | basis-agnostic | per-cell surface fields; all four together feed `WindowPBLKzField` |
-| `:vdiff_u`, `:vdiff_v`, `:vdiff_t`, `:vdiff_qv` | m/s, K, kg/kg at substep cadence | dry where applicable | NZ centers, feeds `GCHPHoltslagBovilleKzField` |
+| `:vdiff_u`, `:vdiff_v`, `:vdiff_t`, `:vdiff_qv` | m/s, K, kg/kg at substep cadence | dry where applicable | NZ centers, feeds `LocalHoltslagBovilleKzField` |
 
 The transport-binary core fields (`:m`, `:am`, `:bm`, `:cm`, `:dm`)
 are stored as **per-cell mass** and **per-substep mass amount**
@@ -156,7 +156,7 @@ window's forward-flux endpoints).
 
 | Field | Required? | Notes |
 | --- | --- | --- |
-| `format_version` | yes | Must be `3` — older versions are rejected. |
+| `format_version` | yes | Must be `4` — every other version is rejected. |
 | `steps_per_window_by_window :: Vector{Int}` | yes | Length `nwindow`. Per-window adaptive substep count (GEOS-CS) or constant (spectral). |
 | `poisson_balance_target_scale_by_window :: Vector{Float64}` | yes | Length `nwindow`. Scale factor used by the per-window balance step. |
 | `time_step_schedule` | yes | `"constant"` if all entries of `steps_per_window_by_window` are equal, else `"per_window"`. |

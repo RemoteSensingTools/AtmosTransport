@@ -35,9 +35,9 @@ and the required substep schedule. If a field affects transport semantics, it
 belongs in the header or in a typed payload section, not in a filename or a
 comment.
 
-The current transport-binary format version is `3`. Readers reject older
-transport binaries. Compatibility scalars such as `steps_per_window` remain
-only for summaries and older display code; the runtime contract is the full
+The current transport-binary format version is `4`. Readers reject every
+other version. Summary scalars such as `steps_per_window` remain only for
+display; the runtime contract is the full
 per-window schedule `steps_per_window_by_window`.
 
 ### Source, vertical transform, and target are orthogonal axes

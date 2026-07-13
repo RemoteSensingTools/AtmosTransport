@@ -9,8 +9,7 @@ Tests:
 4. Uniform field invariance through Strang splitting
 5. Mass conservation (total tracer mass preserved)
 6. Vertical flux diagnosis (cm from horizontal continuity)
-7. ERA5 dry flux builder
-8. Numerical equivalence with src/ mass-flux advection
+7. Numerical equivalence across mass-flux advection paths
 """
 
 using Test
@@ -45,7 +44,6 @@ using .AtmosTransport.State: AbstractFaceFluxState,
     @test isdefined(AtmosTransport, :SlopesScheme)
     @test isdefined(AtmosTransport, :AtmosGrid)
     @test isdefined(AtmosTransport, :HybridSigmaPressure)
-    @test isdefined(AtmosTransport, :PreprocessedERA5Driver)
     @test isdefined(AtmosTransport, :DiagnoseVerticalFromHorizontal)
     @test isdefined(AtmosTransport, :StructuredFluxTopology)
     @test isdefined(AtmosTransport, :FaceIndexedFluxTopology)

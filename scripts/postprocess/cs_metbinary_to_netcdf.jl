@@ -1,7 +1,7 @@
 #!/usr/bin/env julia
 # ---------------------------------------------------------------------------
 # Export a cubed-sphere TRANSPORT MET binary (m, am, bm, cm, ps, dm — the flux
-# fields, BINARY_FORMAT_V5) to a self-describing NetCDF so external tools that
+# fields, transport binary v4) to a self-describing NetCDF so external tools that
 # cannot parse the custom .bin can read the staggered mass fluxes directly.
 #
 #   julia --project=. scripts/postprocess/cs_metbinary_to_netcdf.jl <in.bin> <out.nc>

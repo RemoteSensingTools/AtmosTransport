@@ -404,7 +404,6 @@ function _copy_window_payload!(dest::CubedSphereTransportWindow{B},
     _copy_common_window_payload!(dest, src)
     _copy_optional_surface!(dest.surface, src.surface)
     _copy_optional_vdiff!(dest.vdiff, src.vdiff)
-    _copy_optional_storage!(dest.kz, src.kz, :kz)
     _copy_optional_storage!(dest.dkg, src.dkg, :dkg)
     return dest
 end
@@ -578,12 +577,6 @@ function _refresh_pbl_kz_for_window!(field::LocalHoltslagBovilleKzField,
     refresh_local_holtslag_boville_kz_cache!(
         field, sim.window.surface, sim.window.vdiff, sim.window.air_mass,
         mesh.cell_areas; halo_width = mesh.Hp)
-    return nothing
-end
-
-function _refresh_pbl_kz_for_window!(field::PrecomputedCSKzField,
-                                     sim::DrivenSimulation)
-    refresh_precomputed_cs_kz_cache!(field, sim.window.kz)
     return nothing
 end
 

@@ -75,7 +75,7 @@ scheme = "ppm"
   molar_mass_kg_mol = 0.0440095
 
 [diffusion]
-kind = "precomputed_kz"
+kind = "tm5_dkg"
 surface_flux_boundary = true
 
 [convection]

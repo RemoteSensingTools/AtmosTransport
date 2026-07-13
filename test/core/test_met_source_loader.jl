@@ -13,7 +13,7 @@ using TOML
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport.Preprocessing: load_met_settings, GEOSITSettings, GEOSFPSettings,
-                                      AbstractGEOSSettings, AbstractMetSettings,
+                                      MERRA2Settings, AbstractGEOSSettings, AbstractMetSettings,
                                       geosfp_native_hourly_ctm_path
 using Dates
 
@@ -76,6 +76,24 @@ const REPO_ROOT = joinpath(@__DIR__, "..", "..")
         @test s.include_convection === true
         @test s.physics_dir        == "/tmp/geosfp_physics"
         @test s.physics_layout     === :latlon_025
+    end
+
+    @testset "MERRA-2 exposes only implemented settings" begin
+        toml = joinpath(REPO_ROOT, "config", "met_sources", "merra2.toml")
+        s = load_met_settings(toml; root_dir = "/tmp/merra2_test")
+        @test s isa MERRA2Settings
+        @test !hasproperty(s, :include_surface)
+
+        bad = tempname() * ".toml"
+        open(bad, "w") do io
+            print(io, """
+                [source]
+                name = "MERRA-2"
+                [preprocessing]
+                include_surface = false
+                """)
+        end
+        @test_throws ArgumentError load_met_settings(bad; root_dir = "/tmp/merra2_test")
     end
 
     @testset "unsupported source name errors loudly" begin

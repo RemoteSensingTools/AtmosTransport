@@ -167,7 +167,7 @@ function build_v4_header(date::Date,
     poisson_scale_schedule = [1.0 / (2 * s) for s in step_schedule]
 
     header = Dict{String, Any}(
-        "magic" => "MFLX", "version" => 4,
+        "magic" => "MFLX",
         "format_version" => TRANSPORT_BINARY_FORMAT_VERSION,
         "header_bytes" => HEADER_SIZE,
         "grid_type" => "latlon", "horizontal_topology" => "StructuredDirectional",

@@ -41,7 +41,7 @@ a parallel script with different header semantics.
 
 ## Substep Schedule Semantics
 
-`format_version = 3` stores fluxes as per-substep mass amounts:
+`format_version = 4` stores fluxes according to the explicit `flux_kind` contract:
 
 ```text
 flux_kind = "substep_mass_amount"

@@ -1,9 +1,8 @@
 # ---------------------------------------------------------------------------
 # MetState — upstream meteorological fields (before flux construction)
 #
-# MetState holds the raw meteorological data that the met driver reads.
-# The DryFluxBuilder consumes MetState and produces AbstractFaceFluxState +
-# updated CellState.air_dry_mass.  Transport operators never see MetState.
+# MetState holds raw meteorological fields for source-specific processing.
+# Transport operators consume typed mass-flux windows instead.
 # ---------------------------------------------------------------------------
 
 """
@@ -18,8 +17,8 @@ Container for meteorological fields upstream of the transport core.
 - `metvars :: M` — additional met-specific fields (winds, omega, diffusivities, etc.)
   as a `NamedTuple`. Content depends on the met driver.
 
-Transport operators never receive MetState directly. It is consumed by
-`build_dry_fluxes!` to produce `AbstractFaceFluxState` and `CellState.air_dry_mass`.
+Transport operators never receive `MetState` directly; preprocessing converts
+source meteorology into the current dry-basis transport-binary contract.
 """
 struct MetState{PA <: AbstractArray, QA <: AbstractArray, M <: NamedTuple}
     ps      :: PA

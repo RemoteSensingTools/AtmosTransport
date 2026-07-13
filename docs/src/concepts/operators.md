@@ -135,7 +135,7 @@ value = 1.0      # Kz [m²/s]; broadcast to all (i, j, k)
 
 `kind = "none"` (or omitting the block entirely) selects `NoDiffusion`.
 Cubed-sphere binaries carrying PBL surface sections can use
-`kind = "tm5_beljaars_viterbo_local_kz"` (`"pbl"` remains a legacy alias).
+`kind = "tm5_beljaars_viterbo_local_kz"`.
 `surface_flux_boundary = true` places configured surface fluxes at the lower
 boundary of the implicit vertical solve (`S(dt) -> V(dt)`) instead of the
 legacy midpoint split (`V(dt/2) -> S(dt) -> V(dt/2)`).

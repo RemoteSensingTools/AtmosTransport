@@ -146,8 +146,8 @@ function _cs_gchp_vdiff_diffusion_context(mesh, panels_m; dz=50.0)
                           for i in 1:Nc, j in 1:Nc, k in 1:Nz], 6),
     )
     host_cache = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
-    kz_field = AT.GCHPHoltslagBovilleKzField(host_cache)
-    AT.refresh_gchp_holtslag_boville_kz_cache!(
+    kz_field = AT.LocalHoltslagBovilleKzField(host_cache)
+    AT.refresh_local_holtslag_boville_kz_cache!(
         kz_field, surface, vdiff, panels_m, mesh.cell_areas;
         halo_width = mesh.Hp)
     op = AT.ImplicitVerticalDiffusion(; kz_field)
@@ -785,7 +785,7 @@ end
 
         stale_cache = ntuple(_ -> zeros(Float64, mesh.Nc, mesh.Nc, size(panels_m[1], 3)), 6)
         stale_op = AT.ImplicitVerticalDiffusion(;
-            kz_field = AT.GCHPHoltslagBovilleKzField(stale_cache))
+            kz_field = AT.LocalHoltslagBovilleKzField(stale_cache))
         @test_throws ArgumentError AT.cs_surface_emission_footprint(
             panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
             scheme=scheme, dt=dt,

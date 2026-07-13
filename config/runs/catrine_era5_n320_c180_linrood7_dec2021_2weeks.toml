@@ -9,7 +9,7 @@
 # (`catrine_geosit_c180_v4_fullphys_dec2021_2weeks.toml`) so the two runs are
 # directly comparable; the differences are the MET SOURCE (ERA5 N320 vs GEOS-IT)
 # and the PHYSICS the binary carries:
-#   - diffusion: `precomputed_kz` (TM5 Holtslag-Boville non-local PBL, baked into
+#   - diffusion: `tm5_dkg` (TM5 Holtslag-Boville interface exchange, baked into
 #     the `:dkg` payload) instead of GCHP `geoschem_holtslag_boville_vdiff`.
 #   - convection: TM5 four-field (entu/detu/entd/detd) instead of CMFMC-matrix.
 #
@@ -71,7 +71,7 @@ ppm_order = 7
 # TM5 boundary-layer diffusion — the non-local Holtslag-Boville Kz the
 # preprocessor baked into the binary's `:dkg` payload (this run's headline).
 [diffusion]
-kind = "precomputed_kz"
+kind = "tm5_dkg"
 surface_flux_boundary = true
 
 # TM5 four-field convection from the binary's entu/detu/entd/detd sections.

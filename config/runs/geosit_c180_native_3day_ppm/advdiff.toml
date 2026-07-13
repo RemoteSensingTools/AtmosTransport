@@ -32,7 +32,7 @@ file       = "/home/cfranken/data/AtmosTransport/catrine/Emissions/gridfed/GCP-G
 time_index = 12
 
 [diffusion]
-kind = "pbl"
+kind = "tm5_beljaars_viterbo_local_kz"
 
 [output]
 snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]

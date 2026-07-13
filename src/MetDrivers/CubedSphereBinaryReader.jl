@@ -112,25 +112,10 @@ function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = F
             hdr, nwindow, scalar_poisson_scale)
         mass_basis = _transport_parse_mass_basis(hdr)
         panel_convention = Symbol(_normalize_cs_panel_convention(hdr.panel_convention))
-        default_geometry = panel_convention === :geos_native ?
-            (; cs_definition = :gmao_equal_distance,
-               coordinate_law = :gmao_equal_distance_gnomonic,
-               center_law = :four_corner_normalized,
-               longitude_offset_deg = -10.0) :
-            (; cs_definition = :equiangular_gnomonic,
-               coordinate_law = :equiangular_gnomonic,
-               center_law = :angular_midpoint,
-               longitude_offset_deg = 0.0)
-        cs_definition = Symbol(replace(lowercase(String(get(hdr, :cs_definition,
-            String(default_geometry.cs_definition)))), '-' => '_', ' ' => '_'))
-        coordinate_law = Symbol(replace(lowercase(String(get(hdr, :cs_coordinate_law,
-            get(hdr, :coordinate_law, String(default_geometry.coordinate_law))))),
-            '-' => '_', ' ' => '_'))
-        center_law = Symbol(replace(lowercase(String(get(hdr, :cs_center_law,
-            get(hdr, :center_law, String(default_geometry.center_law))))),
-            '-' => '_', ' ' => '_'))
-        longitude_offset_deg = Float64(get(hdr, :longitude_offset_deg,
-                                           default_geometry.longitude_offset_deg))
+        cs_definition = Symbol(lowercase(String(hdr.cs_definition)))
+        coordinate_law = Symbol(lowercase(String(hdr.cs_coordinate_law)))
+        center_law = Symbol(lowercase(String(hdr.cs_center_law)))
+        longitude_offset_deg = Float64(hdr.longitude_offset_deg)
         A_ifc = Float64.(collect(hdr.A_ifc))
         B_ifc = Float64.(collect(hdr.B_ifc))
 
@@ -190,22 +175,15 @@ function Base.show(io::IO, r::CubedSphereBinaryReader{FT}) where FT
 end
 
 function _cs_coordinate_law_from_symbol(sym::Symbol)
-    sym in (:equiangular, :equiangular_gnomonic, :legacy) &&
-        return EquiangularGnomonic()
-    sym in (:gmao, :geos, :gmao_equal_distance,
-            :gmao_equal_distance_gnomonic, :geos_equal_distance_gnomonic) &&
-        return GMAOEqualDistanceGnomonic()
-    @warn "Unrecognised CS coordinate law :$sym, defaulting to equiangular"
-    return EquiangularGnomonic()
+    sym === :equiangular_gnomonic && return EquiangularGnomonic()
+    sym === :gmao_equal_distance_gnomonic && return GMAOEqualDistanceGnomonic()
+    throw(ArgumentError("unsupported cubed-sphere coordinate law :$(sym)"))
 end
 
 function _cs_center_law_from_symbol(sym::Symbol)
-    sym in (:angular_midpoint, :midpoint, :legacy) &&
-        return AngularMidpointCenter()
-    sym in (:four_corner_normalized, :cell_center2, :geos_cell_center2) &&
-        return FourCornerNormalizedCenter()
-    @warn "Unrecognised CS center law :$sym, defaulting to angular_midpoint"
-    return AngularMidpointCenter()
+    sym === :angular_midpoint && return AngularMidpointCenter()
+    sym === :four_corner_normalized && return FourCornerNormalizedCenter()
+    throw(ArgumentError("unsupported cubed-sphere center law :$(sym)"))
 end
 
 # ---------------------------------------------------------------------------
@@ -228,9 +206,7 @@ function _cs_section_elements(h::CubedSphereBinaryHeader, section::Symbol)
         return np * Nc * Nc
     elseif _is_gchp_vdiff_payload_section(section)
         return np * Nc * Nc * Nz
-    elseif section === :kz || section === :dkg
-        # :kz is legacy layer-centre diffusivity [m² s⁻¹]; :dkg is exact
-        # top-down interface exchange [kg s⁻¹]. Both use one value per layer.
+    elseif section === :dkg
         return np * Nc * Nc * Nz
     elseif section === :cmfmc
         return np * Nc * Nc * (Nz + 1)
@@ -298,9 +274,6 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
     panels_vdiff_t  = vdiff_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
     panels_vdiff_qv = vdiff_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
 
-    # Legacy centre Kz and exact TM5 interface dkg are mutually exclusive.
-    kz_present = :kz in h.payload_sections
-    panels_kz  = kz_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
     dkg_present = :dkg in h.payload_sections
     panels_dkg = dkg_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
 
@@ -429,12 +402,6 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
                 copyto!(panels_vdiff_qv[p], 1, reader.data, o + 1, n)
                 o += n
             end
-        elseif section === :kz
-            for p in 1:np
-                n = Nc * Nc * Nz
-                copyto!(panels_kz[p], 1, reader.data, o + 1, n)
-                o += n
-            end
         elseif section === :dkg
             for p in 1:np
                 n = Nc * Nc * Nz
@@ -474,7 +441,6 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
         dtrain = panels_dtrain,
         tm5_fields = tm5_fields,
         vdiff = vdiff,
-        kz = kz_present ? panels_kz : nothing,
         dkg = dkg_present ? panels_dkg : nothing,
     )
 end
@@ -536,20 +502,16 @@ function mesh_convention(reader::CubedSphereBinaryReader)
         return GnomonicPanelConvention()
     elseif conv === :geos_native
         return GEOSNativePanelConvention()
-    else
-        @warn "Unrecognised panel_convention :$conv in binary, defaulting to GnomonicPanelConvention"
-        return GnomonicPanelConvention()
     end
+    throw(ArgumentError("unsupported cubed-sphere panel convention :$(conv)"))
 end
 
 """
     mesh_definition(reader::CubedSphereBinaryReader) -> CubedSphereDefinition
 
 Return the full cubed-sphere geometry definition declared in the binary
-header. New binaries record `cs_coordinate_law`, `cs_center_law`,
-`panel_convention`, and `longitude_offset_deg`; older binaries are upgraded by
-convention (`geos_native` -> GMAO equal-distance, `gnomonic` -> legacy
-equiangular).
+header. Binaries record `cs_coordinate_law`, `cs_center_law`,
+`panel_convention`, and `longitude_offset_deg` explicitly.
 """
 function mesh_definition(reader::CubedSphereBinaryReader)
     h = reader.header

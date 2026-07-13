@@ -15,9 +15,9 @@ The concrete diffusion field types (`ProfileKzField`, etc.) extend this suite.
 using Test
 using AtmosTransport: AbstractTimeVaryingField, ConstantField, ProfileKzField,
                       PreComputedKzField, DerivedKzField, PBLPhysicsParameters,
-                      StepwiseField, GCHPHoltslagBovilleKzField,
+                      StepwiseField, LocalHoltslagBovilleKzField,
                       field_value, update_field!, integral_between,
-                      refresh_gchp_holtslag_boville_kz_cache!
+                      refresh_local_holtslag_boville_kz_cache!
 using AtmosTransport.State.Fields: _beljaars_viterbo_kz, _obukhov_length,
                                     _prandtl_inverse
 using KernelAbstractions: @kernel, @index, get_backend, synchronize
@@ -678,7 +678,7 @@ end
     air_col = delp .* areas[1, 1] ./ params.gravity
     air_mass = ntuple(_ -> reshape(repeat(air_col, inner = Nx * Ny), Nx, Ny, Nz), 6)
     cache = ntuple(_ -> fill(FT(-1), Nx, Ny, Nz), 6)
-    field = GCHPHoltslagBovilleKzField(cache; params)
+    field = LocalHoltslagBovilleKzField(cache; params)
 
     pblh = FT(1800)
     ustar = FT(0.35)
@@ -701,7 +701,7 @@ end
         qv = ntuple(_ -> reshape(repeat(q_profile, inner = Nx * Ny), Nx, Ny, Nz), 6),
     )
 
-    refresh_gchp_holtslag_boville_kz_cache!(field, surface, vdiff, air_mass,
+    refresh_local_holtslag_boville_kz_cache!(field, surface, vdiff, air_mass,
                                             areas; halo_width = 0)
 
     R_dry = params.cp_dry / FT(3.5)

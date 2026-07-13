@@ -315,7 +315,7 @@ function tm5_bldiff_kvh_column!(kvh::AbstractVector{FT},
                 # right sign/limit of mixing) rather than overriding. The override
                 # is applied only for a meaningfully positive dθv giving a finite,
                 # sane K — then floored at kvh_min. Earlier code wrote the +Inf/NaN
-                # straight into `:kz`, which NaN'd the runtime diffusion (Dec-11
+                # into the derived exchange coefficient, which NaN'd runtime diffusion (Dec-11
                 # 2021 N320 blew the 14-day run to NaN). Skips are counted (`diag`)
                 # so widespread fallback surfaces as a met problem, not silently.
                 K_entr = FT(0.2) * w_heatv / dθv
@@ -327,7 +327,7 @@ function tm5_bldiff_kvh_column!(kvh::AbstractVector{FT},
             end
         end
 
-        # Final guard: the `:kz` payload MUST be finite — a single non-finite
+        # Final guard: the derived Kz MUST be finite — a single non-finite
         # diffusivity NaN-propagates through the runtime implicit solve. With the
         # entrainment fix above this should never fire; if it does (an unforeseen
         # degeneracy) it is counted, not silently absorbed.
@@ -519,9 +519,23 @@ end
     tm5_bldiff_dkg_column!(dkg, T, q, u, v, air_mass, ps, hflux, lhflux,
                            ustar, A, B, c, scratch) -> pblh
 
-Compute TM5's interface diffusion air-mass exchange directly on the target
-column. Output uses top-down storage: `dkg[k]` exchanges layers `k` and `k+1`
-in kg s⁻¹ and `dkg[end] == 0` is the surface no-flux boundary.
+Compute TM5's interface dry-air exchange directly on one target-grid column:
+
+```text
+dkg[k] = Kvh[k] * 2 * (m[k] + m[k+1]) / (dz[k] + dz[k+1])^2
+```
+
+`T` is temperature [K], `q` is specific humidity [kg kg⁻¹], `u` and `v` are
+wind [m s⁻¹], `air_mass` is dry cell mass [kg], `ps` is surface pressure [Pa],
+`hflux` and `lhflux` are upward-positive sensible and latent heat flux
+[W m⁻²], and `ustar` is friction velocity [m s⁻¹]. `A` [Pa] and dimensionless
+`B` define top-down hybrid interfaces.
+
+Output is top-down: `dkg[k]` exchanges layers `k` and `k+1` [kg s⁻¹], and
+`dkg[end] == 0` is the surface no-flux boundary. The function mutates `dkg`
+and `scratch`, allocates no column storage, and returns the diagnosed PBL
+height [m]. Non-negative `dkg` makes the implicit column solve conserve tracer
+mass exactly apart from floating-point roundoff.
 """
 function tm5_bldiff_dkg_column!(dkg::AbstractVector{FT},
                                  T::AbstractVector{FT}, q::AbstractVector{FT},

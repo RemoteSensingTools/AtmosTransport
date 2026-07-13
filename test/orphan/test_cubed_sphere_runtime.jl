@@ -427,7 +427,7 @@ end
             FT,
         )
         @test recipe.diffusion isa ImplicitVerticalDiffusion
-        @test recipe.diffusion.kz_field isa GCHPHoltslagBovilleKzField
+        @test recipe.diffusion.kz_field isa LocalHoltslagBovilleKzField
 
         window = load_transport_window(driver, 1)
         mesh = driver_grid(driver).horizontal

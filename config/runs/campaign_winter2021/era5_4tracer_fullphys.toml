@@ -61,7 +61,7 @@ scheme = "ppm"
   time_index = 12
 
 [diffusion]
-kind = "precomputed_kz"             # ERA5 carries the exact TM5 bldiff :dkg section
+kind = "tm5_dkg"                    # ERA5 carries exact TM5 bldiff interface exchange
 surface_flux_boundary = true
 
 [convection]

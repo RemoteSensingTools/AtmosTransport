@@ -972,8 +972,8 @@ function _real_binary_problem(path::AbstractString; start_window::Int,
                                           halo_width = mesh.Hp)
                 elseif diffusion_kind === :geoschem_holtslag_boville
                     diffusion_op = ImplicitVerticalDiffusion(;
-                        kz_field = GCHPHoltslagBovilleKzField(kz_cache))
-                    refresh_gchp_holtslag_boville_kz_cache!(
+                        kz_field = LocalHoltslagBovilleKzField(kz_cache))
+                    refresh_local_holtslag_boville_kz_cache!(
                         diffusion_op.kz_field, win_window.surface,
                         win_window.vdiff, chunk_m0, mesh.cell_areas;
                         halo_width = mesh.Hp)

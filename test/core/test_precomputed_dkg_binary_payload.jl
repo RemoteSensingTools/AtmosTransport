@@ -4,6 +4,7 @@ using Test
 using Random
 using LinearAlgebra: dot
 using KernelAbstractions: get_backend, synchronize
+using JSON3
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
@@ -38,11 +39,9 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
         reader = AtmosTransport.MetDrivers.CubedSphereBinaryReader(path; FT)
         try
             @test :dkg in reader.header.payload_sections
-            @test !(:kz in reader.header.payload_sections)
             @test reader.header.raw_header["precomputed_dkg_payload"] ==
                   "tm5_bldiff_interface_dkg_dry_v1"
             loaded = AtmosTransport.MetDrivers.load_cs_window(reader, 1)
-            @test loaded.kz === nothing
             @test loaded.dkg == dkg
 
             cache = ntuple(_ -> zeros(FT, Nc, Nc, Nz), np)
@@ -51,7 +50,7 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
             @test field_value(panel_field(field, 4), (2, 1, 3)) == dkg[4][2, 1, 3]
             @test_throws ArgumentError refresh_precomputed_cs_dkg_cache!(field, nothing)
 
-            spec = AtmosTransport.Models.diffusion_spec(Dict("kind" => "precomputed_kz"))
+            spec = AtmosTransport.Models.diffusion_spec(Dict("kind" => "tm5_dkg"))
             op = AtmosTransport.Models.materialize(
                 spec, AtmosTransport.Models.CubedSphereRuntimeRecipeStyle(), FT, reader)
             @test op.kz_field isa PrecomputedCSDkgField
@@ -60,11 +59,30 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
         finally
             close(reader.io)
         end
+
+        original = read(path)
+        json_end = something(findfirst(==(0x00), original), 0) - 1
+        header = Dict{String,Any}(String(k) => v for (k, v) in
+                                  pairs(JSON3.read(String(original[1:json_end]))))
+        header_bytes = Int(header["header_bytes"])
+        for key in ("panel_convention", "cs_definition", "cs_coordinate_law",
+                    "cs_center_law", "longitude_offset_deg")
+            broken = copy(header)
+            delete!(broken, key)
+            encoded = Vector{UInt8}(codeunits(JSON3.write(broken)))
+            bytes = copy(original)
+            fill!(view(bytes, 1:header_bytes), 0x00)
+            copyto!(bytes, 1, encoded, 1, length(encoded))
+            open(path, "w") do out
+                write(out, bytes)
+            end
+            @test_throws ArgumentError CubedSphereBinaryReader(path; FT)
+        end
+        open(path, "w") do out
+            write(out, original)
+        end
     end
 
-    @test_throws ArgumentError AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
-        tempname(), Nc, np, Nz, 1, vc; FT,
-        include_precomputed_kz = true, include_precomputed_dkg = true)
     @test_throws ArgumentError AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
         tempname(), Nc, np, Nz, 1, vc; FT,
         include_precomputed_dkg = true, mass_basis = :moist)

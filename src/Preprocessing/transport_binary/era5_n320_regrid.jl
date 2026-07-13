@@ -86,54 +86,6 @@ function _next_day_core_only_handle(handles::ERA5GRIBDayHandles)
 end
 
 """
-    fill_tm5_kz_payload!(kz_c180, c180_fields, hflux, lhflux, ustar,
-                         A, B, Nc, c, scratches) -> (; entr_fallback, kvh_floored, max_kz, total_columns)
-
-Fill the per-panel layer-centre eddy diffusivity `kz_c180` (the binary `:kz`
-payload) by running the TM5 boundary-layer diffusion column kernel on every
-C180 cell. The 3D inputs are the already-regridded `c180_fields` (top-down
-u/v/t/qv/ps); the surface fluxes `hflux`/`lhflux` (W m⁻², upward-positive) and
-`ustar` are the C180-regridded surface panels. `A`/`B` are the hybrid-σ
-half-level coefficients. `scratches` is a per-thread vector of
-[`BLDiffColumnScratch`](@ref) reused across columns.
-
-Computing on C180 (rather than regridding `kvh` from N320) matches the runtime
-GCHP Kz path and avoids a second regridder; `bldiff` is nonlinear, so this is
-the column-wise application of the scheme to the regridded state. The six panels
-are independent, so the loop threads over them with one scratch per thread.
-"""
-function fill_tm5_kz_payload!(kz_c180, c180_fields, hflux, lhflux, ustar,
-                              A, B, Nc::Int,
-                              c::BLDiffConstants{FT},
-                              scratches::Vector{BLDiffColumnScratch{FT}}) where {FT}
-    for s in scratches
-        _reset!(s.diag)
-    end
-    Threads.@threads :static for p in 1:6
-        scratch = scratches[Threads.threadid()]
-        kp, tp, qp = kz_c180[p], c180_fields.t[p], c180_fields.qv[p]
-        up, vp, psp = c180_fields.u[p], c180_fields.v[p], c180_fields.ps[p]
-        hf, lf, us = hflux[p], lhflux[p], ustar[p]
-        @inbounds for j in 1:Nc, i in 1:Nc
-            tm5_bldiff_center_kz_column!(
-                view(kp, i, j, :),
-                view(tp, i, j, :), view(qp, i, j, :),
-                view(up, i, j, :), view(vp, i, j, :),
-                psp[i, j], hf[i, j], lf[i, j], us[i, j],
-                A, B, c, scratch)
-        end
-    end
-    # Aggregate the per-thread fallback counters into a per-window summary so the
-    # caller can log it (a handful of entrainment skips is expected; a non-zero
-    # `kvh_floored` or a widespread `entr_fallback` is a met problem to inspect).
-    entr = sum(s.diag.entr_fallback for s in scratches)
-    floored = sum(s.diag.kvh_floored for s in scratches)
-    max_kz = maximum(s.diag.max_kz for s in scratches; init = zero(FT))
-    return (; entr_fallback = entr, kvh_floored = floored, max_kz = max_kz,
-            total_columns = 6 * Nc * Nc)
-end
-
-"""
     fill_tm5_dkg_payload!(dkg_c180, c180_fields, air_mass, hflux, lhflux,
                           ustar, A, B, Nc, constants, scratches)
 
@@ -291,21 +243,17 @@ function process_era5_n320_to_cs_day(date::Date,
         # floor; its flux output is always re-done in the sliding-window loop.
         out_dt_factor = out_dt_factor_for(steps_per_met)
 
-        # --- Surface PBL + VDIFF (runtime diffusion) payload setup. ---
+        # --- Surface PBL payload setup. ---
         # Surface fields live on a SEPARATE regular-lat-lon 0.25° NetCDF
         # (`sfc_an_native/era5_surface_YYYYMM.nc`), read via the shared
         # `era5_surface_reader` (handles ERA5 unit/sign + orientation: pblh=blh,
         # ustar=zust, hflux=-sshf/3600, t2m=2t; lat S→N, lon centered). They are
         # regridded to C180 with a dedicated regular-ll → CS regridder (the same
         # `build_regridder` used by the LL→CS path), then written as the
-        # `surface` payload. VDIFF (u/v/t/qv) reuses the per-window
-        # `c180_fields` (already regridded), so it is essentially free.
+        # `surface` payload.
         do_surface = settings.include_surface
-        do_vdiff   = settings.include_vdiff_fields
-        # Precompute the TM5 boundary-layer diffusion (`bldiff`) eddy diffusivity
-        # on C180 from the regridded 3D fields + surface fluxes, written as the
-        # `:kz` payload. Needs the latent heat flux (slhf) in addition to the
-        # four PBL fields, so it reads the surface window `with_latent`.
+        # Precompute the exact TM5 boundary-layer interface exchange on C180.
+        # This needs latent heat flux in addition to the four PBL fields.
         do_tm5_diffusion = settings.include_tm5_diffusion
         if do_surface
             surf_Nx, surf_Ny = 1440, 721      # ERA5 0.25° single-levels regular-ll
@@ -327,7 +275,6 @@ function process_era5_n320_to_cs_day(date::Date,
             surf_reader = open_era5_surface_reader(
                 joinpath(settings.root_dir, "sfc_an_native"), date, surf_Nx, surf_Ny)
             @info "  Surface PBL payload ENABLED (regular-ll 0.25° → C180)"
-            do_vdiff && @info "  VDIFF (u/v/t/qv) payload ENABLED"
             if do_tm5_diffusion
                 surf_lhflux = ntuple(_ -> zeros(FT, Nc, Nc), 6)   # latent flux on C180
                 dkg_c180    = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
@@ -356,18 +303,12 @@ function process_era5_n320_to_cs_day(date::Date,
             return nothing
         end
 
-        # Build the surface/vdiff payload addition for the window whose pipeline
-        # is `pipe` (the written window). VDIFF comes from the pipe's already-
-        # regridded c180 winds/T/Q.
+        # Build the surface/diffusion payload addition for the written window.
         surface_vdiff_payload = function (pipe, air_mass, win_idx)
             extra = NamedTuple()
             if do_surface
                 extra = merge(extra, (surface = (pblh = surf_pblh, ustar = surf_ustar,
                                                  hflux = surf_hflux, t2m = surf_t2m),))
-            end
-            if do_vdiff
-                extra = merge(extra, (vdiff = (u = pipe.c180_fields.u, v = pipe.c180_fields.v,
-                                               t = pipe.c180_fields.t, qv = pipe.c180_fields.qv),))
             end
             if do_tm5_diffusion
                 kzdiag = fill_tm5_dkg_payload!(dkg_c180, pipe.c180_fields, air_mass,
@@ -433,7 +374,6 @@ function process_era5_n320_to_cs_day(date::Date,
             include_flux_delta = true,
             include_tm5conv = include_convection,
             include_surface = settings.include_surface,
-            include_gchp_vdiff = settings.include_vdiff_fields,
             include_precomputed_dkg = settings.include_tm5_diffusion,
             mass_basis = mass_basis,
             panel_convention = _cs_panel_convention_tag(target_grid),

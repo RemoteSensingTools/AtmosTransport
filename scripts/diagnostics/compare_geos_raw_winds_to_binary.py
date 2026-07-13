@@ -113,7 +113,7 @@ def section_elements(header: Dict, section: str) -> int:
         return npanel * ncells * ncells * (nz + 1)
     if section in ("ps", "pblh", "ustar", "pbl_hflux", "hflux", "t2m"):
         return npanel * ncells * ncells
-    if section in ("vdiff_u", "vdiff_v", "vdiff_t", "vdiff_qv", "kz", "qv", "qv_start", "qv_end"):
+    if section in ("vdiff_u", "vdiff_v", "vdiff_t", "vdiff_qv", "dkg", "qv", "qv_start", "qv_end"):
         return npanel * ncells * ncells * nz
     raise ValueError(f"Unsupported payload section {section!r}")
 
@@ -139,7 +139,7 @@ def load_binary_section(path: Path, header: Dict, offsets: Dict[str, int], windo
     data = np.memmap(path, dtype=dtype, mode="r", offset=header_bytes)
     base = (window - 1) * elems_per_window + offsets[section]
 
-    if section in ("m", "dm", "dtrain", "entu", "detu", "entd", "detd", "vdiff_u", "vdiff_v", "vdiff_t", "vdiff_qv", "kz"):
+    if section in ("m", "dm", "dtrain", "entu", "detu", "entd", "detd", "vdiff_u", "vdiff_v", "vdiff_t", "vdiff_qv", "dkg"):
         shape = (ncells, ncells, nz)
     elif section in ("am", "dam"):
         shape = (ncells + 1, ncells, nz)

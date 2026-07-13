@@ -138,8 +138,7 @@ using .Output
 # ---- Met-data adapters ----
 include("MetDrivers/MetDrivers.jl")
 using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
-                   PreprocessedERA5Driver, current_time,
-                   ERA5BinaryReader, ERA5BinaryHeader,
+                   current_time,
                    TransportBinaryReader, TransportBinaryHeader, write_transport_binary,
                    TransportBinaryDriver, AbstractTransportWindow,
                    StructuredFluxDeltas, FaceIndexedFluxDeltas,
@@ -149,13 +148,12 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    load_qv_pair_window!, load_grid, load_transport_window,
                    driver_grid, air_mass_basis, has_humidity_endpoints,
                    interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!,
-                   load_cmfmc_window!, load_surface_window!, load_tm5conv_window!,
-                   load_temperature_window!,
+                   load_surface_window!,
                    ConvectionForcing, has_convection_forcing,
                    copy_convection_forcing!, allocate_convection_forcing_like,
                    PBLSurfaceForcing, has_pbl_surface_forcing,
                    window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc,
-                   has_surface, has_vdiff_fields, has_tm5conv, has_temperature,
+                   has_surface, has_vdiff_fields, has_tm5conv,
                    grid_type, horizontal_topology,
                    source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics,
                    A_ifc, B_ifc,
@@ -163,7 +161,6 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    diagnose_cm_from_continuity_ka!,
                    ERA5ReducedGaussianGeometry,
                    read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh,
-                   build_dry_fluxes!, build_air_mass!,
                    total_windows, window_dt, steps_per_window, steps_per_window_schedule,
                    supports_diffusion, supports_convection,
                    DiagnoseVerticalFromHorizontal, PressureTendencyClosure,
@@ -281,7 +278,7 @@ export CubedSphereTransportDriver, CubedSphereTransportWindow, CubedSphereBinary
 export load_transport_window, driver_grid
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export window_count, load_grid, mass_basis, air_mass_basis
-export has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc, has_temperature
+export has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
 export has_surface, has_vdiff_fields, has_tm5conv, has_humidity_endpoints
 export delta_semantics
 export grid_type, horizontal_topology

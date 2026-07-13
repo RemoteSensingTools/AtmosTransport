@@ -197,7 +197,7 @@ them as starting points:
 
 - [TOML schema](@ref) — the full run/preprocessing config reference: every
   operator `kind` (incl. `cmfmc_matrix`/`tm5` convection with
-  `use_collab_lu`/`n_merge`, and `precomputed_kz` diffusion), time-varying
+  `use_collab_lu`/`n_merge`, and `tm5_dkg` diffusion), time-varying
   surface flux, `binary_mmap` output, rolling input staging, and the
   `geos_cm_closure` fingering cure.
 - [Inspecting output](@ref) — deeper coverage of the diagnostic tools.

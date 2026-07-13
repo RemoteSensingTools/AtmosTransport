@@ -49,14 +49,11 @@ runs on the host and may refresh caches before an operator launch.
   panel-native PBL Kz field from runtime surface forcing
 - [`LocalHoltslagBovilleKzField.jl`](LocalHoltslagBovilleKzField.jl) —
   local Holtslag-Boville Kz field backed by GEOS VDIFF inputs.
-  *Old name `GCHPHoltslagBovilleKzField` is a deprecated alias; see the
-  field docstring for why — no non-local PBL counter-gradient is
-  applied, so it's not full GCHP VDIFF parity.*
-- [`PrecomputedCSKzField.jl`](PrecomputedCSKzField.jl) — six-panel
-  compatibility field for legacy layer-centre `:kz` binaries.
+  No non-local counter-gradient term is applied, so this is not full GCHP
+  VDIFF parity.
 - [`PrecomputedCSDkgField.jl`](PrecomputedCSDkgField.jl) — exact TM5
-  interface air-mass exchange loaded from the preferred `:dkg` payload;
-  the current runtime half of `[diffusion] kind = "precomputed_kz"`.
+  dry-air interface exchange loaded from the binary `:dkg` payload;
+  the runtime half of `[diffusion] kind = "tm5_dkg"`.
 - [`StepwiseField.jl`](StepwiseField.jl) — piecewise-constant-in-time
   field cache
 

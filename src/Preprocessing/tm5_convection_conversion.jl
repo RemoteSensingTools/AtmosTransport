@@ -305,7 +305,7 @@ AtmosTransport orientation (k=1=TOA, k=Nz=surface).
 # Mass conservation
 
 Within the cloud window, the sum
-`entu[k] - detu[k] + (udmf[k] - udmf[k+1])` should be zero per
+`entu[k] - detu[k] - (udmf[k] - udmf[k+1])` should be zero per
 layer — equivalent to the mass-budget closure at step 4.
 Negative redistribution (step 5) preserves this sum because it
 only SWAPS between entu↔detu (or entd↔detd) without changing the

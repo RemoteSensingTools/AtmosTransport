@@ -71,7 +71,6 @@ end
         @test s.root_dir              == "/tmp/era5-test"
         @test s.include_surface       === false
         @test s.include_convection    === false
-        @test s.include_vdiff_fields  === false
         @test s.level_orientation     === :top_down
         @test endswith(s.coefficients_file, "era5_L137_coefficients.toml")
     end
@@ -194,7 +193,6 @@ end
                 [preprocessing]
                 include_surface = true
                 include_convection = true
-                include_vdiff_fields = false
                 """)
             end
 
@@ -203,13 +201,17 @@ end
             @test s.root_dir             == root
             @test s.include_surface      === true
             @test s.include_convection   === true
-            @test s.include_vdiff_fields === false
             @test s.level_orientation    === :top_down
 
             # Per-call kwargs override TOML values.
             s_override = load_met_settings(toml_path;
                 root_dir = root, include_surface = false)
             @test s_override.include_surface === false
+
+            open(toml_path, "a") do io
+                println(io, "include_vdiff_fields = false")
+            end
+            @test_throws ArgumentError load_met_settings(toml_path; root_dir = root)
         end
     end
 
@@ -232,7 +234,6 @@ end
             root_dir = "/tmp/era5-test",
             include_surface = true,
             include_convection = true,
-            include_vdiff_fields = true,
         )
 
         # Both `s_off` and `s_on` advertise `false` for all three traits

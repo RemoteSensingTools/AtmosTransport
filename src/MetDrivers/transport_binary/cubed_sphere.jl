@@ -28,9 +28,7 @@ function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol
         return npanel * Nc * Nc
     elseif _is_gchp_vdiff_payload_section(section)
         return npanel * Nc * Nc * nlevel
-    elseif section === :kz || section === :dkg
-        # :kz is legacy layer-centre diffusivity [m² s⁻¹]; :dkg is exact
-        # top-down interface exchange [kg s⁻¹]. Both use one value per layer.
+    elseif section === :dkg
         return npanel * Nc * Nc * nlevel
     elseif section === :cmfmc
         return npanel * Nc * Nc * (nlevel + 1)
@@ -94,7 +92,7 @@ function _pack_cs_window!(dest::Vector{FT}, offset::Int,
 end
 
 function _cs_section_panel_shape(Nc::Int, nlevel::Int, section::Symbol)
-    if section in (:m, :dm, :kz, :dkg, :dtrain, :entu, :detu, :entd, :detd) ||
+    if section in (:m, :dm, :dkg, :dtrain, :entu, :detu, :entd, :detd) ||
        _is_gchp_vdiff_payload_section(section)
         return [Nc, Nc, nlevel]
     elseif section === :am
@@ -143,12 +141,8 @@ per-panel structured arrays with `StructuredDirectional` topology.
 the header so runtime readers and output tools reconstruct the same mesh.
 """
 function _normalize_cs_panel_convention(raw)
-    norm = lowercase(replace(String(raw), '-' => '_', ' ' => '_'))
-    if norm in ("gnomonic", "gnomic")
-        return "gnomonic"
-    elseif norm in ("geos_native", "geosnative", "geos_fp", "geosfp", "geos_it", "geosit")
-        return "geos_native"
-    end
+    norm = lowercase(String(raw))
+    norm in ("gnomonic", "geos_native") && return norm
     throw(ArgumentError("unsupported panel_convention=$(raw); expected gnomonic or geos_native"))
 end
 
@@ -194,7 +188,6 @@ function open_streaming_cs_transport_binary(
         include_surface::Bool = false,
         include_tm5conv::Bool = false,
         include_gchp_vdiff::Bool = false,
-        include_precomputed_kz::Bool = false,
         include_precomputed_dkg::Bool = false,
         panel_convention = "gnomonic",
         cs_definition = nothing,
@@ -221,10 +214,7 @@ function open_streaming_cs_transport_binary(
         append!(payload_sections, (:entu, :detu, :entd, :detd))
     end
     include_gchp_vdiff && append!(payload_sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
-    include_precomputed_kz && push!(payload_sections, :kz)
     include_precomputed_dkg && push!(payload_sections, :dkg)
-    include_precomputed_kz && include_precomputed_dkg &&
-        throw(ArgumentError("a CS binary cannot carry both legacy `:kz` and exact `:dkg` TM5 diffusion payloads"))
 
     elems_per_window = sum(_cs_section_elements(Nc, npanel, nlevel, s)
                            for s in payload_sections)
@@ -260,7 +250,7 @@ function open_streaming_cs_transport_binary(
         # once per advection substep. Asserted below by
         # `validate_cs_writer_contract!`. See the 2026-05-31 contract audit.
         "runtime_substep_contract" => "binary_schedule",
-        "preprocessor_contract" => "streaming_cs_v5",
+        "preprocessor_contract" => "streaming_cs_v4",
         "adaptive_substeps" => false,
         "Nc" => Nc,
         "npanel" => npanel,
@@ -287,9 +277,6 @@ function open_streaming_cs_transport_binary(
         "include_tm5conv" => include_tm5conv,
         "include_gchp_vdiff" => include_gchp_vdiff,
         "gchp_vdiff_payload" => include_gchp_vdiff ? "u_v_t_qv_layer_center_v1" : "none",
-        "include_precomputed_kz" => include_precomputed_kz,
-        "precomputed_kz_payload" => include_precomputed_kz ? "tm5_bldiff_layer_center_kz_v1" : "none",
-        "n_kz" => include_precomputed_kz ? _cs_section_elements(Nc, npanel, nlevel, :kz) : 0,
         "include_precomputed_dkg" => include_precomputed_dkg,
         "precomputed_dkg_payload" => include_precomputed_dkg ? "tm5_bldiff_interface_dkg_dry_v1" : "none",
         "n_dkg" => include_precomputed_dkg ? _cs_section_elements(Nc, npanel, nlevel, :dkg) : 0,

@@ -54,8 +54,7 @@ end
     @testset "Allocator produces a consistent bundle" begin
         settings = ERA5N320Settings(; root_dir = real_root_env,
                                       include_convection = true,
-                                      include_surface = true,
-                                      include_vdiff_fields = true)
+                                      include_surface = true)
         handles = open_era5_day(settings, Date(2021, 12, 1))
         try
             dst = _tiny_cs_target(Float32; Nc = 24)

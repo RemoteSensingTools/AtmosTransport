@@ -59,12 +59,6 @@ of the surface flux. A real non-local kernel would need:
 This is deferred indefinitely; the field is correctly named `Local…`
 so users opting into GCHP-style VDIFF know what they get.
 
-# Backward compatibility
-
-The old type name `GCHPHoltslagBovilleKzField` is preserved as a
-`const` alias at the bottom of this file. Both names dispatch to the
-same type. The "GCHP" name is deprecated in favor of
-`LocalHoltslagBovilleKzField`, which is honest about what it is.
 """
 struct LocalHoltslagBovilleKzField{FT, F <: AbstractTimeVaryingField{FT, 3}, H,
                                   P <: PBLPhysicsParameters{FT}, A} <: AbstractCubedSphereField{FT}
@@ -343,13 +337,3 @@ function refresh_local_holtslag_boville_kz_cache!(field::LocalHoltslagBovilleKzF
 end
 
 export LocalHoltslagBovilleKzField, refresh_local_holtslag_boville_kz_cache!
-
-# ----------------------------------------------------------------------
-# Deprecated aliases (the field was previously named "GCHPHoltslagBoville…"
-# under the false advertisement that it implemented full GCHP VDIFF.
-# Kept here so existing TOML configs, tests, scripts, and external code
-# continue to work without renaming. Prefer the new names in new code.
-# ----------------------------------------------------------------------
-const GCHPHoltslagBovilleKzField = LocalHoltslagBovilleKzField
-const refresh_gchp_holtslag_boville_kz_cache! = refresh_local_holtslag_boville_kz_cache!
-export GCHPHoltslagBovilleKzField, refresh_gchp_holtslag_boville_kz_cache!

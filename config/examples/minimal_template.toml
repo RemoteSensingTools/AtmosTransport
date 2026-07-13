@@ -34,7 +34,7 @@ scheme = "slopes"
 
 [diffusion]
 # Valid values include "none", "constant", the named TM5/GCHP PBL modes,
-# and "precomputed_kz" when the transport binary carries a Kz payload.
+# and "tm5_dkg" when the transport binary carries exact TM5 interface exchange.
 kind = "none"
 
 [convection]

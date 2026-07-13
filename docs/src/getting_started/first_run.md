@@ -120,7 +120,7 @@ Things to know:
 
 ## Where the met data comes from
 
-The runtime consumes **transport binaries** (`format_version = 3`) — a
+The runtime consumes **transport binaries** (`format_version = 4`) — a
 self-describing flat format produced by the preprocessor. There are two
 preprocessing paths today:
 

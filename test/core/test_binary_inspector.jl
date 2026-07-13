@@ -22,7 +22,8 @@ const _INSPECTOR_AIR_MASS = 1e16
 
 function _inspector_fixture_binary(path::AbstractString;
                                    FT::Type{<:AbstractFloat} = Float64,
-                                   with_tm5::Bool = false)
+                                   with_tm5::Bool = false,
+                                   flux_kind::Symbol = :substep_mass_amount)
     Nx, Ny, Nz = 4, 3, 5
     mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
     vertical = HybridSigmaPressure(
@@ -54,11 +55,17 @@ function _inspector_fixture_binary(path::AbstractString;
                            steps_per_window = 1,
                            mass_basis = :dry,
                            source_flux_sampling = :window_start_endpoint,
-                           flux_sampling = :window_constant)
+                           flux_sampling = :window_constant,
+                           flux_kind)
     return nothing
 end
 
 @testset "plan 40 Commit 5 — binary_capabilities + inspect_binary" begin
+
+    @testset "LL writer rejects unsupported full-window flux storage" begin
+        @test_throws ArgumentError _inspector_fixture_binary(
+            tempname(); flux_kind = :full_window_mass_amount)
+    end
 
     @testset "basic LL fixture (no TM5)" begin
         mktempdir() do dir

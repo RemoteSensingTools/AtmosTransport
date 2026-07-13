@@ -127,7 +127,7 @@ mass basis, supported operators, and load-time consistency gates.
   `docs/reference/DATA_LAYOUT.md`
 - Advection details: `docs/reference/ADVECTION_SCHEMES.md`
 - Preprocessing and binary formats: `docs/reference/PREPROCESSING_GUIDE.md`,
-  `docs/reference/BINARY_FORMAT_V5.md`
+  `docs/reference/BINARY_FORMAT.md`
 - Algorithm comparisons: `docs/reference/TRANSPORT_COMPARISON.md`,
   `docs/reference/FROM_TM5.md`, `docs/reference/FROM_GCHP.md`
 - Historical design notes: `docs/memos/`, `docs/resources/`

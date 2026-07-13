@@ -167,11 +167,11 @@ diffusivity profile is supplied by an `AbstractKzField`:
 | `ProfileKzField` | Static profile from TOML | Production |
 | `DerivedKzField` | Beljaars–Viterbo local Kz from `(ps, u, v, T, q, z0)` | Production |
 | `WindowPBLKzField` | PBL-aware variant of Beljaars–Viterbo | Production |
-| `GCHPHoltslagBovilleKzField` | GCHP/VDIFF Holtslag–Boville non-local | Preview |
+| `LocalHoltslagBovilleKzField` | GEOS/VDIFF local Holtslag–Boville Kz | Preview |
 
 For TM5 users: `DerivedKzField` is the closest analogue to the
 Holtslag–Boville-with-Beljaars-correction profile TM5 ships with.
-For GCHP users: `GCHPHoltslagBovilleKzField` follows the GCHP/VDIFF
+For GCHP users: `LocalHoltslagBovilleKzField` follows the local GCHP/VDIFF
 formulation almost line-for-line, with the same `(R_dry, cp_dry,
 karman)` parameters and the same non-local counter-gradient term.
 

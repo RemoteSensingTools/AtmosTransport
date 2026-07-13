@@ -28,9 +28,6 @@ struct RuntimePhysicsRecipe{AdvT, DiffT, ConvT, ChemT}
     chemistry  :: ChemT
 end
 
-# Backward-compat: 3-arg constructor defaults chemistry to `NoChemistry`.
-RuntimePhysicsRecipe(adv, diff, conv) = RuntimePhysicsRecipe(adv, diff, conv, NoChemistry())
-
 const CSPhysicsRecipe = RuntimePhysicsRecipe
 
 # The flat-411 `catrine_co2` stub is gone. CS tracers
@@ -119,7 +116,7 @@ build_runtime_diffusion(cfg, style::AbstractRuntimeRecipeStyle, ::Type{FT},
 
 function _pbl_cache_shape(context)
     throw(ArgumentError(
-        "[diffusion] kind = \"pbl\" requires a cubed-sphere reader or driver " *
+        "[diffusion] kind = \"tm5_beljaars_viterbo_local_kz\" requires a cubed-sphere reader or driver " *
         "context so the Kz cache can be sized."))
 end
 _pbl_cache_shape(reader::CubedSphereBinaryReader) =
@@ -139,26 +136,11 @@ _runtime_has_gchp_vdiff(reader::CubedSphereBinaryReader) =
 _runtime_has_gchp_vdiff(driver::CubedSphereTransportDriver) =
     _runtime_has_gchp_vdiff(driver.reader)
 
-_runtime_has_precomputed_kz(_context) = false
-_runtime_has_precomputed_kz(reader::CubedSphereBinaryReader) =
-    any(s in reader.header.payload_sections for s in (:dkg, :kz))
-_runtime_has_precomputed_kz(driver::CubedSphereTransportDriver) =
-    _runtime_has_precomputed_kz(driver.reader)
-
 _runtime_has_precomputed_dkg(_context) = false
 _runtime_has_precomputed_dkg(reader::CubedSphereBinaryReader) =
     :dkg in reader.header.payload_sections
 _runtime_has_precomputed_dkg(driver::CubedSphereTransportDriver) =
     _runtime_has_precomputed_dkg(driver.reader)
-
-# Concrete-operator validators must require the matching section on every
-# daily binary. The broad capability above is only for first-context
-# materialization and backward-compatible test contexts.
-_runtime_has_legacy_precomputed_kz(context) = _runtime_has_precomputed_kz(context)
-_runtime_has_legacy_precomputed_kz(reader::CubedSphereBinaryReader) =
-    :kz in reader.header.payload_sections
-_runtime_has_legacy_precomputed_kz(driver::CubedSphereTransportDriver) =
-    _runtime_has_legacy_precomputed_kz(driver.reader)
 
 function build_runtime_convection(cfg, context)
     return build_runtime_convection(cfg, _runtime_recipe_style(context))
@@ -216,7 +198,7 @@ function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
                                     context) where FT
     _runtime_has_surface(context) ||
         throw(ArgumentError(
-            "[diffusion] kind = \"pbl\" requires pblh/ustar/pbl_hflux/t2m sections " *
+            "[diffusion] kind = \"tm5_beljaars_viterbo_local_kz\" requires pblh/ustar/pbl_hflux/t2m sections " *
             "in every cubed-sphere transport binary."))
     return nothing
 end
@@ -246,18 +228,6 @@ function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
         behavior. See memory/diffusion_full_pipeline_audit_2026_05_25.md (D3).
         """
     end
-    return nothing
-end
-
-function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
-                                    ::ImplicitVerticalDiffusion{FT, <:PrecomputedCSKzField},
-                                    context) where FT
-    _runtime_has_legacy_precomputed_kz(context) ||
-        throw(ArgumentError(
-            "The active diffusion operator was materialized from a legacy `:kz` " *
-            "binary, so every cubed-sphere binary in this run must also carry `:kz`. " *
-            "Do not mix legacy `:kz` and exact `:dkg` daily binaries; regenerate " *
-            "the complete interval with include_tm5_diffusion=true."))
     return nothing
 end
 

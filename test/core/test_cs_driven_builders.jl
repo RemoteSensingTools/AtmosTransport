@@ -16,10 +16,10 @@ using .AtmosTransport.Models:
     NoAdvectionSpec, LinRoodAdvectionSpec,
     diffusion_spec, NoDiffusionSpec, ConstantDiffusionSpec,
     WindowPBLKzDiffusionSpec, HoltslagBovilleVdiffDiffusionSpec,
-    PrecomputedKzDiffusionSpec, materialize
+    TM5DkgDiffusionSpec, materialize
 using .AtmosTransport.State.Fields:
-    CubedSphereField, WindowPBLKzField, GCHPHoltslagBovilleKzField,
-    PrecomputedCSKzField, field_value, panel_field
+    CubedSphereField, WindowPBLKzField, LocalHoltslagBovilleKzField,
+    PrecomputedCSDkgField, field_value, panel_field
 using .AtmosTransport.Operators.Diffusion:
     uses_diffusive_surface_flux_boundary
 
@@ -52,14 +52,14 @@ AtmosTransport.Models._runtime_has_surface(::StubGCHPVDIFFReader) = true
 AtmosTransport.Models._runtime_has_gchp_vdiff(::StubGCHPVDIFFReader) = true
 AtmosTransport.Models._pbl_cache_shape(::StubGCHPVDIFFReader) = (4, 4, 2)
 
-struct StubKzReader end
-AtmosTransport.Models._runtime_recipe_style(::StubKzReader) =
+struct StubDkgReader end
+AtmosTransport.Models._runtime_recipe_style(::StubDkgReader) =
     AtmosTransport.Models.CubedSphereRuntimeRecipeStyle()
-AtmosTransport.Models._runtime_has_tm5conv(::StubKzReader) = false
-AtmosTransport.Models._runtime_has_cmfmc(::StubKzReader) = false
-AtmosTransport.Models._runtime_has_surface(::StubKzReader) = true
-AtmosTransport.Models._runtime_has_precomputed_kz(::StubKzReader) = true
-AtmosTransport.Models._pbl_cache_shape(::StubKzReader) = (4, 4, 2)
+AtmosTransport.Models._runtime_has_tm5conv(::StubDkgReader) = false
+AtmosTransport.Models._runtime_has_cmfmc(::StubDkgReader) = false
+AtmosTransport.Models._runtime_has_surface(::StubDkgReader) = false
+AtmosTransport.Models._runtime_has_precomputed_dkg(::StubDkgReader) = true
+AtmosTransport.Models._pbl_cache_shape(::StubDkgReader) = (4, 4, 2)
 
 struct StubStructuredReader
     has_tm5 :: Bool
@@ -113,17 +113,14 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test advection_spec(Dict("scheme" => "ppm"))    isa PPMAdvectionSpec
         @test advection_spec(Dict("scheme" => "none"))   isa NoAdvectionSpec
         @test advection_spec(Dict{String,Any}())         isa UpwindAdvectionSpec  # default
-        # linrood + the legacy `linrood_ppm` alias both → LinRoodAdvectionSpec(order).
+        # LinRood carries its reconstruction order in a typed spec.
         @test advection_spec(Dict("scheme" => "linrood")).order == 5  # default order
         @test advection_spec(Dict("scheme" => "linrood", "ppm_order" => 7)).order == 7
-        @test advection_spec(Dict("scheme" => "linrood_ppm", "ppm_order" => 7)) isa LinRoodAdvectionSpec
         # parse-time validation matches the old builder.
         @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "ppm_order" => 7))
         @test_throws ArgumentError advection_spec(Dict("scheme" => "xyz"))
         # LinRood materializes only on cubed-sphere; structured throws.
-        @test build_cs_advection(Dict("advection" => Dict("scheme" => "linrood_ppm"))) isa LinRoodPPMScheme
-        @test_throws ArgumentError build_runtime_advection(
-            Dict("advection" => Dict("scheme" => "linrood_ppm")), latlon_grid)
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "linrood_ppm"))
     end
 
     @testset "configured_cs_halo_width dispatch" begin
@@ -163,9 +160,9 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test_throws ArgumentError build_cs_diffusion(
             Dict("diffusion" => Dict("kind" => "magic")), Float64)
 
-        # kind = "pbl" needs a reader/driver context with raw surface sections.
+        # Local TM5 Kz needs a reader/driver context with raw surface sections.
         pbl_recipe = build_cs_physics_recipe(
-            Dict("diffusion" => Dict("kind" => "pbl")),
+            Dict("diffusion" => Dict("kind" => "tm5_beljaars_viterbo_local_kz")),
             StubPBLReader(),
             Float64,
         )
@@ -184,31 +181,30 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test uses_diffusive_surface_flux_boundary(named_pbl_recipe.diffusion)
 
         @test_throws ArgumentError build_cs_physics_recipe(
-            Dict("diffusion" => Dict("kind" => "pbl")), StubReader(false, false), Float64)
+            Dict("diffusion" => Dict("kind" => "tm5_beljaars_viterbo_local_kz")), StubReader(false, false), Float64)
         gchp_vdiff_recipe = build_cs_physics_recipe(
             Dict("diffusion" => Dict("kind" => "geoschem_holtslag_boville_vdiff")),
             StubGCHPVDIFFReader(),
             Float64,
         )
         @test gchp_vdiff_recipe.diffusion isa ImplicitVerticalDiffusion
-        @test gchp_vdiff_recipe.diffusion.kz_field isa GCHPHoltslagBovilleKzField
+        @test gchp_vdiff_recipe.diffusion.kz_field isa LocalHoltslagBovilleKzField
         @test_throws ArgumentError build_cs_physics_recipe(
             Dict("diffusion" => Dict("kind" => "geoschem_holtslag_boville_vdiff")),
             StubPBLReader(),
             Float64,
         )
 
-        # kind = "precomputed_kz" → PrecomputedCSKzField when the binary carries
-        # the :kz section; errors otherwise.
-        kz_recipe = build_cs_physics_recipe(
-            Dict("diffusion" => Dict("kind" => "precomputed_kz")),
-            StubKzReader(),
+        # Exact TM5 interface exchange requires a :dkg payload.
+        dkg_recipe = build_cs_physics_recipe(
+            Dict("diffusion" => Dict("kind" => "tm5_dkg")),
+            StubDkgReader(),
             Float64,
         )
-        @test kz_recipe.diffusion isa ImplicitVerticalDiffusion
-        @test kz_recipe.diffusion.kz_field isa PrecomputedCSKzField
+        @test dkg_recipe.diffusion isa ImplicitVerticalDiffusion
+        @test dkg_recipe.diffusion.kz_field isa PrecomputedCSDkgField
         @test_throws ArgumentError build_cs_physics_recipe(
-            Dict("diffusion" => Dict("kind" => "precomputed_kz")),
+            Dict("diffusion" => Dict("kind" => "tm5_dkg")),
             StubPBLReader(),
             Float64,
         )
@@ -247,15 +243,13 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test diffusion_spec(Dict("kind" => "none"))         isa NoDiffusionSpec
         @test diffusion_spec(Dict("kind" => "constant", "value" => 2.5)) isa ConstantDiffusionSpec
         @test diffusion_spec(Dict("kind" => "constant", "value" => 2.5)).value == 2.5
-        # the three CS closures + their legacy aliases.
-        @test diffusion_spec(Dict("kind" => "pbl")) isa WindowPBLKzDiffusionSpec
-        @test diffusion_spec(Dict("kind" => "beljaars_viterbo_local_kz")) isa WindowPBLKzDiffusionSpec
+        # Cubed-sphere diffusion closures.
         @test diffusion_spec(Dict("kind" => "tm5_beljaars_viterbo_local_kz")) isa WindowPBLKzDiffusionSpec
         @test diffusion_spec(Dict("kind" => "geoschem_holtslag_boville_vdiff")) isa HoltslagBovilleVdiffDiffusionSpec
-        @test diffusion_spec(Dict("kind" => "precomputed_kz")) isa PrecomputedKzDiffusionSpec
+        @test diffusion_spec(Dict("kind" => "tm5_dkg")) isa TM5DkgDiffusionSpec
         # surface_flux_boundary flows onto the spec.
-        @test diffusion_spec(Dict("kind" => "pbl", "surface_flux_boundary" => true)).surface_flux_boundary
-        @test !diffusion_spec(Dict("kind" => "pbl")).surface_flux_boundary
+        @test diffusion_spec(Dict("kind" => "tm5_beljaars_viterbo_local_kz", "surface_flux_boundary" => true)).surface_flux_boundary
+        @test !diffusion_spec(Dict("kind" => "tm5_beljaars_viterbo_local_kz")).surface_flux_boundary
         # parse-time validation (matches the old builder).
         @test_throws ArgumentError diffusion_spec(Dict("kind" => "magic"))
         @test_throws ArgumentError diffusion_spec(Dict("type" => "pbl"))         # legacy schema
@@ -264,7 +258,7 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
             Dict("kind" => "constant", "surface_flux_boundary" => "yes"))       # non-bool
         # CS-only closures throw on structured styles at materialize time.
         @test_throws ArgumentError materialize(
-            diffusion_spec(Dict("kind" => "pbl")),
+            diffusion_spec(Dict("kind" => "tm5_beljaars_viterbo_local_kz")),
             AtmosTransport.Models.LatLonRuntimeRecipeStyle(), Float64, nothing)
     end
 

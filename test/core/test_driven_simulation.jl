@@ -425,9 +425,9 @@ end
             v = ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc, Nz), 6),
             t = ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc, Nz), 6),
             qv = ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc, Nz), 6))
-        kz = ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc, Nz), 6)
+        dkg = ntuple(_ -> fill(FT(value), mesh.Nc, mesh.Nc, Nz), 6)
         return AtmosTransport.MetDrivers.CubedSphereTransportWindow(
-            air_mass, ps, fluxes; surface, vdiff, kz)
+            air_mass, ps, fluxes; surface, vdiff, dkg)
     end
 
     destination = make_window(1)
@@ -438,5 +438,5 @@ end
     @test all(all(==(FT(2)), destination.vdiff.v[p]) for p in 1:6)
     @test all(all(==(FT(2)), destination.vdiff.t[p]) for p in 1:6)
     @test all(all(==(FT(2)), destination.vdiff.qv[p]) for p in 1:6)
-    @test all(all(==(FT(2)), destination.kz[p]) for p in 1:6)
+    @test all(all(==(FT(2)), destination.dkg[p]) for p in 1:6)
 end

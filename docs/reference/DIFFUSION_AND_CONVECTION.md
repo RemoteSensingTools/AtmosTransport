@@ -65,8 +65,7 @@ Beljaars-Viterbo / revised Louis-Tiedtke-Geleyn local Kz closure matching the
 TM5-style constants already used by the legacy PBL path. The runtime then uses
 the common `ImplicitVerticalDiffusion` backward-Euler tridiagonal column solve.
 
-`kind = "pbl"` remains a legacy alias for this closure, but new configs should
-use the explicit name.
+The explicit name is the only supported runtime configuration.
 
 ### `geoschem_holtslag_boville_vdiff`
 
@@ -151,5 +150,5 @@ cadence choice, not part of the advection CFL schedule.
 - Topology-specific refresh code belongs in typed field/cache objects and
   dispatch methods. Runners should not grow source/topology `if` trees.
 - GCHP VDIFF counter-gradient support must extend
-  `GCHPHoltslagBovilleKzField` or add a sibling typed field/operator, with
+  `LocalHoltslagBovilleKzField` or add a sibling typed field/operator, with
   tests against single-column reference cases before campaign use.

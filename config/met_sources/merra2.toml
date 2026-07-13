@@ -80,9 +80,6 @@ pattern = "MERRA2_{stream}.{collection_name}.{date}.nc4"
 # ---------------------------------------------------------------------------
 [preprocessing]
 winds_collection     = "tavg3"
-include_surface      = false
-include_convection   = false
-include_vdiff_fields = false
 
 # ---------------------------------------------------------------------------
 # Collections

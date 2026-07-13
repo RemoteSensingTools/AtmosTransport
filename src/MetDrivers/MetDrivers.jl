@@ -4,10 +4,10 @@
 Meteorological data adapters for the basis-explicit transport architecture.
 
 Provides:
-- Abstract driver types with capability traits
-- Mass closure strategies (diagnose cm, pressure tendency, native vertical)
-- topology-generic transport binary readers
-- ERA5 preprocessed-binary readers and native reduced-Gaussian GRIB geometry helpers
+- abstract driver types with capability traits;
+- mass-closure strategies;
+- topology-generic transport-binary readers; and
+- ERA5 native reduced-Gaussian GRIB geometry helpers.
 """
 module MetDrivers
 
@@ -19,7 +19,6 @@ using ..Grids
 
 include("AbstractMetDriver.jl")
 include("MassClosure.jl")
-include("DryFluxBuilder.jl")
 include("ConvectionForcing.jl")
 include("SurfaceForcing.jl")
 include("TransportBinary.jl")
@@ -30,33 +29,6 @@ include("CubedSphereTransportDriver.jl")
 include("ERA5/ERA5.jl")
 using .ERA5
 
-# ERA5.BinaryReader lives in a nested module. Names that already exist in
-# MetDrivers (for CS/generic transport readers) are not imported by `using
-# .ERA5`, so add forwarding methods on the public MetDrivers generics.
-window_count(r::ERA5BinaryReader) = ERA5.window_count(r)
-has_qv(r::ERA5BinaryReader) = ERA5.has_qv(r)
-has_qv_endpoints(r::ERA5BinaryReader) = ERA5.has_qv_endpoints(r)
-has_flux_delta(r::ERA5BinaryReader) = ERA5.has_flux_delta(r)
-has_cmfmc(r::ERA5BinaryReader) = ERA5.has_cmfmc(r)
-has_surface(r::ERA5BinaryReader) = ERA5.has_surface(r)
-has_vdiff_fields(::ERA5BinaryReader) = false
-has_tm5conv(r::ERA5BinaryReader) = ERA5.has_tm5conv(r)
-has_temperature(r::ERA5BinaryReader) = ERA5.has_temperature(r)
-mass_basis(r::ERA5BinaryReader) = ERA5.mass_basis(r)
-A_ifc(r::ERA5BinaryReader) = ERA5.A_ifc(r)
-B_ifc(r::ERA5BinaryReader) = ERA5.B_ifc(r)
-load_window!(r::ERA5BinaryReader, win::Int; kwargs...) =
-    ERA5.load_window!(r, win; kwargs...)
-load_qv_window!(r::ERA5BinaryReader, win::Int; kwargs...) =
-    ERA5.load_qv_window!(r, win; kwargs...)
-load_flux_delta_window!(r::ERA5BinaryReader, win::Int; kwargs...) =
-    ERA5.load_flux_delta_window!(r, win; kwargs...)
-load_surface_window!(r::ERA5BinaryReader, win::Int; kwargs...) =
-    ERA5.load_surface_window!(r, win; kwargs...)
-
-# Re-export reader and adapter types
-export PreprocessedERA5Driver
-export ERA5BinaryReader, ERA5BinaryHeader
 export TRANSPORT_BINARY_FORMAT_VERSION
 export TransportBinaryReader, TransportBinaryHeader, write_transport_binary
 export TransportBinaryContract, canonical_window_constant_contract,
@@ -74,15 +46,14 @@ export load_tm5_convection_window!, has_tm5_convection
 export load_qv_pair_window!, load_grid, load_transport_window
 export driver_grid, air_mass_basis, has_humidity_endpoints
 export interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!
-export load_cmfmc_window!, load_surface_window!, load_tm5conv_window!
-export load_temperature_window!
+export load_surface_window!
 export ConvectionForcing, has_convection_forcing
 export copy_convection_forcing!, allocate_convection_forcing_like
 export PBLSurfaceForcing, has_pbl_surface_forcing
 export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export binary_capabilities, inspect_binary
-export has_surface, has_vdiff_fields, has_tm5conv, has_temperature
+export has_surface, has_vdiff_fields, has_tm5conv
 export mass_basis, grid_type, horizontal_topology, A_ifc, B_ifc
 export uses_binary_substep_contract
 export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics

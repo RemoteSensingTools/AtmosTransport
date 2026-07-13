@@ -261,8 +261,9 @@ function _validate_transport_layout!(header::AbstractDict)
     vdiff = map(s -> s in sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
     all(vdiff) || !any(vdiff) || throw(ArgumentError(
         "Transport-binary contract violation — GCHP VDIFF payload sections must be complete"))
-    (:kz in sections && :dkg in sections) && throw(ArgumentError(
-        "Transport-binary contract violation — legacy :kz and exact :dkg TM5 diffusion payloads are mutually exclusive"))
+    :kz in sections && throw(ArgumentError(
+        "Transport-binary contract violation — :kz is not part of format v$(TRANSPORT_BINARY_FORMAT_VERSION); " *
+        "write exact dry-air interface exchange as :dkg"))
     (:dkg in sections && basis != "dry") && throw(ArgumentError(
         "Transport-binary contract violation — exact :dkg requires mass_basis=dry"))
 
@@ -297,6 +298,27 @@ function _validate_transport_layout!(header::AbstractDict)
         expected_nface_h = npanel * 2 * Nc * (Nc + 1)
         nface_h == expected_nface_h || throw(ArgumentError(
             "Transport-binary contract violation — nface_h=$(nface_h), expected $(expected_nface_h) for C$(Nc)"))
+        for key in ("panel_convention", "cs_definition", "cs_coordinate_law",
+                    "cs_center_law", "longitude_offset_deg")
+            haskey(header, key) || throw(ArgumentError(
+                "Transport-binary contract violation — cubed-sphere header is missing $(key)"))
+        end
+        convention = lowercase(String(header["panel_convention"]))
+        definition = lowercase(String(header["cs_definition"]))
+        coordinate_law = lowercase(String(header["cs_coordinate_law"]))
+        center_law = lowercase(String(header["cs_center_law"]))
+        expected_geometry = convention == "gnomonic" ?
+            ("equiangular_gnomonic", "equiangular_gnomonic", "angular_midpoint") :
+            convention == "geos_native" ?
+            ("gmao_equal_distance", "gmao_equal_distance_gnomonic", "four_corner_normalized") :
+            throw(ArgumentError(
+                "Transport-binary contract violation — panel_convention must be gnomonic or geos_native"))
+        (definition, coordinate_law, center_law) == expected_geometry || throw(ArgumentError(
+            "Transport-binary contract violation — cubed-sphere geometry tags do not match " *
+            "panel_convention=$(convention); expected $(expected_geometry)"))
+        offset = header["longitude_offset_deg"]
+        offset isa Real && !(offset isa Bool) && isfinite(offset) || throw(ArgumentError(
+            "Transport-binary contract violation — longitude_offset_deg must be finite"))
         sum(_cs_section_elements(Nc, npanel, nlevel, section) for section in sections)
     else
         throw(ArgumentError(
@@ -304,6 +326,13 @@ function _validate_transport_layout!(header::AbstractDict)
     end
     expected_elems == elems_per_window || throw(ArgumentError(
         "Transport-binary contract violation — elems_per_window=$(elems_per_window), expected $(expected_elems) from payload_sections"))
+
+    flux_kind = _transport_normalize_symbol(header["flux_kind"])
+    if grid_type != "cubed_sphere" && flux_kind !== :substep_mass_amount
+        throw(ArgumentError(
+            "Transport-binary contract violation — $(grid_type) runtime requires " *
+            "flux_kind=substep_mass_amount; got $(flux_kind)"))
+    end
 
     humidity = _transport_normalize_symbol(header["humidity_sampling"])
     expected_humidity = endpoint_humidity[1] ? :window_endpoints :
@@ -368,7 +397,7 @@ function validate_cs_writer_contract!(header::AbstractDict)
 end
 
 """
-    validate_transport_contract!(header::AbstractDict; allow_legacy::Bool = false)
+    validate_transport_contract!(header::AbstractDict)
 
 Assert that `header` declares the current transport-binary contract and that
 the timing metadata is self-consistent. `format_version` is a hard boundary:
@@ -377,13 +406,9 @@ and must be regenerated rather than loaded through compatibility defaults.
 
 Shared between `TransportBinaryDriver`, `TransportBinaryReader`, and the
 `scripts/diagnostics/inspect_transport_binary.jl` tool so there is ONE
-validator every reader-facing tool calls. `allow_legacy` is retained for API
-compatibility but no longer bypasses the current runtime contract.
+validator every reader-facing tool calls.
 """
-function validate_transport_contract!(header::AbstractDict;
-                                      allow_legacy::Bool = false)
-    _ = allow_legacy
-
+function validate_transport_contract!(header::AbstractDict)
     missing_or_unknown = String[]
     magic = get(header, "magic", nothing)
     magic == "MFLX" || throw(ArgumentError(

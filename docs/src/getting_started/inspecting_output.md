@@ -48,7 +48,7 @@ without the `:cmfmc` payload section is rejected at load time —
 no silent capability mismatch. (`:dtrain` is optional even when
 `:cmfmc` is present.)
 
-Transport binaries must be `format_version = 3`. Older files are rejected by
+Transport binaries must be `format_version = 4`. Every other version is rejected by
 the same reader path used by runtime drivers; regenerate them with the current
 preprocessor rather than loading them with compatibility defaults.
 

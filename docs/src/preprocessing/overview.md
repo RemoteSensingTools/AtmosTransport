@@ -2,7 +2,7 @@
 
 The preprocessor turns **raw meteorological input** (ERA5 spectral GRIB,
 GEOS-IT / GEOS-FP native NetCDF, …) into the **transport binary**
-(`format_version = 3`) the runtime consumes. It runs offline, once per
+(`format_version = 4`) the runtime consumes. It runs offline, once per
 day per (source, target) combination; the runtime then memory-maps the
 result.
 

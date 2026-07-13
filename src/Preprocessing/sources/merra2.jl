@@ -48,19 +48,13 @@ Settings for the MERRA-2 wind-derived cubed-sphere preprocessor.
 - `winds_collection` — `:tavg3` (time-averaged U/V, the default and the
   GEOS-Chem-faithful choice) or `:inst3` (instantaneous U/V from the inst3
   collection, no separate tavg3 file needed).
-- `include_surface` / `include_convection` / `include_vdiff_fields` /
-  `include_tm5_diffusion` — optional payload toggles. The first build wires
-  only the core mass/flux payload; these are reserved for follow-on work and
-  default to `false`.
+Only the implemented mass/flux payload is configurable. Optional physics
+settings are rejected by the loader until a corresponding reader exists.
 """
 Base.@kwdef struct MERRA2Settings <: AbstractMetSettings
     root_dir              :: String
     coefficients_file     :: String = "config/geos_L72_coefficients.toml"
     winds_collection      :: Symbol = :tavg3
-    include_surface       :: Bool   = false
-    include_convection    :: Bool   = false
-    include_vdiff_fields  :: Bool   = false
-    include_tm5_diffusion :: Bool   = false
 end
 
 const MERRA2_NATIVE_LEVEL_COUNT = 72

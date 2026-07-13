@@ -34,7 +34,7 @@ file       = "/home/cfranken/data/AtmosTransport/catrine/Emissions/gridfed/GCP-G
 time_index = 12
 
 [diffusion]
-kind = "pbl"
+kind = "tm5_beljaars_viterbo_local_kz"
 
 [convection]
 kind = "tm5"

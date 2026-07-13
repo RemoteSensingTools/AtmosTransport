@@ -1,0 +1,91 @@
+# ===========================================================================
+# Three-CO2-tracer ERA5-N320 -> C180 December run: natural (LMDZ/CAMS) +
+# fossil (GridFED) + OCEAN (ECCO-Darwin v5 air-sea CO2 flux), to gauge how
+# large the ocean-driven XCO2 signal/variation is over a month.
+#
+# Met: the adaptive-substep, dry-mass-pinned Dec 1-31 2021 ERA5 N320 -> C180
+# transport binaries (exact TM5 :dkg diffusion + four-field convection baked in),
+# same as catrine_era5_n320_c180_tm5diff_dec2021_2weeks.toml.
+#
+# Ocean flux: ECCO-Darwin v5 daily fluxCO2 (LLC270, NASA NAS), one December
+# averaged to a monthly mean, sign-flipped to "+into atmosphere", converted to
+# kgCO2/m2/s, binned to 0.5deg lat-lon (scripts/preprocessing/
+# eccodarwin_co2flux_to_latlon.py). Driven as a STATIC monthly flux (like
+# GridFED fossil) via the generic file-based surface-flux path. The flux month
+# need not match the met month (representative December pattern).
+#
+# IMPORTANT (co2_ocean IC = 400 ppm, NOT 0): the CS vertical remap is
+# positive-definite (FV3 ppm_profile iv=0) and runs `fillz` after each remap,
+# which clips NEGATIVE mixing ratios to zero and rescales positives. An ocean
+# tracer started at 0 goes negative where the ocean is a sink, so fillz mangles
+# it every remap -> spurious upstream-propagating ("backwards") features. Riding
+# on a +400 ppm background keeps the transported field positive (fillz inert),
+# then subtract 400 in post to recover the anomaly. Fossil stays >=0 and natural
+# rides on a realistic IC, so only the ocean tracer needs this.
+#
+# Runner:
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/catrine_era5_n320_c180_3co2_oceanflux_dec.toml
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/era5/n320_to_c180/transport_binary_dec2021_catrine_f32"
+start_date   = "2021-12-01"
+end_date     = "2021-12-31"
+file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+
+[tracers.co2_fossil]
+  [tracers.co2_fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.co2_fossil.surface_flux]
+  kind = "gridfed_fossil_co2"
+  time_index = 12
+
+# Ocean air-sea CO2 flux (ECCO-Darwin v5). IC = 400 ppm background (4.0e-4 dry
+# VMR) so the transported field stays positive and the positive-definite vertical
+# remap / fillz stay inert; subtract 400 ppm in post to get the ocean anomaly.
+# Units in the NetCDF are kgCO2/m2/s (already +into atmosphere), so no unit conv.
+[tracers.co2_ocean]
+  [tracers.co2_ocean.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_ocean.surface_flux]
+  kind = "eccodarwin_ocean_co2"
+  file = "~/data/AtmosTransport/catrine/Emissions/ECCO_Darwin/eccodarwin_ocean_co2_december_05deg.nc"
+  variable = "co2_flux_ocean"
+  # generic file kind isn't in the known-tracer molar-mass map; declare CO2's
+  # so the kgCO2/m2/s flux converts to the dry-VMR storage basis.
+  molar_mass_kg_mol = 0.0440095
+
+[diffusion]
+kind = "precomputed_kz"
+surface_flux_boundary = true
+
+[convection]
+kind = "tm5"
+use_collab_lu = true
+lmax_conv = 85
+n_merge = 1
+
+[output]
+format = "binary_mmap"
+split = "daily"
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/ocean_co2_dec_posIC/catrine_era5_n320_3co2_oceanflux_{YYYYMMDD}.atmsnap"

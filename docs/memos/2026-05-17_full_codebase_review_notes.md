@@ -504,7 +504,7 @@ dispatch would be cleaner or measurably faster.
   — each call blocks the host on GPU. Bypassed in the n_sub=1 path so this is
   only painful on contract-less runs.
 - **`_compute_air_mass_kernel!` hardcodes 256 workgroup**
-  ([CellKernels.jl:31](../../src/Kernels/CellKernels.jl#L31)). Omit and let
+  (the obsolete generic cell-kernel prototype). Omit and let
   KA pick.
 
 ### 5.5 Repeated work per substep

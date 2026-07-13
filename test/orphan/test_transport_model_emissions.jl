@@ -21,7 +21,7 @@ using Test
 using AtmosTransport
 using AtmosTransport: CellState, MoistBasis,
                       UpwindScheme, SlopesScheme, NoLimiter,
-                      StructuredFaceFluxState, DryMassFluxBasis,
+                      StructuredFaceFluxState, DryBasis,
                       allocate_face_fluxes, AdvectionWorkspace,
                       NoDiffusion, NoChemistry,
                       SurfaceFluxSource, SurfaceFluxOperator, NoSurfaceFlux,

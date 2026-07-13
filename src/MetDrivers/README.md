@@ -42,7 +42,6 @@ cubed-sphere-specific data paths.
 - [`MetDrivers.jl`](MetDrivers.jl) — submodule assembly and public exports
 - [`AbstractMetDriver.jl`](AbstractMetDriver.jl) — required driver
   methods, traits, and default `current_time`
-- [`MassClosure.jl`](MassClosure.jl) — vertical-closure strategy types
 - [`DryFluxBuilder.jl`](DryFluxBuilder.jl) — generic dry-flux and air-mass
   assembly helpers
 - [`ConvectionForcing.jl`](ConvectionForcing.jl) — convection forcing

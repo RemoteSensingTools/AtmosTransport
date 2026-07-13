@@ -21,7 +21,7 @@ using AtmosTransport
 using AtmosTransport: CellState, MoistBasis,
                       SlopesScheme, NoLimiter, UpwindScheme,
                       AdvectionWorkspace,
-                      StructuredFaceFluxState, DryMassFluxBasis,
+                      StructuredFaceFluxState, DryBasis,
                       allocate_face_fluxes,
                       NoDiffusion, ImplicitVerticalDiffusion, DiffusionWorkspace,
                       SurfaceFluxSource, SurfaceFluxOperator, NoSurfaceFlux,

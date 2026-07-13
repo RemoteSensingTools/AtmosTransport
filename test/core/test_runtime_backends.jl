@@ -37,7 +37,6 @@ end
 @testset "runtime kernels avoid hard Float64 accumulation" begin
     repo = normpath(joinpath(@__DIR__, "..", ".."))
     files = [
-        "src/Operators/Advection/VerticalRemap.jl",
         "src/MetDrivers/ERA5/VerticalClosure.jl",
         "src/Operators/Convection/cmfmc_kernels.jl",
     ]

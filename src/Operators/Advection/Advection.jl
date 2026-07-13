@@ -44,7 +44,7 @@ using ..SurfaceFlux: AbstractSurfaceFluxOperator, NoSurfaceFlux,
 using ...State: CellState, CubedSphereState,
     AbstractStructuredFaceFluxState, AbstractFaceFluxState,
     StructuredFaceFluxState, AbstractUnstructuredFaceFluxState,
-    DryMassFluxBasis, DryStructuredFluxState, AbstractMassBasis,
+    DryBasis, AbstractMassBasis,
     FaceIndexedFluxState, CubedSphereFaceFluxState,
     ntracers, tracer_index, tracer_name, get_tracer, eachtracer
 using ...Grids: AtmosGrid, AbstractHorizontalMesh, AbstractStructuredMesh,
@@ -71,9 +71,6 @@ include("ppm_subgrid_distributions.jl")
 # Lin-Rood cross-term advection for cubed-sphere grids (FV3 fv_tp_2d)
 include("LinRood.jl")
 include("linrood_adjoint_kernels.jl")
-
-# Vertical remap (FV3-style conservative PPM, per-column)
-include("VerticalRemap.jl")
 
 include("StrangSplitting.jl")
 

@@ -228,19 +228,19 @@ _transport_allocate_tm5_field(reader::TransportBinaryReader{FT}) where FT =
         Array{FT}(undef, reader.header.ncell, reader.header.nlevel)
 
 function _transport_make_fluxes(::Val{:dry}, am, bm, cm)
-    return StructuredFaceFluxState{DryMassFluxBasis}(am, bm, cm)
+    return StructuredFaceFluxState{DryBasis}(am, bm, cm)
 end
 
 function _transport_make_fluxes(::Val{:moist}, am, bm, cm)
-    return StructuredFaceFluxState{MoistMassFluxBasis}(am, bm, cm)
+    return StructuredFaceFluxState{MoistBasis}(am, bm, cm)
 end
 
 function _transport_make_fluxes(::Val{:dry}, hflux, cm)
-    return FaceIndexedFluxState{DryMassFluxBasis}(hflux, cm)
+    return FaceIndexedFluxState{DryBasis}(hflux, cm)
 end
 
 function _transport_make_fluxes(::Val{:moist}, hflux, cm)
-    return FaceIndexedFluxState{MoistMassFluxBasis}(hflux, cm)
+    return FaceIndexedFluxState{MoistBasis}(hflux, cm)
 end
 
 function load_window!(reader::TransportBinaryReader{FT}, win::Int;

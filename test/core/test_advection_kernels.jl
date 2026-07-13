@@ -180,6 +180,42 @@ end
     )
     @test state.air_mass == m_before
     @test state.tracers_raw == rm_before
+
+    wrong_shape = DiffusionWorkspace(zeros(FT, size(m, 1), size(m, 2), size(m, 3) - 1))
+    @test_throws DimensionMismatch strang_split!(
+        state, fluxes, grid, UpwindScheme();
+        workspace=advection_ws,
+        diffusion_workspace=wrong_shape,
+        diffusion_op=diffusion,
+        dt=FT(60),
+    )
+    @test state.air_mass == m_before
+    @test state.tracers_raw == rm_before
+
+    diffusion_ws = DiffusionWorkspace(state)
+    @test_throws ArgumentError strang_split!(
+        state, fluxes, grid, UpwindScheme();
+        workspace=advection_ws,
+        diffusion_workspace=diffusion_ws,
+        diffusion_op=diffusion,
+    )
+    @test state.air_mass == m_before
+    @test state.tracers_raw == rm_before
+end
+
+@testset "advection workspace shape is validated before mutation" begin
+    FT = Float64
+    grid, m, rm, _, am, bm, cm = build_test_problem(FT; Nx=8, Ny=4, Nz=4)
+    state = CellState(copy(m); tracer=copy(rm))
+    fluxes = StructuredFaceFluxState(copy(am), copy(bm), copy(cm))
+    wrong_workspace = AdvectionWorkspace(state.air_mass)
+    m_before = copy(state.air_mass)
+    rm_before = copy(state.tracers_raw)
+
+    @test_throws DimensionMismatch strang_split!(
+        state, fluxes, grid, UpwindScheme(); workspace=wrong_workspace)
+    @test state.air_mass == m_before
+    @test state.tracers_raw == rm_before
 end
 
 @testset "Advection kernels: {CPU,GPU} × {F32,F64}" begin
@@ -235,7 +271,7 @@ end
                     strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
                 end
 
-                m_gpu  = Array(state_g.air_dry_mass)
+                m_gpu  = Array(state_g.air_mass)
                 rm_gpu = Array(state_g.tracers[:tracer])
 
                 tol = FT == Float64 ? 1e-12 : FT(5e-5)
@@ -253,7 +289,7 @@ end
                 strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
 
                 rm_gpu = Array(state_g.tracers[:tracer])
-                m_gpu  = Array(state_g.air_dry_mass)
+                m_gpu  = Array(state_g.air_mass)
                 χ_gpu  = rm_gpu ./ max.(m_gpu, eps(FT))
                 @test maximum(abs.(χ_gpu .- FT(400e-6))) / FT(400e-6) < FT(1e-6)
             end
@@ -268,7 +304,7 @@ end
                 strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
 
                 rm_gpu = Array(state_g.tracers[:tracer])
-                m_gpu  = Array(state_g.air_dry_mass)
+                m_gpu  = Array(state_g.air_mass)
 
                 # GPU FMA instructions may produce ≤ few ULP difference vs CPU
                 ulp_tol = FT == Float64 ? FT(4) : FT(4)
@@ -291,7 +327,7 @@ end
                 end
 
                 rm_gpu = Array(state_g.tracers[:tracer])
-                m_gpu  = Array(state_g.air_dry_mass)
+                m_gpu  = Array(state_g.air_mass)
 
                 # After 4 steps, FMA-induced ULP drift accumulates modestly
                 ulp_tol = FT == Float64 ? FT(16) : FT(16)
@@ -380,7 +416,7 @@ end
                 for _ in 1:4
                     strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
                 end
-                m_gpu  = Array(state_g.air_dry_mass)
+                m_gpu  = Array(state_g.air_mass)
                 rm_gpu = Array(state_g.tracers[:tracer])
                 tol = FT == Float64 ? 1e-12 : FT(5e-5)
                 @test abs(sum(m_gpu) - sum(m_cpu)) / sum(m_cpu) < tol
@@ -398,7 +434,7 @@ end
                     strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
                 end
                 rm_gpu = Array(state_g.tracers[:tracer])
-                m_gpu  = Array(state_g.air_dry_mass)
+                m_gpu  = Array(state_g.air_mass)
 
                 ulp_tol = FT == Float64 ? FT(16) : FT(16)
                 max_rm_ulp = maximum(abs.(rm_gpu .- rm_out_cpu)) / eps(maximum(abs.(rm_out_cpu)))
@@ -486,7 +522,7 @@ end
                 for _ in 1:4
                     strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
                 end
-                m_gpu  = Array(state_g.air_dry_mass)
+                m_gpu  = Array(state_g.air_mass)
                 rm_gpu = Array(state_g.tracers[:tracer])
                 tol = FT == Float64 ? 1e-12 : FT(5e-5)
                 @test abs(sum(m_gpu) - sum(m_cpu)) / sum(m_cpu) < tol
@@ -504,7 +540,7 @@ end
                     strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
                 end
                 rm_gpu = Array(state_g.tracers[:tracer])
-                m_gpu  = Array(state_g.air_dry_mass)
+                m_gpu  = Array(state_g.air_mass)
 
                 ulp_tol = FT == Float64 ? FT(16) : FT(16)
                 max_rm_ulp = maximum(abs.(rm_gpu .- rm_out_cpu)) / eps(maximum(abs.(rm_out_cpu)))

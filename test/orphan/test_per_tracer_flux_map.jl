@@ -148,8 +148,8 @@ end
         @test src2d_ad.tracer_name === :X
         @test src2d_ad.cell_mass_rate == rate2d
 
-        # 3D rate (legacy pre-17 convention still supported by
-        # `_apply_surface_source!(::AbstractArray{FT,3}, ...)`)
+        # Adaptation itself is rank-agnostic; shape validation occurs when a
+        # source is installed on a concrete state.
         rate3d = fill(0.5, 3, 4, 2)
         src3d = SurfaceFluxSource(:Y, rate3d)
         src3d_ad = Adapt.adapt(Array, src3d)

@@ -21,13 +21,11 @@ using .AtmosTransport: Grids, State, Operators, MetDrivers
 using .AtmosTransport.Grids: FaceIndexedFluxTopology, StructuredFluxTopology,
                              cell_areas_by_latitude, cell_faces, face_cells,
                              face_length, face_normal, flux_topology, n_levels
-using .AtmosTransport.MetDrivers: DiagnoseVerticalFromHorizontal,
-                                   diagnose_cm_from_continuity!
+using .AtmosTransport.MetDrivers: diagnose_cm_from_continuity!
 using .AtmosTransport.Operators: MonotoneLimiter, strang_split!
 using .AtmosTransport.State: AbstractFaceFluxState,
                              AbstractStructuredFaceFluxState,
-                             DryMassFluxBasis, DryStructuredFluxState,
-                             MoistMassFluxBasis, MoistStructuredFluxState,
+                             DryBasis, MoistBasis,
                              StructuredFaceFluxState, face_flux_x,
                              face_flux_y, face_flux_z, flux_basis,
                              mass_basis
@@ -45,17 +43,14 @@ using .AtmosTransport.State: AbstractFaceFluxState,
     @test isdefined(AtmosTransport, :SlopesScheme)
     @test isdefined(AtmosTransport, :AtmosGrid)
     @test isdefined(AtmosTransport, :HybridSigmaPressure)
-    @test isdefined(AtmosTransport, :DiagnoseVerticalFromHorizontal)
     @test isdefined(AtmosTransport, :StructuredFluxTopology)
     @test isdefined(AtmosTransport, :FaceIndexedFluxTopology)
     @test isdefined(AtmosTransport, :flux_topology)
     # Basis types
-    @test isdefined(AtmosTransport, :AbstractMassFluxBasis)
-    @test isdefined(AtmosTransport, :MoistMassFluxBasis)
-    @test isdefined(AtmosTransport, :DryMassFluxBasis)
+    @test isdefined(AtmosTransport, :AbstractMassBasis)
+    @test isdefined(AtmosTransport, :MoistBasis)
+    @test isdefined(AtmosTransport, :DryBasis)
     @test isdefined(AtmosTransport, :flux_basis)
-    @test isdefined(AtmosTransport, :DryStructuredFluxState)
-    @test isdefined(AtmosTransport, :MoistStructuredFluxState)
 end
 
 @testset "Flux topology trait" begin
@@ -65,44 +60,42 @@ end
     sfs = StructuredFaceFluxState(zeros(11,8,4), zeros(10,9,4), zeros(10,8,5))
     @test sfs isa AbstractStructuredFaceFluxState
     @test sfs isa AbstractFaceFluxState
-    @test sfs isa StructuredFaceFluxState{DryMassFluxBasis}
+    @test sfs isa StructuredFaceFluxState{DryBasis}
 
     @test face_flux_x(sfs, 1, 1, 1) == 0.0
     @test face_flux_y(sfs, 1, 1, 1) == 0.0
     @test face_flux_z(sfs, 1, 1, 1) == 0.0
 end
 
-@testset "MassFluxBasis type safety" begin
+@testset "Mass basis type safety" begin
     am = zeros(11, 8, 4); bm = zeros(10, 9, 4); cm = zeros(10, 8, 5)
 
-    dry = StructuredFaceFluxState{DryMassFluxBasis}(am, bm, cm)
-    @test flux_basis(dry) isa DryMassFluxBasis
-    @test dry isa DryStructuredFluxState
+    dry = StructuredFaceFluxState{DryBasis}(am, bm, cm)
+    @test flux_basis(dry) isa DryBasis
 
-    moist = StructuredFaceFluxState{MoistMassFluxBasis}(am, bm, cm)
-    @test flux_basis(moist) isa MoistMassFluxBasis
-    @test moist isa MoistStructuredFluxState
+    moist = StructuredFaceFluxState{MoistBasis}(am, bm, cm)
+    @test flux_basis(moist) isa MoistBasis
 
     default = StructuredFaceFluxState(am, bm, cm)
-    @test flux_basis(default) isa DryMassFluxBasis
+    @test flux_basis(default) isa DryBasis
 
-    @test !(moist isa StructuredFaceFluxState{DryMassFluxBasis})
-    @test !(dry isa StructuredFaceFluxState{MoistMassFluxBasis})
+    @test !(moist isa StructuredFaceFluxState{DryBasis})
+    @test !(dry isa StructuredFaceFluxState{MoistBasis})
 
     alloc_dry = allocate_face_fluxes(StructuredFluxTopology(), 10, 8, 4;
-                                      basis=DryMassFluxBasis)
-    @test flux_basis(alloc_dry) isa DryMassFluxBasis
+                                      basis=DryBasis)
+    @test flux_basis(alloc_dry) isa DryBasis
 
     alloc_moist = allocate_face_fluxes(StructuredFluxTopology(), 10, 8, 4;
-                                        basis=MoistMassFluxBasis)
-    @test flux_basis(alloc_moist) isa MoistMassFluxBasis
+                                        basis=MoistBasis)
+    @test flux_basis(alloc_moist) isa MoistBasis
 end
 
 # =========================================================================
-# Test 1b: Basis safety — strang_split! only accepts DryMassFluxBasis.
+# Test 1b: Basis safety — strang_split! only accepts DryBasis.
 #           A mock subtype of AbstractStructuredFaceFluxState (not
 #           StructuredFaceFluxState) is rejected by dispatch.
-#           StructuredFaceFluxState{MoistMassFluxBasis} is also rejected.
+#           StructuredFaceFluxState{MoistBasis} is also rejected.
 # =========================================================================
 struct MockStructuredFluxState{B, AX, AY, AZ} <: AbstractStructuredFaceFluxState{B}
     am :: AX
@@ -140,7 +133,7 @@ MockStructuredFluxState{B}(am, bm, cm) where {B} =
     cm = zeros(FT, Nx, Ny, Nz+1)
 
     scheme = SlopesScheme(MonotoneLimiter())
-    ws = AdvectionWorkspace(m)
+    ws = AdvectionWorkspace(state)
 
     # Mock subtype → MethodError (not StructuredFaceFluxState at all)
     mock_fluxes = MockStructuredFluxState{DryBasis}(am, bm, cm)
@@ -151,15 +144,15 @@ MockStructuredFluxState{B}(am, bm, cm) where {B} =
     @test_throws MethodError strang_split!(state, mock_fluxes, grid, scheme; workspace=ws)
 
     # Moist basis → MethodError (wrong basis)
-    moist_fluxes = StructuredFaceFluxState{MoistMassFluxBasis}(am, bm, cm)
+    moist_fluxes = StructuredFaceFluxState{MoistBasis}(am, bm, cm)
     @test_throws MethodError strang_split!(state, moist_fluxes, grid, scheme; workspace=ws)
 
     # Dry basis → works
-    dry_fluxes = StructuredFaceFluxState{DryMassFluxBasis}(am, bm, cm)
-    m_before = sum(state.air_dry_mass)
+    dry_fluxes = StructuredFaceFluxState{DryBasis}(am, bm, cm)
+    m_before = sum(state.air_mass)
     rm_before = total_mass(state, :CO2)
     strang_split!(state, dry_fluxes, grid, scheme; workspace=ws)
-    @test sum(state.air_dry_mass) ≈ m_before atol=eps(FT)*m_before*1000
+    @test sum(state.air_mass) ≈ m_before atol=eps(FT)*m_before*1000
     @test total_mass(state, :CO2)  ≈ rm_before atol=eps(FT)*rm_before*1000
 
     # Scoped accessors still work for mock and moist types
@@ -352,7 +345,7 @@ function make_simple_fluxes(grid; scale=1e8)
 
     # Simple zonal flow: am is uniform positive, small enough for CFL < 1
     m_state = make_test_state(grid)
-    m_min = minimum(m_state.air_dry_mass)
+    m_min = minimum(m_state.air_mass)
     am_val = FT(0.1) * m_min  # CFL ~ 0.1
 
     for k in 1:Nz, j in 1:Ny, i in 1:Nx+1
@@ -389,7 +382,7 @@ end
     grid = make_test_grid()
     state = make_test_state(grid)
 
-    @test size(state.air_dry_mass) == (60, 30, 4)
+    @test size(state.air_mass) == (60, 30, 4)
     @test :CO2 in tracer_names(state)
     @test total_air_mass(state) > 0.0
     @test total_mass(state, :CO2) > 0.0
@@ -414,14 +407,14 @@ end
     fluxes = make_zero_fluxes(grid)
 
     scheme = SlopesScheme(MonotoneLimiter())
-    ws = AdvectionWorkspace(state.air_dry_mass)
+    ws = AdvectionWorkspace(state)
 
-    m_before = sum(state.air_dry_mass)
+    m_before = sum(state.air_mass)
     rm_before = total_mass(state, :CO2)
 
     strang_split!(state, fluxes, grid, scheme; workspace=ws)
 
-    m_after = sum(state.air_dry_mass)
+    m_after = sum(state.air_mass)
     rm_after = total_mass(state, :CO2)
 
     @test m_after ≈ m_before atol=eps(Float64)*m_before*1000
@@ -441,14 +434,14 @@ end
     fluxes = make_simple_fluxes(grid)
 
     scheme = SlopesScheme(MonotoneLimiter())
-    ws = AdvectionWorkspace(state.air_dry_mass)
+    ws = AdvectionWorkspace(state)
 
-    m_before = sum(state.air_dry_mass)
+    m_before = sum(state.air_mass)
     rm_before = total_mass(state, :CO2)
 
     strang_split!(state, fluxes, grid, scheme; workspace=ws)
 
-    m_after = sum(state.air_dry_mass)
+    m_after = sum(state.air_mass)
     rm_after = total_mass(state, :CO2)
 
     # Air mass should be conserved to machine precision
@@ -557,16 +550,16 @@ end
 
     fluxes = make_simple_fluxes(grid)
     scheme = SlopesScheme(MonotoneLimiter())
-    ws = AdvectionWorkspace(m)
+    ws = AdvectionWorkspace(state)
 
-    m_before = sum(state.air_dry_mass)
+    m_before = sum(state.air_mass)
     co2_before = total_mass(state, :CO2)
     sf6_before = total_mass(state, :SF6)
     ch4_before = total_mass(state, :CH4)
 
     strang_split!(state, fluxes, grid, scheme; workspace=ws)
 
-    m_after = sum(state.air_dry_mass)
+    m_after = sum(state.air_mass)
     co2_after = total_mass(state, :CO2)
     sf6_after = total_mass(state, :SF6)
     ch4_after = total_mass(state, :CH4)
@@ -604,9 +597,9 @@ end
 
     state = CellState(copy(m_init); CO2 = m_init .* FT(400e-6))
     scheme = SlopesScheme(MonotoneLimiter())
-    ws = AdvectionWorkspace(state.air_dry_mass)
+    ws = AdvectionWorkspace(state)
 
-    m_total_0 = sum(state.air_dry_mass)
+    m_total_0 = sum(state.air_mass)
     rm_total_0 = total_mass(state, :CO2)
 
     n_windows = 4
@@ -614,12 +607,12 @@ end
         # Rebuild fluxes each window (simulating fresh met data)
         fluxes = make_simple_fluxes(grid)
 
-        m_before = sum(state.air_dry_mass)
+        m_before = sum(state.air_mass)
         rm_before = total_mass(state, :CO2)
 
         strang_split!(state, fluxes, grid, scheme; workspace=ws)
 
-        m_after = sum(state.air_dry_mass)
+        m_after = sum(state.air_mass)
         rm_after = total_mass(state, :CO2)
 
         @test abs(m_after - m_before) / m_before < 1e-12
@@ -627,7 +620,7 @@ end
     end
 
     # Cumulative conservation across all windows
-    m_total_final = sum(state.air_dry_mass)
+    m_total_final = sum(state.air_mass)
     rm_total_final = total_mass(state, :CO2)
     @test abs(m_total_final - m_total_0) / m_total_0 < 1e-11
     @test abs(rm_total_final - rm_total_0) / rm_total_0 < 1e-11

@@ -1128,7 +1128,8 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                        emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                        meteo = nothing,
                        dt::Union{Nothing, Real} = nothing) where {B <: AbstractMassBasis}
-    _require_diffusion_workspace(diffusion_op, diffusion_workspace)
+    _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
+                         state.air_mass, ntracers(state), state.halo_width)
     (!(diffusion_op isa NoDiffusion) || !(emissions_op isa NoSurfaceFlux)) &&
         dt === nothing && throw(ArgumentError(
             "cubed-sphere transport with diffusion or surface flux requires the step dt"))
@@ -1277,7 +1278,8 @@ end
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
     _noadvection_reject_emissions_op(emissions_op)
-    _require_diffusion_workspace(diffusion_op, diffusion_workspace)
+    _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
+                         state.air_mass, ntracers(state))
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion: skip the Strang half-step structure
         # entirely and apply a single V(dt) step on the LL state. The
@@ -1310,12 +1312,84 @@ end
 # Validate the direct operator API before any advection sweep mutates state.
 # TransportModel supplies this workspace automatically; direct callers must
 # make the operator's storage ownership explicit.
-@inline _require_diffusion_workspace(::NoDiffusion, _) = nothing
-@inline _require_diffusion_workspace(::AbstractDiffusion, ::DiffusionWorkspace) = nothing
-function _require_diffusion_workspace(op::AbstractDiffusion, workspace)
-    throw(ArgumentError(
+@inline _preflight_diffusion(::NoDiffusion, _, _, ::AbstractArray, ::Integer) = nothing
+@inline _preflight_diffusion(::NoDiffusion, _, _, ::NTuple{6}, ::Integer, ::Integer) = nothing
+
+function _preflight_diffusion(op::AbstractDiffusion, workspace, dt,
+                              air_mass::AbstractArray, _...)
+    workspace isa DiffusionWorkspace || throw(ArgumentError(
         "$(typeof(op)) requires `diffusion_workspace = DiffusionWorkspace(state)`; " *
         "got $(typeof(workspace))."))
+    dt isa Real || throw(ArgumentError("$(typeof(op)) requires a real-valued `dt`; got $(repr(dt))."))
+    expected = size(air_mass)
+    size(workspace.factors) == expected || throw(DimensionMismatch(
+        "diffusion factor workspace has shape $(size(workspace.factors)); expected $(expected)"))
+    size(workspace.layer_thickness) == expected || throw(DimensionMismatch(
+        "diffusion layer-thickness workspace has shape $(size(workspace.layer_thickness)); expected $(expected)"))
+    eltype(workspace.factors) === eltype(air_mass) &&
+        eltype(workspace.layer_thickness) === eltype(air_mass) || throw(ArgumentError(
+            "diffusion workspace and state must share one element type"))
+    typeof(get_backend(workspace.factors)) === typeof(get_backend(air_mass)) &&
+        typeof(get_backend(workspace.layer_thickness)) === typeof(get_backend(air_mass)) ||
+        throw(ArgumentError("diffusion workspace and state must use the same backend"))
+    return nothing
+end
+
+function _preflight_advection_workspace(workspace::AdvectionWorkspace,
+                                        tracers_raw::AbstractArray{FT, 4},
+                                        air_mass::AbstractArray{FT, 3}) where FT
+    tracer_shape = size(tracers_raw)
+    mass_shape = size(air_mass)
+    size(workspace.rm_4d_A) == tracer_shape &&
+        size(workspace.rm_4d_B) == tracer_shape || throw(DimensionMismatch(
+            "advection tracer workspace has shapes $(size(workspace.rm_4d_A)) and " *
+            "$(size(workspace.rm_4d_B)); expected $(tracer_shape). Construct it with " *
+            "`AdvectionWorkspace(state)`."))
+    all(buffer -> size(buffer) == mass_shape,
+        (workspace.rm_A, workspace.m_A, workspace.rm_B, workspace.m_B)) ||
+        throw(DimensionMismatch(
+            "advection mass workspace must match air-mass shape $(mass_shape)"))
+    backend = typeof(get_backend(air_mass))
+    all(buffer -> eltype(buffer) === FT && typeof(get_backend(buffer)) === backend,
+        (workspace.rm_A, workspace.m_A, workspace.rm_B, workspace.m_B,
+         workspace.rm_4d_A, workspace.rm_4d_B)) || throw(ArgumentError(
+            "advection workspace and state must share one element type and backend"))
+    return nothing
+end
+
+function _preflight_diffusion(op::AbstractDiffusion, workspace, dt,
+                              air_mass::NTuple{6}, n_tracers::Integer,
+                              halo_width::Integer)
+    workspace isa DiffusionWorkspace || throw(ArgumentError(
+        "$(typeof(op)) requires `diffusion_workspace = DiffusionWorkspace(state)`; " *
+        "got $(typeof(workspace))."))
+    dt isa Real || throw(ArgumentError("$(typeof(op)) requires a real-valued `dt`; got $(repr(dt))."))
+    Hp = Int(halo_width)
+    Nxi, Nyi, Nz = size(air_mass[1])
+    expected = (Nxi - 2Hp, Nyi - 2Hp, Nz)
+    reference_expected = (expected[1], expected[2], Int(n_tracers))
+    workspace.factors isa NTuple{6} &&
+        workspace.layer_thickness isa NTuple{6} &&
+        workspace.references isa NTuple{6} || throw(DimensionMismatch(
+            "cubed-sphere diffusion workspace must contain six factor, layer-thickness, and reference panels"))
+    @inbounds for p in 1:6
+        size(workspace.factors[p]) == expected || throw(DimensionMismatch(
+            "diffusion factor workspace panel $p has shape $(size(workspace.factors[p])); expected $(expected)"))
+        size(workspace.layer_thickness[p]) == expected || throw(DimensionMismatch(
+            "diffusion layer-thickness workspace panel $p has shape $(size(workspace.layer_thickness[p])); expected $(expected)"))
+        size(workspace.references[p]) == reference_expected || throw(DimensionMismatch(
+            "diffusion reference workspace panel $p has shape $(size(workspace.references[p])); expected $(reference_expected)"))
+        eltype(workspace.factors[p]) === eltype(air_mass[p]) &&
+            eltype(workspace.layer_thickness[p]) === eltype(air_mass[p]) &&
+            eltype(workspace.references[p]) === eltype(air_mass[p]) || throw(ArgumentError(
+                "diffusion workspace panel $p and state must share one element type"))
+        backend = typeof(get_backend(air_mass[p]))
+        typeof(get_backend(workspace.factors[p])) === backend &&
+            typeof(get_backend(workspace.layer_thickness[p])) === backend &&
+            typeof(get_backend(workspace.references[p])) === backend || throw(ArgumentError(
+                "diffusion workspace panel $p and state must use the same backend"))
+    end
+    return nothing
 end
 
 function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
@@ -1360,7 +1434,8 @@ end
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
     _noadvection_reject_emissions_op(emissions_op)
-    _require_diffusion_workspace(diffusion_op, diffusion_workspace)
+    _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
+                         state.air_mass, ntracers(state), state.halo_width)
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion on CS: single V(dt) step via the
         # mass-flux VMR wrapper. State carries `state.halo_width`.
@@ -1387,7 +1462,8 @@ end
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
     _noadvection_reject_emissions_op(emissions_op)
-    _require_diffusion_workspace(diffusion_op, diffusion_workspace)
+    _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
+                         state.air_mass, ntracers(state))
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion on face-indexed RG: single V(dt) step.
         apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
@@ -1418,7 +1494,8 @@ for (scheme_type, h_sweep, v_sweep) in (
                           diffusion_op::AbstractDiffusion = NoDiffusion(),
                           emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                           meteo = nothing) where {B <: AbstractMassBasis}
-        _require_diffusion_workspace(diffusion_op, diffusion_workspace)
+        _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
+                             state.air_mass, ntracers(state))
         m = state.air_mass
         hflux, cm = fluxes.horizontal_flux, fluxes.cm
         cfl_limit_ft = convert(eltype(m), cfl_limit)
@@ -1574,7 +1651,9 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
                           meteo = nothing,
                           grid = nothing,
                           dt::Union{Nothing, Real} = nothing) where FT
-    _require_diffusion_workspace(diffusion_op, diffusion_workspace)
+    _preflight_advection_workspace(ws, rm_4d, m)
+    _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
+                         m, size(rm_4d, 4))
     cfl_ft = convert(FT, cfl_limit)
 
     # CFL subcycling per direction (reuse single-tracer pilot on the 3D mass)

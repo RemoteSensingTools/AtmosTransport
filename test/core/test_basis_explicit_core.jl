@@ -5,7 +5,7 @@ using Adapt
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.Grids: StructuredTopology, face_cells, face_length,
+using .AtmosTransport.Grids: StructuredFluxTopology, face_cells, face_length,
                              face_normal, n_levels, planet_parameters
 using .AtmosTransport.Operators: AbstractConstantScheme, AbstractLinearScheme,
                                  AbstractQuadraticScheme, MonotoneLimiter,
@@ -57,7 +57,7 @@ end
     vc = HybridSigmaPressure([0.0, 100.0, 300.0], [0.0, 0.0, 1.0])
     grid = AtmosGrid(mesh, vc, AtmosTransport.CPU())
     flux_dry = allocate_face_fluxes(mesh, 2; FT=Float64, basis=DryBasis)
-    flux_moist = allocate_face_fluxes(StructuredTopology(), 4, 3, 2; FT=Float64, basis=MoistBasis)
+    flux_moist = allocate_face_fluxes(StructuredFluxTopology(), 4, 3, 2; FT=Float64, basis=MoistBasis)
 
     @test mass_basis(flux_dry) isa DryBasis
     @test mass_basis(flux_moist) isa MoistBasis
@@ -173,7 +173,7 @@ end
 
     m = ones(FT, Nx, Ny, Nz)
     state = CellState(DryBasis, copy(m); CO2=copy(m) .* FT(400e-6))
-    fluxes = allocate_face_fluxes(StructuredTopology(), Nx, Ny, Nz; FT=FT, basis=DryBasis)
+    fluxes = allocate_face_fluxes(StructuredFluxTopology(), Nx, Ny, Nz; FT=FT, basis=DryBasis)
 
     m0 = total_air_mass(state)
     rm0 = total_mass(state, :CO2)
@@ -199,7 +199,7 @@ end
     @test final_callback_fired[]
 
     state_slopes = CellState(DryBasis, copy(m); CO2=copy(m) .* FT(400e-6))
-    fluxes_slopes = allocate_face_fluxes(StructuredTopology(), Nx, Ny, Nz; FT=FT, basis=DryBasis)
+    fluxes_slopes = allocate_face_fluxes(StructuredFluxTopology(), Nx, Ny, Nz; FT=FT, basis=DryBasis)
     model_slopes = @inferred TransportModel(state_slopes, fluxes_slopes, grid, SlopesScheme())
     sim_slopes = Simulation(model_slopes; Δt=FT(1800), stop_time=FT(3600))
     run!(sim_slopes)
@@ -467,7 +467,7 @@ end
     grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
     m = ones(FT, Nx, Ny, Nz)
     state = CellState(DryBasis, copy(m); CO2=copy(m) .* FT(400e-6))
-    fluxes = allocate_face_fluxes(StructuredTopology(), Nx, Ny, Nz; FT=FT, basis=DryBasis)
+    fluxes = allocate_face_fluxes(StructuredFluxTopology(), Nx, Ny, Nz; FT=FT, basis=DryBasis)
     model = TransportModel(state, fluxes, grid, UpwindScheme())
 
     model_host = Adapt.adapt(Array, model)

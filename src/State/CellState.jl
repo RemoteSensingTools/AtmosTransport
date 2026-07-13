@@ -31,8 +31,7 @@ Cell-centered prognostic state for transport.
 # Property access
 `state.tracers` returns a lazy `TracerAccessor` that forwards
 `state.tracers.CO2` to `get_tracer(state, :CO2)` (a `selectdim` view
-into `tracers_raw`). `state.air_dry_mass` aliases `state.air_mass` for
-dry-basis code that prefers that name.
+into `tracers_raw`).
 
 # Invariant
 After each transport step, `sum(air_mass)` and the per-tracer mass
@@ -133,9 +132,6 @@ function Adapt.adapt_structure(to, state::CellState{B}) where {B <: AbstractMass
         air_mass, tracers_raw, names)
 end
 
-const DryCellState = CellState{DryBasis}
-const MoistCellState = CellState{MoistBasis}
-
 # ---------------------------------------------------------------------------
 # TracerAccessor — lazy wrapper preserving state.tracers.CO2 syntax
 # ---------------------------------------------------------------------------
@@ -168,13 +164,11 @@ Base.length(acc::TracerAccessor) = ntracers(getfield(acc, :state))
 Base.keys(acc::TracerAccessor)   = getfield(acc, :state).tracer_names
 
 # ---------------------------------------------------------------------------
-# getproperty — aliases + lazy tracers wrapper
+# Lazy property-style tracer access
 # ---------------------------------------------------------------------------
 
 function Base.getproperty(state::CellState, name::Symbol)
-    if name === :air_dry_mass
-        return getfield(state, :air_mass)
-    elseif name === :tracers
+    if name === :tracers
         return TracerAccessor(state)
     else
         return getfield(state, name)
@@ -182,7 +176,7 @@ function Base.getproperty(state::CellState, name::Symbol)
 end
 
 function Base.propertynames(::CellState, private::Bool = false)
-    names = (:air_mass, :air_dry_mass, :tracers_raw, :tracer_names, :tracers)
+    names = (:air_mass, :tracers_raw, :tracer_names, :tracers)
     return private ? names : names
 end
 
@@ -193,7 +187,7 @@ end
 """
     mixing_ratio(state::CellState, name::Symbol)
 
-Compute mixing ratio `q = tracer_mass / air_dry_mass` for the named tracer.
+Compute mixing ratio `q = tracer_mass / air_mass` for the named tracer.
 """
 mixing_ratio(state::CellState, name::Symbol) =
     get_tracer(state, name) ./ state.air_mass
@@ -219,5 +213,5 @@ Names of all tracers in `state`, in stored order.
 """
 tracer_names(state::CellState) = getfield(state, :tracer_names)
 
-export CellState, DryCellState, MoistCellState, TracerAccessor
+export CellState, TracerAccessor
 export mixing_ratio, total_mass, total_air_mass, tracer_names

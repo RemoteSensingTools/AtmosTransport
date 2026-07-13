@@ -125,7 +125,7 @@ end
 """
     set_uniform_mixing_ratio!(state::CellState, name::Symbol, χ)
 
-Set tracer `name` to uniform mixing ratio χ: tracer_mass = χ × air_dry_mass.
+Set tracer `name` to uniform mixing ratio χ: tracer_mass = χ × air_mass.
 """
 function set_uniform_mixing_ratio!(state::CellState, name::Symbol, χ)
     rm = get_tracer(state, name)

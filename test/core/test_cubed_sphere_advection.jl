@@ -8,13 +8,12 @@ using .AtmosTransport
 using .AtmosTransport.Grids: reciprocal_edge
 using .AtmosTransport.Operators: MonotoneLimiter, required_halo_width
 using .AtmosTransport.Operators.Advection: fill_panel_halos!, strang_split_cs!,
-    strang_split_cs_mt!, strang_split!, CSAdvectionWorkspace, VerticalRemapWorkspace,
-    compute_target_pressure_from_mass_direct!, vertical_remap_cs!,
+    strang_split_cs_mt!, strang_split!, CSAdvectionWorkspace,
     _sweep_x_panel_mt!, _sweep_y_panel_mt!, _sweep_z_panel_mt!,
     _sweep_x_panels_mt_pingpong!, _sweep_y_panels_mt_pingpong!,
     _sweep_z_panels_mt_pingpong!, _strang_split_cs_mt_copyback!,
     strang_split_cs_mt_pingpong!
-using .AtmosTransport.State: CubedSphereFaceFluxState, DryMassFluxBasis,
+using .AtmosTransport.State: CubedSphereFaceFluxState, DryBasis,
     total_air_mass, total_mass
 
 # ---------------------------------------------------------------------------
@@ -147,7 +146,7 @@ function run_mirrored_seam_advection_conservation(scheme; FT=Float64, Nc=8, Nz=2
         vertical = HybridSigmaPressure(FT[0, 100, 500], FT[0, 0.2, 1])
         grid = AtmosGrid(mesh, vertical, CPU(); FT)
         state = CubedSphereState(DryBasis, mesh, panels_m; tracer=panels_rm)
-        fluxes = CubedSphereFaceFluxState{DryMassFluxBasis}(panels_am, panels_bm, panels_cm)
+        fluxes = CubedSphereFaceFluxState{DryBasis}(panels_am, panels_bm, panels_cm)
         ws = AtmosTransport.Operators.CSLinRoodAdvectionWorkspace(mesh, state.air_mass[1])
         m0 = total_air_mass(state)
         rm0 = total_mass(state, :tracer)
@@ -958,43 +957,4 @@ end
 
     dev = max_vmr_deviation(panels_rm, panels_m, Nc, Hp, Nz, 411.0)
     @test dev < 1f-4  # F32 has ~7 digits
-end
-
-@testset "CS vertical remap identity — Float32" begin
-    FT = Float32
-    Nc, Hp, Nz = 4, 1, 5
-    mesh = CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
-    N = Nc + 2Hp
-    gravity = FT(9.80665)
-    q = FT(3e-6)
-
-    panels_m = ntuple(_ -> zeros(FT, N, N, Nz), 6)
-    panels_rm = ntuple(_ -> zeros(FT, N, N, Nz), 6)
-    for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
-        ii, jj = Hp + i, Hp + j
-        dp = FT(1000 + 25k + i + 2j)
-        panels_m[p][ii, jj, k] = dp * mesh.cell_areas[i, j] / gravity
-        panels_rm[p][ii, jj, k] = q * panels_m[p][ii, jj, k]
-    end
-    fill_panel_halos!(panels_m, mesh; dir=0)
-    fill_panel_halos!(panels_rm, mesh; dir=0)
-
-    panels_rm0 = deepcopy(panels_rm)
-    ak = fill(FT(1), Nz + 1)
-    bk = collect(range(zero(FT), one(FT); length=Nz + 1))
-    ws = VerticalRemapWorkspace(mesh, Nz, ak, bk; FT=FT)
-
-    compute_target_pressure_from_mass_direct!(ws, panels_m, mesh.cell_areas,
-                                              gravity, Nc, Hp, Nz)
-    vertical_remap_cs!(panels_rm, panels_m, ws, similar(panels_rm[1]),
-                       mesh.cell_areas, gravity, Nc, Hp, Nz)
-
-    max_rel = zero(FT)
-    for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
-        ii, jj = Hp + i, Hp + j
-        denom = max(abs(panels_rm0[p][ii, jj, k]), eps(FT))
-        max_rel = max(max_rel, abs(panels_rm[p][ii, jj, k] -
-                                   panels_rm0[p][ii, jj, k]) / denom)
-    end
-    @test max_rel < FT(2e-5)
 end

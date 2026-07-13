@@ -20,7 +20,7 @@ using AtmosTransport.Architectures: CPUBackend, CUDAGPUBackend, MetalGPUBackend,
 using AtmosTransport.Adjoints: CSColumnMeanObjective, cs_surface_emission_footprint
 using AtmosTransport.Grids: GEOSNativePanelConvention
 using AtmosTransport.Operators.Advection: NoLimiter
-using AtmosTransport.State: CubedSphereFaceFluxState, DryMassFluxBasis
+using AtmosTransport.State: CubedSphereFaceFluxState, DryBasis
 using AtmosTransport.State.Fields: CubedSphereField
 using AtmosTransport.SectionTimer
 
@@ -246,7 +246,7 @@ function _build_model(case::BenchmarkCase)
     tracer_names = ntuple(t -> Symbol("tr", t), Nt)
     tracer_values = ntuple(t -> Adapt.adapt(adapter, tracers_cpu[t]), Nt)
     state = CubedSphereState(DryBasis, mesh, panels_m; NamedTuple{tracer_names}(tracer_values)...)
-    fluxes = CubedSphereFaceFluxState{DryMassFluxBasis}(
+    fluxes = CubedSphereFaceFluxState{DryBasis}(
         Adapt.adapt(adapter, am_cpu),
         Adapt.adapt(adapter, bm_cpu),
         Adapt.adapt(adapter, cm_cpu))

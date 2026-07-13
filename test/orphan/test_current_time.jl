@@ -11,10 +11,9 @@
 #
 # Tests:
 # 1. `current_time(nothing) == 0.0` fallback (no meteo / unit test context).
-# 2. `current_time(::AbstractMetDriver) == 0.0` legacy stub retained.
-# 3. `current_time(sim)` at construction returns 0.0.
-# 4. `current_time(sim)` advances by `sim.Δt` after each `step!(sim)`.
-# 5. `step!(sim.model, sim.Δt; meteo = sim)` gives operators access to
+# 2. `current_time(sim)` at construction returns 0.0.
+# 3. `current_time(sim)` advances by `sim.Δt` after each `step!(sim)`.
+# 4. `step!(sim.model, sim.Δt; meteo = sim)` gives operators access to
 #    the sim-level clock — verified by a custom chemistry operator that
 #    captures the meteo it sees.
 # ---------------------------------------------------------------------------
@@ -70,14 +69,6 @@ end
 
 @testset "current_time(nothing) == 0.0" begin
     @test current_time(nothing) === 0.0
-end
-
-@testset "current_time(::AbstractMetDriver) == 0.0 legacy stub" begin
-    # Abstract-type default stays at 0.0 for backward compatibility —
-    # the driver is stateless and cannot provide real time. Plan 18 A3
-    # docstring notes this is deprecated in favor of `current_time(sim)`.
-    struct _TestDriver <: AbstractMetDriver; end
-    @test current_time(_TestDriver()) === 0.0
 end
 
 @testset "current_time(sim) starts at 0.0 and advances per step" begin

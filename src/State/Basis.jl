@@ -5,7 +5,7 @@
 """
     AbstractMassBasis
 
-Supertype for mass-basis tags carried by `CellState` and `FluxState`.
+Supertype for mass-basis tags carried by cell and face-flux states.
 """
 abstract type AbstractMassBasis end
 
@@ -25,9 +25,4 @@ struct DryBasis <: AbstractMassBasis end
 
 mass_basis(::Type{B}) where {B <: AbstractMassBasis} = B()
 
-const AbstractMassFluxBasis = AbstractMassBasis
-const MoistMassFluxBasis = MoistBasis
-const DryMassFluxBasis = DryBasis
-
 export AbstractMassBasis, MoistBasis, DryBasis, mass_basis
-export AbstractMassFluxBasis, MoistMassFluxBasis, DryMassFluxBasis

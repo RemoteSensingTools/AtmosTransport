@@ -58,12 +58,10 @@ The full runner adds the practical edges around this skeleton: resolving many
 daily binaries, GPU adaptation, surface-flux source construction, snapshot
 output, progress reporting, and capability checks against every file.
 
-`SurfaceFluxSource` (previously defined here) lives in
-`src/Operators/SurfaceFlux/`; it is still re-exported
-below for backward compatibility with external callers that imported it
-via `AtmosTransport.SurfaceFluxSource`.
+`SurfaceFluxSource` lives with the surface-flux operator in
+`src/Operators/SurfaceFlux/`.
 """
-mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, SS, CT, PT}
+mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, PT}
     model                 :: ModelT
     driver                :: DriverT
     window                :: WindowT
@@ -85,8 +83,6 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, SS, CT
     stop_window           :: Int
     final_iteration       :: Int
     callbacks                   :: CB
-    surface_sources             :: SS
-    chemistry                   :: CT
     initialize_air_mass         :: Bool
     use_midpoint_forcing        :: Bool
     interpolate_fluxes_within_window :: Bool
@@ -485,13 +481,9 @@ end
            map(source -> Base.invokelatest(Adapt.adapt, adaptor, source), surface_sources)
 end
 
-# Surface-source helpers (`_surface_shape`, `_check_surface_source_compatibility`,
-# `_apply_surface_source!`) live in `src/Operators/SurfaceFlux/sources.jl`.
-# Imported here from the SurfaceFlux submodule so the sim-level application
-# path (`_apply_surface_sources!` below) keeps working.
+# Surface-source shape and compatibility helpers live with the operator.
 using ..Operators.SurfaceFlux: _surface_shape,
-                                _check_surface_source_compatibility,
-                                _apply_surface_source!
+                                _check_surface_source_compatibility
 using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
                               fill_dz_hydrostatic_constT!,
                               fill_dz_hydrostatic_virtualT!
@@ -588,15 +580,6 @@ end
 function _refresh_pbl_kz_for_window!(op::ImplicitVerticalDiffusion,
                                      sim::DrivenSimulation)
     _refresh_pbl_kz_for_window!(op.kz_field, sim)
-    return nothing
-end
-
-function _apply_surface_sources!(sim::DrivenSimulation)
-    isempty(sim.surface_sources) && return nothing
-    for source in sim.surface_sources
-        rm = get_tracer(sim.model.state, source.tracer_name)
-        _apply_surface_source!(rm, source, sim.Δt)
-    end
     return nothing
 end
 
@@ -847,10 +830,8 @@ function DrivenSimulation(model::TransportModel,
     # center-of-transport position. `with_chemistry` installs the user's
     # chemistry in the model; `step!(model)` runs
     # `advection → emissions → diffusion → chemistry` as ONE composed
-    # call. The sim's `_apply_surface_sources!` helper and post-step
-    # `chemistry_block!` are no longer called at sim level — they are
-    # retained on the sim struct for adaptive reconfiguration via
-    # future helpers but the step loop no longer invokes them directly.
+    # call. The step loop delegates entirely to the model-level operator
+    # composition.
     #
     # The palindrome integration preserves TM5's
     # `advection → emissions → chemistry` order with emissions inside the
@@ -877,8 +858,7 @@ function DrivenSimulation(model::TransportModel,
 
     sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window),
                            typeof(expected_air_mass), typeof(qv_buffer), FT,
-                           typeof(callbacks), typeof(surface_sources_adapted),
-                           typeof(chemistry), typeof(prefetch_task)}(
+                           typeof(callbacks), typeof(prefetch_task)}(
         model,
         driver,
         window,
@@ -900,8 +880,6 @@ function DrivenSimulation(model::TransportModel,
         Int(stop_window),
         Int(nsteps_total),
         callbacks,
-        surface_sources_adapted,
-        chemistry,
         initialize_air_mass,
         use_midpoint_forcing,
         flux_interp,
@@ -959,9 +937,8 @@ time-varying Kz, future convection DerivedConvMassFluxField) read
 accessible for operator code that needs driver-level capabilities
 (e.g. `supports_cmfmc(meteo.driver)`).
 
-The legacy `current_time(::AbstractMetDriver) = 0.0` stub is kept
-for backward compatibility — the driver is stateless and cannot
-provide real time information on its own.
+Meteorological drivers are stateless and deliberately do not implement
+`current_time`; operators receive the simulation clock, not `sim.driver`.
 """
 MetDrivers.current_time(sim::DrivenSimulation) = sim.time
 
@@ -1024,7 +1001,4 @@ function run!(sim::DrivenSimulation)
     return sim
 end
 
-# `SurfaceFluxSource` re-exported for backward compat with external callers.
-# The symbol resolves to `Operators.SurfaceFlux.SurfaceFluxSource` — its
-# canonical location.
-export SurfaceFluxSource, DrivenSimulation, run_window!, window_index, substep_index, current_qv
+export DrivenSimulation, run_window!, window_index, substep_index, current_qv

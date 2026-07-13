@@ -116,7 +116,7 @@ function convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
 end
 ```
 
-Note that `meteo = sim` is passed, not `sim.driver`. Operators can reach the driver via `meteo.driver` when needed (e.g. for `supports_cmfmc(meteo.driver)`), and can ask `current_time(meteo)` which resolves to `sim.time`. The legacy `current_time(::AbstractMetDriver) = 0.0` stub is preserved for backward compatibility but the driver itself is stateless.
+Note that `meteo = sim` is passed, not `sim.driver`. Operators can reach the driver via `meteo.driver` when needed (e.g. for `supports_cmfmc(meteo.driver)`), and can ask `current_time(meteo)` which resolves to `sim.time`. Drivers are stateless and do not provide a clock.
 
 ### 5. Transport block — per-topology dispatch
 

@@ -137,7 +137,7 @@ using .Output
 
 # ---- Met-data adapters ----
 include("MetDrivers/MetDrivers.jl")
-using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
+using .MetDrivers: AbstractMetDriver,
                    current_time,
                    TransportBinaryReader, TransportBinaryHeader, write_transport_binary,
                    TransportBinaryDriver, AbstractTransportWindow,
@@ -163,7 +163,6 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh,
                    total_windows, window_dt, steps_per_window, steps_per_window_schedule,
                    supports_diffusion, supports_convection,
-                   DiagnoseVerticalFromHorizontal, PressureTendencyClosure,
                    CubedSphereBinaryReader, CubedSphereBinaryHeader,
                    load_cs_window, cs_window_count, mesh_convention, mesh_definition,
                    TRANSPORT_BINARY_FORMAT_VERSION,
@@ -254,7 +253,7 @@ export NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource,
 export AbstractConvection, NoConvection, CMFMCConvection, TM5Convection,
        CMFMCMatrixConvection, CMFMCWorkspace
 export ConvectionForcing, apply_convection!, has_convection_forcing
-export AbstractMetDriver, AbstractTransportWindow, StructuredTransportWindow
+export AbstractMetDriver, AbstractTransportWindow, StructuredTransportWindow, current_time
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
 export ConstantField, ProfileKzField
 export apply!

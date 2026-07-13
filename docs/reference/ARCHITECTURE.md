@@ -129,7 +129,7 @@ _run_loop!(model, grid, buffering)
 | New convection | `AbstractConvection` | `convect!`, `adjoint_convect!` | `configuration.jl` |
 | New diffusion | `AbstractDiffusion` | `diffuse!`, `adjoint_diffuse!` | `configuration.jl` |
 | New chemistry | `AbstractChemistry` | `apply_chemistry!`, `adjoint_apply_chemistry!` | `configuration.jl` |
-| New met source | `AbstractMetDriver{FT}` | `total_windows`, `load_met_window!`, etc. | `configuration.jl` + TOML mapping |
+| New met source | `AbstractMetDriver` | `total_windows`, `load_transport_window`, etc. | driver implementation + TOML mapping |
 | New output | `AbstractOutputWriter` | `write_output!`, `finalize_output!` | `configuration.jl` |
 | New emissions | `AbstractSurfaceFlux` | `apply_surface_flux!` | `configuration.jl` |
 

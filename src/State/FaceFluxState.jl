@@ -15,7 +15,7 @@
 # cell-loop kernels.  Unstructured meshes will get face-indexed storage and
 # face-loop kernels.  The operator dispatch selects the right realization:
 #
-#   apply!(state, fluxes::StructuredFaceFluxState{DryMassFluxBasis}, grid, scheme, dt)
+#   apply!(state, fluxes::StructuredFaceFluxState{DryBasis}, grid, scheme, dt)
 #
 # Same math, same high-level API, different low-level memory layout,
 # different kernels where justified.
@@ -32,7 +32,7 @@ Root type for all face-centered mass flux representations.
 
 The transport operator contract is written in terms of this abstract type.
 Concrete subtypes differ in storage layout to match the mesh's natural
-`flux_topology`, and carry a `Basis <: AbstractMassFluxBasis` type parameter
+`flux_topology`, and carry a `Basis <: AbstractMassBasis` type parameter
 to enforce moist/dry safety.
 """
 abstract type AbstractFaceFluxState{Basis <: AbstractMassBasis} end
@@ -66,7 +66,7 @@ Face-centered mass fluxes for structured grids, tagged with `Basis` to
 indicate whether the stored values are moist or dry.
 
 # Type parameters
-- `Basis <: AbstractMassFluxBasis` — `MoistMassFluxBasis` or `DryMassFluxBasis`
+- `Basis <: AbstractMassBasis` — `MoistBasis` or `DryBasis`
 
 # Fields
 - `am :: AX` — x-face (longitude) prepared substep mass transport [kg for the active transport substep].
@@ -83,17 +83,17 @@ indicate whether the stored values are moist or dry.
 
 # Examples
 ```jldoctest
-julia> using AtmosTransport.State: StructuredFaceFluxState, DryMassFluxBasis,
-       MoistMassFluxBasis, flux_basis
+julia> using AtmosTransport.State: StructuredFaceFluxState, DryBasis,
+       MoistBasis, flux_basis
 
 julia> am = zeros(11, 8, 4); bm = zeros(10, 9, 4); cm = zeros(10, 8, 5);
 
-julia> dry = StructuredFaceFluxState{DryMassFluxBasis}(am, bm, cm);
+julia> dry = StructuredFaceFluxState{DryBasis}(am, bm, cm);
 
 julia> flux_basis(dry)
 DryBasis()
 
-julia> moist = StructuredFaceFluxState{MoistMassFluxBasis}(am, bm, cm);
+julia> moist = StructuredFaceFluxState{MoistBasis}(am, bm, cm);
 
 julia> flux_basis(moist)
 MoistBasis()
@@ -138,7 +138,7 @@ function StructuredFaceFluxState{B}(am::AX, bm::AY, cm::AZ) where {B <: Abstract
     StructuredFaceFluxState{B, AX, AY, AZ}(am, bm, cm)
 end
 
-StructuredFaceFluxState(am, bm, cm) = StructuredFaceFluxState{DryMassFluxBasis}(am, bm, cm)
+StructuredFaceFluxState(am, bm, cm) = StructuredFaceFluxState{DryBasis}(am, bm, cm)
 
 function Adapt.adapt_structure(to, fluxes::StructuredFaceFluxState{B}) where {B <: AbstractMassBasis}
     am = Adapt.adapt(to, fluxes.am)
@@ -158,7 +158,7 @@ Face-centered mass fluxes for unstructured meshes, tagged with
 `Basis` for moist/dry safety.
 
 # Type parameters
-- `Basis <: AbstractMassFluxBasis` — `MoistMassFluxBasis` or `DryMassFluxBasis`
+- `Basis <: AbstractMassBasis` — `MoistBasis` or `DryBasis`
 
 # Fields
 - `horizontal_flux :: A` — prepared substep mass transport per horizontal face [kg for the active transport substep].
@@ -255,7 +255,7 @@ function FaceIndexedFluxState{B}(hflux::A, cm::AZ) where {B <: AbstractMassBasis
     FaceIndexedFluxState{B, A, AZ}(hflux, cm)
 end
 
-FaceIndexedFluxState(hflux, cm) = FaceIndexedFluxState{DryMassFluxBasis}(hflux, cm)
+FaceIndexedFluxState(hflux, cm) = FaceIndexedFluxState{DryBasis}(hflux, cm)
 
 function Adapt.adapt_structure(to, fluxes::FaceIndexedFluxState{B}) where {B <: AbstractMassBasis}
     hflux = Adapt.adapt(to, fluxes.horizontal_flux)
@@ -275,22 +275,12 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    flux_basis(state) → AbstractMassFluxBasis
+    flux_basis(state) → AbstractMassBasis
 
 Return the mass flux basis tag for the given flux state.
 """
 @inline flux_basis(::AbstractFaceFluxState{B}) where {B <: AbstractMassBasis} = B()
 @inline mass_basis(::AbstractFaceFluxState{B}) where {B <: AbstractMassBasis} = B()
-
-# ---------------------------------------------------------------------------
-# Type alias for convenience
-# ---------------------------------------------------------------------------
-
-const DryStructuredFluxState = StructuredFaceFluxState{DryMassFluxBasis}
-const MoistStructuredFluxState = StructuredFaceFluxState{MoistMassFluxBasis}
-const DryCubedSphereFluxState = CubedSphereFaceFluxState{DryMassFluxBasis}
-const MoistCubedSphereFluxState = CubedSphereFaceFluxState{MoistMassFluxBasis}
-const FluxState = AbstractFaceFluxState
 
 # ---------------------------------------------------------------------------
 # Scoped accessor functions
@@ -316,7 +306,7 @@ const FluxState = AbstractFaceFluxState
 """
     allocate_face_fluxes(::StructuredFluxTopology, Nx, Ny, Nz;
                          FT=Float64, ArrayType=Array,
-                         basis::Type{<:AbstractMassFluxBasis}=DryMassFluxBasis)
+                         basis::Type{<:AbstractMassBasis}=DryBasis)
 
 Allocate zeroed face flux arrays for a structured mesh.
 The returned `StructuredFaceFluxState` is tagged with the specified `basis`.
@@ -325,7 +315,7 @@ function allocate_face_fluxes(::StructuredFluxTopology,
                               Nx::Int, Ny::Int, Nz::Int;
                               FT::Type{<:AbstractFloat} = Float64,
                               ArrayType = Array,
-                              basis::Type{B} = DryMassFluxBasis) where {B <: AbstractMassBasis}
+                              basis::Type{B} = DryBasis) where {B <: AbstractMassBasis}
     am = ArrayType(zeros(FT, Nx + 1, Ny,     Nz))
     bm = ArrayType(zeros(FT, Nx,     Ny + 1, Nz))
     cm = ArrayType(zeros(FT, Nx,     Ny,     Nz + 1))
@@ -335,7 +325,7 @@ end
 """
     allocate_face_fluxes(::FaceIndexedFluxTopology, nfaces, ncells, Nz;
                          FT=Float64, ArrayType=Array,
-                         basis::Type{<:AbstractMassBasis}=DryMassFluxBasis)
+                         basis::Type{<:AbstractMassBasis}=DryBasis)
 
 Allocate zeroed face-indexed flux arrays for a connected-face mesh.
 """
@@ -343,7 +333,7 @@ function allocate_face_fluxes(::FaceIndexedFluxTopology,
                               nfaces::Int, ncells::Int, Nz::Int;
                               FT::Type{<:AbstractFloat} = Float64,
                               ArrayType = Array,
-                              basis::Type{B} = DryMassFluxBasis) where {B <: AbstractMassBasis}
+                              basis::Type{B} = DryBasis) where {B <: AbstractMassBasis}
     hflux = ArrayType(zeros(FT, nfaces, Nz))
     cm = ArrayType(zeros(FT, ncells, Nz + 1))
     return FaceIndexedFluxState{B}(hflux, cm)
@@ -357,7 +347,7 @@ Allocate a flux container using the mesh's natural structured topology.
 function allocate_face_fluxes(mesh::AbstractStructuredMesh, Nz::Int;
                               FT::Type{<:AbstractFloat} = Float64,
                               ArrayType = Array,
-                              basis::Type{B} = DryMassFluxBasis) where {B <: AbstractMassBasis}
+                              basis::Type{B} = DryBasis) where {B <: AbstractMassBasis}
     return allocate_face_fluxes(StructuredFluxTopology(), nx(mesh), ny(mesh), Nz;
                                 FT=FT, ArrayType=ArrayType, basis=B)
 end
@@ -365,7 +355,7 @@ end
 function allocate_face_fluxes(mesh::CubedSphereMesh, Nz::Int;
                               FT::Type{<:AbstractFloat} = Float64,
                               ArrayType = Array,
-                              basis::Type{B} = DryMassFluxBasis) where {B <: AbstractMassBasis}
+                              basis::Type{B} = DryBasis) where {B <: AbstractMassBasis}
     N = mesh.Nc + 2 * mesh.Hp
     am = ntuple(_ -> ArrayType(zeros(FT, N + 1, N, Nz)), 6)
     bm = ntuple(_ -> ArrayType(zeros(FT, N, N + 1, Nz)), 6)
@@ -381,15 +371,13 @@ Allocate a flux container using the mesh's natural face-connected topology.
 function allocate_face_fluxes(mesh::AbstractHorizontalMesh, Nz::Int;
                               FT::Type{<:AbstractFloat} = Float64,
                               ArrayType = Array,
-                              basis::Type{B} = DryMassFluxBasis) where {B <: AbstractMassBasis}
+                              basis::Type{B} = DryBasis) where {B <: AbstractMassBasis}
     return allocate_face_fluxes(FaceIndexedFluxTopology(), nfaces(mesh), ncells(mesh), Nz;
                                 FT=FT, ArrayType=ArrayType, basis=B)
 end
 
 export flux_basis
-export DryStructuredFluxState, MoistStructuredFluxState
-export DryCubedSphereFluxState, MoistCubedSphereFluxState
-export AbstractFaceFluxState, FluxState
+export AbstractFaceFluxState
 export AbstractStructuredFaceFluxState, AbstractUnstructuredFaceFluxState
 export StructuredFaceFluxState, FaceIndexedFluxState, CubedSphereFaceFluxState
 export face_flux_x, face_flux_y, face_flux_z, face_flux

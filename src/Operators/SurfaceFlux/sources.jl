@@ -37,16 +37,13 @@ surface layer.
 # Why per-cell rates (not kg/m²/s)
 
 The prognostic tracer is stored per cell, so a per-cell rate × dt is the
-natural unit and matches the legacy
-`DrivenSimulation._apply_surface_source!` signature. A per-area variant
-that multiplies by `cell_area` is deferred to a follow-up.
+natural unit. A per-area variant would need to multiply by cell area before
+entering the operator.
 
 # Provenance
 
-Originally introduced in `src/Models/DrivenSimulation.jl`, then migrated
-to `src/Operators/SurfaceFlux/` so that `SurfaceFluxOperator` can consume
-it; the name is still re-exported from `AtmosTransport` for backward
-compat with external callers that imported it by fully-qualified name.
+The source lives with `SurfaceFluxOperator`; model and simulation layers only
+compose and schedule the operator.
 
 # Fields
 - `tracer_name :: Symbol`
@@ -353,8 +350,7 @@ extrapolation) when `t` is outside `[times[1], times[end]]`:
 end
 
 # =========================================================================
-# Surface-slice helpers — internal, used by the kernel shell and
-# by the legacy `DrivenSimulation._apply_surface_sources!`.
+# Surface-slice helpers used by the operator kernel shell.
 # =========================================================================
 
 """
@@ -400,69 +396,6 @@ function _check_surface_source_compatibility(state::CubedSphereState, source::Su
         size(rates[p]) == expected || throw(ArgumentError(
             "cubed-sphere surface source $(source.tracer_name) panel $p has shape $(size(rates[p])) " *
             "but the interior panel shape is $(expected)"))
-    end
-    return nothing
-end
-
-"""
-    _apply_surface_source!(rm, source, dt)
-
-Add `source.cell_mass_rate × dt` to the surface slice of the tracer mass
-array `rm`. The surface slice is `rm[:, :, Nz]` for 3D tracers and
-`rm[:, Nz]` for 2D tracers — the `k = Nz = surface` convention
-established by the LatLon storage layout.
-
-Broadcasts over all surface cells; fused `.+=` is allocation-free and
-GPU-friendly (KernelAbstractions dispatches to the backend of `rm`).
-
-This is the legacy application path used by
-`DrivenSimulation._apply_surface_sources!`. A unified KA-kernel version
-backs the `SurfaceFluxOperator.apply!` path.
-"""
-function _apply_surface_source!(rm::AbstractArray{FT, 3},
-                                source::SurfaceFluxSource, dt) where FT
-    Nz   = size(rm, 3)
-    surf = @view rm[:, :, Nz]
-    comp = source.compensation
-    x    = source.cell_mass_rate .* FT(dt)
-    y    = x .- comp
-    t    = surf .+ y
-    comp .= (t .- surf) .- y
-    surf .= t
-    return nothing
-end
-
-function _apply_surface_source!(rm::AbstractArray{FT, 2},
-                                source::SurfaceFluxSource, dt) where FT
-    Nz   = size(rm, 2)
-    surf = @view rm[:, Nz]
-    comp = source.compensation
-    x    = source.cell_mass_rate .* FT(dt)
-    y    = x .- comp
-    t    = surf .+ y
-    comp .= (t .- surf) .- y
-    surf .= t
-    return nothing
-end
-
-function _apply_surface_source!(rm::NTuple{6}, source::SurfaceFluxSource, dt;
-                                halo_width::Integer)
-    Hp    = Int(halo_width)
-    rates = source.cell_mass_rate
-    comps = source.compensation
-    rates isa NTuple{6} || throw(ArgumentError(
-        "cubed-sphere surface source $(source.tracer_name) must provide NTuple{6} panel rates"))
-    @inbounds for p in 1:6
-        panel_rm = rm[p]
-        Nz   = size(panel_rm, 3)
-        Nc   = size(panel_rm, 1) - 2Hp
-        surf = @view panel_rm[Hp + 1:Hp + Nc, Hp + 1:Hp + Nc, Nz]
-        comp = comps[p]
-        x    = rates[p] .* dt
-        y    = x .- comp
-        t    = surf .+ y
-        comp .= (t .- surf) .- y
-        surf .= t
     end
     return nothing
 end

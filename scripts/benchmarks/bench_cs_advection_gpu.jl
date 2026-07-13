@@ -30,7 +30,7 @@
 
 using AtmosTransport
 using AtmosTransport: CubedSphereMesh, GEOSNativePanelConvention,
-    DryBasis, DryMassFluxBasis, CubedSphereFaceFluxState,
+    DryBasis, CubedSphereFaceFluxState,
     CSAdvectionWorkspace, CSLinRoodAdvectionWorkspace,
     CubedSphereState, PPMScheme, SlopesScheme, UpwindScheme,
     LinRoodPPMScheme, MonotoneLimiter, fill_panel_halos!, strang_split_cs!,
@@ -272,7 +272,7 @@ function build_problem(::Type{FT}, Nc::Int, Nz::Int, Nt::Int, backend) where {FT
     panels_m = Adapt.adapt(_array_type(backend), panels_m_cpu)
     tracers = [Adapt.adapt(_array_type(backend), tr) for tr in tracers_cpu]
     tracers_raw = Adapt.adapt(_array_type(backend), tracers_raw_cpu)
-    fluxes = CubedSphereFaceFluxState{DryMassFluxBasis}(
+    fluxes = CubedSphereFaceFluxState{DryBasis}(
         Adapt.adapt(_array_type(backend), am_cpu),
         Adapt.adapt(_array_type(backend), bm_cpu),
         Adapt.adapt(_array_type(backend), cm_cpu))

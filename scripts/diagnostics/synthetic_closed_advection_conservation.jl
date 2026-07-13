@@ -7,7 +7,7 @@ using .AtmosTransport
 using .AtmosTransport.Operators: AdvectionWorkspace, CSAdvectionWorkspace,
     CSLinRoodAdvectionWorkspace, strang_split!
 using .AtmosTransport.Operators.Advection: fill_panel_halos!, strang_split_cs!
-using .AtmosTransport.State: CubedSphereFaceFluxState, DryMassFluxBasis,
+using .AtmosTransport.State: CubedSphereFaceFluxState, DryBasis,
     StructuredFaceFluxState, total_air_mass, total_mass
 
 function relerr(a, b)
@@ -54,7 +54,7 @@ function run_latlon_closed(; FT=Float64, Nx=48, Ny=24, Nz=4, scheme=UpwindScheme
     end
 
     state = CellState(DryBasis, copy(m); tracer=copy(rm))
-    fluxes = StructuredFaceFluxState{DryMassFluxBasis}(copy(am), copy(bm), copy(cm))
+    fluxes = StructuredFaceFluxState{DryBasis}(copy(am), copy(bm), copy(cm))
     ws = AdvectionWorkspace(state)
     m0 = sum(state.air_mass)
     rm0 = sum(state.tracers.tracer)
@@ -168,7 +168,7 @@ function run_cs_closed(; FT=Float64, scheme=UpwindScheme(), cross_panel::Bool,
                                        FT[0, 0, 0.1, 0.5, 1])
         grid = AtmosGrid(mesh, vertical, CPU(); FT)
         state = CubedSphereState(DryBasis, mesh, panels_m; tracer=panels_rm)
-        fluxes = CubedSphereFaceFluxState{DryMassFluxBasis}(panels_am, panels_bm, panels_cm)
+        fluxes = CubedSphereFaceFluxState{DryBasis}(panels_am, panels_bm, panels_cm)
         ws = CSLinRoodAdvectionWorkspace(mesh, state.air_mass[1])
         m0 = total_air_mass(state)
         rm0 = total_mass(state, :tracer)

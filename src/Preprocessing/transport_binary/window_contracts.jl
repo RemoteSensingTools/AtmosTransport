@@ -31,7 +31,7 @@
 #
 # Mass basis: this file deliberately does NOT redefine `AbstractMassBasis`
 # / `DryBasis` / `MoistBasis`. Those tags live in `src/State/Basis.jl`
-# and are already shared by `CellState`, `FluxState`, `TransportBinaryDriver`,
+# and are already shared by `CellState`, face-flux states, `TransportBinaryDriver`,
 # and the ERA5 dry-flux builder. Preprocessing reuses them so the typed
 # `AbstractBinaryWriter{G, FT, Basis}` parameter is exactly the same
 # nominal the runtime reader paths dispatch on — there is no "preprocessor

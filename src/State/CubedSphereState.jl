@@ -120,9 +120,7 @@ function Adapt.adapt_structure(to, state::CubedSphereState{B}) where {B <: Abstr
 end
 
 function Base.getproperty(state::CubedSphereState, name::Symbol)
-    if name === :air_dry_mass
-        return getfield(state, :air_mass)
-    elseif name === :tracers
+    if name === :tracers
         return TracerAccessor(state)
     else
         return getfield(state, name)
@@ -130,7 +128,7 @@ function Base.getproperty(state::CubedSphereState, name::Symbol)
 end
 
 function Base.propertynames(::CubedSphereState, private::Bool = false)
-    names = (:air_mass, :air_dry_mass, :tracers_raw, :tracer_names,
+    names = (:air_mass, :tracers_raw, :tracer_names,
              :tracers, :halo_width)
     return private ? names : names
 end
@@ -174,8 +172,5 @@ end
 
 tracer_names(state::CubedSphereState) = getfield(state, :tracer_names)
 
-const DryCubedSphereState = CubedSphereState{DryBasis}
-const MoistCubedSphereState = CubedSphereState{MoistBasis}
-
-export CubedSphereState, DryCubedSphereState, MoistCubedSphereState
+export CubedSphereState
 export halo_width

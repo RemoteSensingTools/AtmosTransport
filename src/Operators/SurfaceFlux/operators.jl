@@ -58,9 +58,7 @@ Tracer indices are resolved on the host from `state.tracer_names`.
 Tracers absent from the map are untouched.
 
 The rate is in kg/s per cell (already area-integrated); no cell-area
-multiplier appears in the kernel. This preserves the earlier
-`_apply_surface_source!` semantics and matches the way legacy
-`SurfaceFluxSource` callers supply their arrays.
+multiplier appears in the kernel.
 
 # `apply!` contract
 

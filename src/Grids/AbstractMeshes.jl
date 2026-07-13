@@ -78,8 +78,6 @@ struct FaceIndexedFluxTopology <: AbstractFluxTopology end
 flux_topology(::AbstractStructuredMesh) = StructuredFluxTopology()
 flux_topology(::AbstractHorizontalMesh) = FaceIndexedFluxTopology()
 
-const StructuredTopology = StructuredFluxTopology
-const FaceConnectedTopology = FaceIndexedFluxTopology
 
 """
     AbstractVerticalCoordinate{FT}
@@ -180,7 +178,6 @@ end
 
 export AbstractHorizontalMesh, AbstractStructuredMesh
 export AbstractFluxTopology, StructuredFluxTopology, FaceIndexedFluxTopology
-export StructuredTopology, FaceConnectedTopology
 export flux_topology
 export AbstractVerticalCoordinate
 export AtmosGrid, floattype, nlevels  # `architecture` re-exported via Architectures

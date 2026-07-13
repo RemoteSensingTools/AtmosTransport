@@ -12,8 +12,6 @@
 # Met drivers produce AbstractFaceFluxState + CellState.air_mass.
 # ---------------------------------------------------------------------------
 
-using Dates
-
 """
     AbstractMetDriver
 
@@ -30,14 +28,6 @@ Supertype for all meteorological data drivers.
     air_mass_basis(driver)
 """
 abstract type AbstractMetDriver end
-const AbstractDriver = AbstractMetDriver
-
-"""
-    AbstractRawMetDriver <: AbstractMetDriver
-
-Reads raw wind fields and computes mass fluxes on the fly.
-"""
-abstract type AbstractRawMetDriver <: AbstractMetDriver end
 
 """
     AbstractMassFluxMetDriver <: AbstractMetDriver
@@ -57,10 +47,7 @@ function air_mass_basis end
 function flux_interpolation_mode end
 function flux_kind end
 function uses_binary_substep_contract end
-function load_met_window! end
 
-met_interval(d::AbstractMetDriver) = window_dt(d)
-start_date(::AbstractMetDriver) = Date(2000, 1, 1)
 steps_per_window(d::AbstractMetDriver, _win::Integer) = steps_per_window(d)
 steps_per_window_schedule(d::AbstractMetDriver) =
     fill(steps_per_window(d), total_windows(d))
@@ -116,15 +103,7 @@ and passes the resulting scalar to each `update_field!(f, t)`.
   advanced by `sim.time += sim.Δt` at the end of each `step!(sim)`.
   See `src/Models/DrivenSimulation.jl`.
 - **Unit tests without a sim**: `meteo = nothing`; returns `0.0`.
-- **Legacy driver stub** (`meteo = ::AbstractMetDriver`): returns
-  `0.0`. Retained for backward compatibility but should not be
-  relied upon — the driver is stateless (struct holds only the
-  reader + grid) and cannot provide real time information. Any code
-  that previously passed `meteo = sim.driver` silently got `0.0`.
-  `DrivenSimulation.step!` passes `meteo = sim` so the sim's clock is
-  the canonical source.
 """
-current_time(::AbstractMetDriver) = 0.0
 current_time(::Nothing) = 0.0
 
 # ---------------------------------------------------------------------------
@@ -151,10 +130,9 @@ uses_binary_substep_contract(::Nothing) = false
 """Does this driver provide specific humidity for dry-mass correction?"""
 supports_moisture(::AbstractMetDriver) = false
 
-export AbstractMetDriver, AbstractRawMetDriver, AbstractMassFluxMetDriver
-export AbstractDriver
+export AbstractMetDriver, AbstractMassFluxMetDriver
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule,
-       load_transport_window, load_met_window!
+       load_transport_window
 export driver_grid, air_mass_basis, flux_interpolation_mode
 export uses_binary_substep_contract
 export supports_diffusion, supports_convection

@@ -187,7 +187,7 @@ end
 
     # NoAdvection + diffusion: V(dt) step runs without error and
     # preserves column tracer mass to roundoff (mass-flux wrapper).
-    # `dz_scratch` is populated externally in production by
+    # `layer_thickness` is populated externally in production by
     # `_refresh_dz_for_window!`; here we set it directly to 1 m so the
     # implicit solve has well-defined coefficients.
     kz = ConstantField{FT, 3}(FT(1.0))
@@ -247,7 +247,7 @@ end
     @test_throws ArgumentError apply!(rg_state, rg_fluxes, rg_grid, NoAdvection(),
                                       FT(1800); diffusion_op=rg_diff)
 
-    # With a workspace + populated `dz_scratch`, RG NoAdvection +
+    # With a workspace + populated `layer_thickness`, RG NoAdvection +
     # diffusion runs and preserves column tracer mass to roundoff.
     rg_ws = AdvectionWorkspace(rg_state.air_mass)
     rg_diffusion_ws = DiffusionWorkspace(rg_state)

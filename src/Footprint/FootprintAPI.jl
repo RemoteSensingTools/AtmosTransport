@@ -21,7 +21,7 @@ Run the CS PPM transport path forward and return `objective` at the final
 time. Optional `emission_rates[t][panel][i, j]` entries are midpoint surface
 emission rates in kg s^-1. If `diffusion_op` is supplied, the helper applies
 `V(dt/2) -> emissions -> V(dt/2)` at the control midpoint and requires a
-panel-native `diffusion_workspace` with filled `dz_scratch`. If
+panel-native `DiffusionWorkspace` with filled `layer_thickness`. If
 `convection_op=CMFMCConvection()` or `TM5Convection()` is supplied, the
 helper applies the corresponding CS convection column operator after each
 transport step. `flux_scale` multiplies all transport fluxes and is shared

@@ -65,25 +65,24 @@ Concrete examples:
   `t` drawn from the meteorology where available; currently
   passes `zero(FT)` as a placeholder (chemistry-style, mirroring the
   deferred `current_time(meteo)` accessor).
-- For Kz fields, reads `workspace.dz_scratch` as the current layer thicknesses [m].
+- For Kz fields, reads `workspace.layer_thickness` as the current layer thicknesses [m].
   The caller is responsible for filling this array before calling
   `apply!` — typically from a hydrostatic integration of the current
   `delp` and surface temperature.
 - `PrecomputedCSDkgField` bypasses Kz/geometry reconstruction and does not read
-  `dz_scratch`; its interface exchange [kg s⁻¹] is already complete.
-- Uses `workspace.w_scratch` as Thomas-forward-elimination storage.
+  `layer_thickness`; its interface exchange [kg s⁻¹] is already complete.
+- Uses `workspace.factors` as Thomas-forward-elimination storage.
 - Launches a topology-specific mass-flux kernel. Packed layouts factor each
   atmospheric column once and advance every tracer with those factors.
 
-The operator is linear (Kz does not depend on tracer values), so
-a single `apply!(dt)` at the palindrome center is equivalent to two
-half-steps.
+The spatial operator is linear, but Backward Euler is not a semigroup:
+`V(dt)` and `V(dt/2) ∘ V(dt/2)` differ by `O(dt²)`. The surface-coupling
+policy therefore selects the timestep composition explicitly.
 
 # Fields
 - `kz_field::KzF` — any `AbstractTimeVaryingField{FT, 2}` or
   `AbstractTimeVaryingField{FT, 3}` providing cell-centered Kz values
-  [m²/s geometric], or a `PrecomputedCSDkgField`. The field name is retained
-  for source compatibility with existing operator construction.
+  [m²/s geometric], or a `PrecomputedCSDkgField`.
 """
 struct ImplicitVerticalDiffusion{FT, KzF, SFC <: AbstractSurfaceFluxCoupling} <: AbstractDiffusion
     kz_field              :: KzF
@@ -156,12 +155,12 @@ end
 
 Apply one Backward-Euler implicit diffusion step to every tracer in
 `state.tracers_raw` using the column Kz field `op.kz_field` and the dz
-stored in `workspace.dz_scratch` (caller-filled). Delegates to
+stored in `workspace.layer_thickness` (caller-filled). Delegates to
 [`apply_vertical_diffusion_vmr!`](@ref), which is the array-level entry
 point consumed by both the structured multi-tracer palindrome and the
 face-indexed reduced-Gaussian transport block.
 
-Throws if `workspace` is not supplied or if its `dz_scratch` shape
+Throws if `workspace` is not supplied or if its `layer_thickness` shape
 doesn't match `state.tracers_raw`.
 """
 function apply!(state::CellState, meteo, grid,
@@ -169,7 +168,7 @@ function apply!(state::CellState, meteo, grid,
                 workspace) where FT
     workspace === nothing && throw(ArgumentError(
         "ImplicitVerticalDiffusion.apply!: workspace is required " *
-        "(w_scratch and dz_scratch must be supplied)"))
+        "(factors and layer_thickness must be supplied)"))
     # LL packed + RG face-indexed now go through the mass-flux VMR
     # wrapper: pre-scale tracer_mass → VMR, solve with mass-flux
     # coefficients, post-scale VMR → tracer_mass. Preserves `Σ m·q` to
@@ -185,7 +184,7 @@ function apply!(state::CubedSphereState, meteo, grid,
                 workspace) where {FT, KzF <: AbstractCubedSphereField{FT}}
     workspace === nothing && throw(ArgumentError(
         "ImplicitVerticalDiffusion.apply!: workspace is required " *
-        "(cubed-sphere diffusion needs panel-native w_scratch and dz_scratch)"))
+        "(cubed-sphere diffusion needs a panel-native DiffusionWorkspace)"))
     apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass, op,
                                   workspace, dt, meteo;
                                   halo_width = state.halo_width)
@@ -292,11 +291,11 @@ end
 function apply_vertical_diffusion!(q_raw::NTuple{6, A},
                                    air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                    op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace, dt,
+                                   workspace::DiffusionWorkspace, dt,
                                    meteo = nothing;
                                    halo_width::Integer) where {FT, A <: AbstractArray{FT, 3},
                                                                 KzF <: PrecomputedCSDkgField{FT}}
-    w_scratch = getproperty(workspace, :w_scratch)
+    w_scratch = workspace.factors
     update_field!(op.kz_field, _diffusion_time(FT, meteo))
     Hp = Int(halo_width)
     @inbounds for p in 1:6
@@ -320,12 +319,12 @@ end
 function apply_vertical_diffusion!(q_raw::NTuple{6, A},
                                    air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                    op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace, dt,
+                                   workspace::DiffusionWorkspace, dt,
                                    meteo = nothing;
                                    halo_width::Integer) where {FT, A <: AbstractArray{FT, 4},
                                                                 KzF <: PrecomputedCSDkgField{FT}}
-    w_scratch = getproperty(workspace, :w_scratch)
-    reference_scratch = getproperty(workspace, :diffusion_reference)
+    w_scratch = workspace.factors
+    reference_scratch = workspace.references
     length(w_scratch) == 6 && length(reference_scratch) == 6 ||
         throw(DimensionMismatch(
             "cubed-sphere dkg workspace must provide 6 factor and reference panels"))
@@ -355,17 +354,17 @@ end
 function apply_vertical_diffusion!(q_raw::NTuple{6, A},
                                    air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                    op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace, dt,
+                                   workspace::DiffusionWorkspace, dt,
                                    meteo = nothing;
                                    halo_width::Integer) where {FT, A <: AbstractArray{FT, 3},
                                                                 KzF <: AbstractCubedSphereField{FT}}
-    hasproperty(workspace, :w_scratch) && hasproperty(workspace, :dz_scratch) ||
+    hasproperty(workspace, :factors) && hasproperty(workspace, :layer_thickness) ||
         throw(ArgumentError(
             "cubed-sphere diffusion requires a workspace with panel-native " *
-            "`w_scratch` and `dz_scratch` tuples"))
+            "`factors` and `layer_thickness` tuples"))
 
-    w_scratch = getproperty(workspace, :w_scratch)
-    dz_scratch = getproperty(workspace, :dz_scratch)
+    w_scratch = workspace.factors
+    dz_scratch = workspace.layer_thickness
     length(w_scratch) == 6 && length(dz_scratch) == 6 ||
         throw(DimensionMismatch(
             "cubed-sphere diffusion workspace must provide 6 factor and geometry panels"))
@@ -397,19 +396,19 @@ end
 function apply_vertical_diffusion!(q_raw::NTuple{6, A},
                                    air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                    op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace, dt,
+                                   workspace::DiffusionWorkspace, dt,
                                    meteo = nothing;
                                    halo_width::Integer) where {FT, A <: AbstractArray{FT, 4},
                                                                 KzF <: AbstractCubedSphereField{FT}}
-    hasproperty(workspace, :w_scratch) && hasproperty(workspace, :dz_scratch) &&
-        hasproperty(workspace, :diffusion_reference) ||
+    hasproperty(workspace, :factors) && hasproperty(workspace, :layer_thickness) &&
+        hasproperty(workspace, :references) ||
         throw(ArgumentError(
             "cubed-sphere diffusion requires a workspace with panel-native " *
-            "`w_scratch`, `dz_scratch`, and `diffusion_reference` tuples"))
+            "`factors`, `layer_thickness`, and `references` tuples"))
 
-    w_scratch = getproperty(workspace, :w_scratch)
-    dz_scratch = getproperty(workspace, :dz_scratch)
-    reference_scratch = getproperty(workspace, :diffusion_reference)
+    w_scratch = workspace.factors
+    dz_scratch = workspace.layer_thickness
+    reference_scratch = workspace.references
     length(w_scratch) == 6 && length(dz_scratch) == 6 &&
         length(reference_scratch) == 6 || throw(DimensionMismatch(
             "cubed-sphere diffusion workspace must provide 6 factor, geometry, and reference panels"))
@@ -555,7 +554,7 @@ tracer mass before advection resumes.
 function apply_vertical_diffusion_vmr!(q_raw::NTuple{6, A},
                                        air_mass::NTuple{6},
                                        op::ImplicitVerticalDiffusion{FT, KzF},
-                                       workspace, dt,
+                                       workspace::DiffusionWorkspace, dt,
                                        meteo = nothing;
                                        halo_width::Integer) where {FT, A <: AbstractArray{FT, 3},
                                                                     KzF <: AbstractCubedSphereField{FT}}
@@ -570,7 +569,7 @@ end
 function apply_vertical_diffusion_vmr!(q_raw::NTuple{6, A},
                                        air_mass::NTuple{6},
                                        op::ImplicitVerticalDiffusion{FT, KzF},
-                                       workspace, dt,
+                                       workspace::DiffusionWorkspace, dt,
                                        meteo = nothing;
                                        halo_width::Integer) where {FT, A <: AbstractArray{FT, 4},
                                                                     KzF <: AbstractCubedSphereField{FT}}
@@ -590,10 +589,10 @@ end
 function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 4},
                                    air_mass::AbstractArray{FT, 3},
                                    op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace, dt,
+                                   workspace::DiffusionWorkspace, dt,
                                    meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 3}}
-    w_scratch  = workspace.w_scratch
-    dz_scratch = workspace.dz_scratch
+    w_scratch  = workspace.factors
+    dz_scratch = workspace.layer_thickness
     Nx, Ny, Nz, Nt = size(q_raw)
     _check_diffusion_workspace_shape(dz_scratch, w_scratch, (Nx, Ny, Nz),
                                      "spatial")
@@ -612,10 +611,10 @@ end
 function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 3},
                                    air_mass::AbstractArray{FT, 2},
                                    op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace, dt,
+                                   workspace::DiffusionWorkspace, dt,
                                    meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
-    w_scratch  = workspace.w_scratch
-    dz_scratch = workspace.dz_scratch
+    w_scratch  = workspace.factors
+    dz_scratch = workspace.layer_thickness
     ncells, Nz, Nt = size(q_raw)
     _check_diffusion_workspace_shape(dz_scratch, w_scratch, (ncells, Nz),
                                      "face-indexed")
@@ -634,10 +633,10 @@ end
 function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 2},
                                    air_mass::AbstractArray{FT, 2},
                                    op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace, dt,
+                                   workspace::DiffusionWorkspace, dt,
                                    meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
-    w_scratch  = workspace.w_scratch
-    dz_scratch = workspace.dz_scratch
+    w_scratch  = workspace.factors
+    dz_scratch = workspace.layer_thickness
     ncells, Nz = size(q_raw)
     _check_diffusion_workspace_shape(dz_scratch, w_scratch, (ncells, Nz),
                                      "face-indexed")
@@ -720,7 +719,7 @@ end
 function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 4},
                                        air_mass::AbstractArray{FT, 3},
                                        op::ImplicitVerticalDiffusion{FT, KzF},
-                                       workspace, dt,
+                                       workspace::DiffusionWorkspace, dt,
                                        meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 3}}
     _ll_scale_tracer_mass_to_vmr!(q_raw, air_mass)
     apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo)
@@ -732,7 +731,7 @@ end
 function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 3},
                                        air_mass::AbstractArray{FT, 2},
                                        op::ImplicitVerticalDiffusion{FT, KzF},
-                                       workspace, dt,
+                                       workspace::DiffusionWorkspace, dt,
                                        meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
     _face_scale_tracer_mass_to_vmr!(q_raw, air_mass)
     apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo)
@@ -744,7 +743,7 @@ end
 function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 2},
                                        air_mass::AbstractArray{FT, 2},
                                        op::ImplicitVerticalDiffusion{FT, KzF},
-                                       workspace, dt,
+                                       workspace::DiffusionWorkspace, dt,
                                        meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
     _face_scale_tracer_mass_to_vmr!(q_raw, air_mass)
     apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo)

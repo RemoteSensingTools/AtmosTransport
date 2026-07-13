@@ -147,7 +147,7 @@ end
         @test updated.workspace !== base.workspace
         @test updated.workspace.advection_ws === base.workspace.advection_ws
         @test updated.workspace.convection_ws isa CMFMCWorkspace
-        @test updated.workspace.dz_scratch === updated.workspace.advection_ws.dz_scratch
+        @test updated.workspace.diffusion_ws === nothing
     end
 
     @testset "step! with default NoConvection stays bit-exact" begin

@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # Layer-thickness fill for the implicit-vertical-diffusion workspace.
 #
-# `apply_vertical_diffusion_vmr!` consumes `workspace.dz_scratch` as the current
+# `apply_vertical_diffusion_vmr!` consumes `workspace.layer_thickness` as the current
 # layer thickness in metres. The workspace allocator initializes that array
 # to zeros, so the runtime must populate it before each diffusion call —
 # otherwise the kernel divides by zero and the entire tracer field NaNs out
@@ -21,7 +21,7 @@
 #         T_v[k]      = T[k] · (1 + 0.61 · qv[k])     (qv ≥ 0 clamped)
 #         dz[i,j,k]   = R · T_v[k] / g · delp / p_ctr
 #     Used by the `LocalHoltslagBovilleKzField` runtime path so the
-#     solver `dz_scratch` shares the same column geometry the Kz cache
+#     solver layer thickness shares the same column geometry the Kz cache
 #     itself uses (closes the virtual-T inconsistency from the audit memo).
 #
 # Both fills produce the same `dz` units (metres) and the same matrix

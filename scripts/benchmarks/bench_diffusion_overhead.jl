@@ -135,11 +135,11 @@ function run_bench(::Type{FT}, Nt::Int, scheme, backend::Symbol,
 
     model = TransportModel(state, fluxes, grid, scheme; diffusion = diff_op)
 
-    # dz_scratch must be populated before the first step — the operator
+    # Layer thickness must be populated before the first step — the operator
     # reads it directly from the workspace. Uniform 100 m is a reasonable
     # stand-in; actual hydrostatic dz belongs to met-driver integration.
     if diff_kind !== :none
-        fill!(model.workspace.dz_scratch, FT(100.0))
+        fill!(model.workspace.diffusion_ws.layer_thickness, FT(100.0))
     end
 
     # Warmup

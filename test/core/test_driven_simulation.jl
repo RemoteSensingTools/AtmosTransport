@@ -264,7 +264,7 @@ end
         kz = ConstantField{Float64, 2}(1.0)
         diffusion = ImplicitVerticalDiffusion(; kz_field=kz)
         model = TransportModel(state, fluxes, grid, UpwindScheme(); diffusion=diffusion)
-        fill!(model.workspace.dz_scratch, 100.0)
+        fill!(model.workspace.diffusion_ws.layer_thickness, 100.0)
 
         source = AtmosTransport.SurfaceFluxSource(:fossil_co2, fill(2.0, ncell))
         sim = DrivenSimulation(model, driver;

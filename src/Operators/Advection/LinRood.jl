@@ -190,17 +190,6 @@ function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh,
     return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(lr)}(cs, lr)
 end
 
-function Base.getproperty(workspace::CSLinRoodAdvectionWorkspace, name::Symbol)
-    if name === :cs || name === :linrood
-        return getfield(workspace, name)
-    end
-    return getproperty(getfield(workspace, :cs), name)
-end
-
-function Base.propertynames(workspace::CSLinRoodAdvectionWorkspace, private::Bool = false)
-    return (:cs, :linrood, propertynames(getfield(workspace, :cs), private)...)
-end
-
 function Adapt.adapt_structure(to, workspace::CSLinRoodAdvectionWorkspace)
     cs = Adapt.adapt(to, workspace.cs)
     linrood = Adapt.adapt(to, workspace.linrood)

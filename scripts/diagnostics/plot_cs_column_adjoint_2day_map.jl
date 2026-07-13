@@ -346,9 +346,9 @@ end
 
 function _demo_diffusion(mesh, prototype; kz=2.5, dz=60.0)
     FT = eltype(prototype)
-    ws = CSAdvectionWorkspace(mesh, prototype)
+    ws = DiffusionWorkspace(ntuple(_ -> prototype, 6), mesh.Hp, 0)
     for p in 1:6
-        fill!(ws.dz_scratch[p], FT(dz))
+        fill!(ws.layer_thickness[p], FT(dz))
     end
     kz_field = CubedSphereField(ntuple(_ -> ConstantField{FT, 3}(FT(kz)), 6))
     return ImplicitVerticalDiffusion(; kz_field), ws
@@ -957,8 +957,8 @@ function _real_binary_problem(path::AbstractString; start_window::Int,
                 win_window.surface === nothing && error(
                     "$(basename(bin_path)) does not carry pblh/ustar/pbl_hflux/t2m; " *
                     "cannot run --physics diffusion")
-                diffusion_ws = CSAdvectionWorkspace(mesh, panels_rm[1])
-                fill_dz_hydrostatic_constT!(diffusion_ws.dz_scratch,
+                diffusion_ws = DiffusionWorkspace(panels_rm, mesh.Hp, 0)
+                fill_dz_hydrostatic_constT!(diffusion_ws.layer_thickness,
                                             win_window.surface_pressure,
                                             driver.grid.vertical.A,
                                             driver.grid.vertical.B)

@@ -8,7 +8,7 @@ using JSON3
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.Operators: ImplicitVerticalDiffusion
+using .AtmosTransport.Operators: ImplicitVerticalDiffusion, DiffusionWorkspace
 using .AtmosTransport.Operators.Diffusion: apply_vertical_diffusion_vmr!
 using .AtmosTransport.State: PrecomputedCSDkgField, panel_field
 using .AtmosTransport.State.Fields: refresh_precomputed_cs_dkg_cache!, field_value
@@ -105,8 +105,9 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
                           for i in 1:Nc, j in 1:Nc, k in 1:Nz], np)
     field = PrecomputedCSDkgField(ntuple(p -> copy(dkg[p]), np))
     op = ImplicitVerticalDiffusion(; kz_field = field)
-    ws = (w_scratch = ntuple(_ -> zeros(FT, Nc, Nc, Nz), np),
-          dz_scratch = ntuple(_ -> fill(FT(NaN), Nc, Nc, Nz), np))
+    ws = DiffusionWorkspace(
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz), np),
+        ntuple(_ -> fill(FT(NaN), Nc, Nc, Nz), np), nothing)
     before = ntuple(p -> dropdims(sum(@view(panels_rm[p][2:3, 2:3, :]); dims=3); dims=3), np)
     apply_vertical_diffusion_vmr!(panels_rm, panels_m, op, ws, FT(300);
                                   halo_width = Hp)
@@ -127,11 +128,9 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
         apply_vertical_diffusion_vmr!(tracer, panels_m, op, ws, FT(300);
                                       halo_width = Hp)
     end
-    packed_ws = (
-        w_scratch = ntuple(_ -> zeros(FT, Nc, Nc, Nz), np),
-        dz_scratch = ws.dz_scratch,
-        diffusion_reference = ntuple(_ -> zeros(FT, Nc, Nc, Nt), np),
-    )
+    packed_ws = DiffusionWorkspace(
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz), np), ws.layer_thickness,
+        ntuple(_ -> zeros(FT, Nc, Nc, Nt), np))
     apply_vertical_diffusion_vmr!(packed, panels_m, op, packed_ws, FT(300);
                                   halo_width = Hp)
     @test packed == expected
@@ -140,7 +139,7 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
     backend = get_backend(lambda[1])
     kernel = _vertical_diffusion_cs_single_dkg_adjoint_kernel!(backend, (8, 8))
     for p in 1:np
-        kernel(lambda[p], panels_m[p], panel_field(field, p), ws.w_scratch[p],
+        kernel(lambda[p], panels_m[p], panel_field(field, p), ws.factors[p],
                FT(300), Nz, Hp; ndrange = (Nc, Nc))
         synchronize(backend)
     end

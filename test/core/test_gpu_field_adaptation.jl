@@ -29,6 +29,11 @@ end
     AT.update_field!(array_field, 0.5f0)
     @test array_field.surface.pblh.current_window == [1]
 
+    workspace = AT.DiffusionWorkspace(ones(Float32, 3, 2, 4))
+    array_workspace = Adapt.adapt(Array, workspace)
+    @test array_workspace.factors isa Array
+    @test array_workspace.layer_thickness isa Array
+
     has_cuda = try
         @eval using CUDA
         CUDA.functional()
@@ -48,6 +53,10 @@ end
         @test device_op.kz_field.cache isa CUDA.CuArray
         AT.update_field!(device_op.kz_field, 1.5f0)
         @test all(isfinite, Array(device_op.kz_field.cache))
+
+        device_workspace = Adapt.adapt(CUDA.CuArray, workspace)
+        @test device_workspace.factors isa CUDA.CuArray
+        @test device_workspace.layer_thickness isa CUDA.CuArray
     else
         @test_skip false
     end

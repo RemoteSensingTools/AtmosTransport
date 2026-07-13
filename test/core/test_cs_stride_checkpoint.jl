@@ -240,9 +240,9 @@ end
     # Build the diffusion context. Same as test_cs_ppm_adjoint_footprint.jl's
     # `_cs_diffusion_context`, inlined here for self-containment.
     FT = eltype(panels_m[1])
-    ws = AT.CSAdvectionWorkspace(mesh, panels_m[1])
+    ws = AT.DiffusionWorkspace(panels_m, mesh.Hp, 0)
     for p in 1:6
-        fill!(ws.dz_scratch[p], FT(50.0))
+        fill!(ws.layer_thickness[p], FT(50.0))
     end
     kz_field = AT.CubedSphereField(ntuple(_ -> AT.ConstantField{FT, 3}(FT(2.0)), 6))
     op = AT.ImplicitVerticalDiffusion(; kz_field)
@@ -366,9 +366,9 @@ end
     Adv.fill_panel_halos!(panels_rm, mesh; dir = 0)
 
     # Diffusion context.
-    ws_diff = AT.CSAdvectionWorkspace(mesh, panels_m[1])
+    ws_diff = AT.DiffusionWorkspace(panels_m, mesh.Hp, 0)
     for p in 1:6
-        fill!(ws_diff.dz_scratch[p], FT(50.0))
+        fill!(ws_diff.layer_thickness[p], FT(50.0))
     end
     kz_field = AT.CubedSphereField(ntuple(_ -> AT.ConstantField{FT, 3}(FT(2.0)), 6))
     op_diff = AT.ImplicitVerticalDiffusion(; kz_field)
@@ -479,9 +479,9 @@ end
         e
     end, 6) for step in 1:length(am_steps)]
 
-    ws_diff = AT.CSAdvectionWorkspace(mesh, panels_m[1])
+    ws_diff = AT.DiffusionWorkspace(panels_m, mesh.Hp, 0)
     for p in 1:6
-        fill!(ws_diff.dz_scratch[p], FT(50.0))
+        fill!(ws_diff.layer_thickness[p], FT(50.0))
     end
     kz_field = AT.CubedSphereField(ntuple(_ -> AT.ConstantField{FT, 3}(FT(2.0)), 6))
     op_diff = AT.ImplicitVerticalDiffusion(; kz_field)
@@ -972,9 +972,9 @@ end
     end
     Adv.fill_panel_halos!(panels_rm, mesh; dir = 0)
 
-    ws_diff = AT.CSAdvectionWorkspace(mesh, panels_m[1])
+    ws_diff = AT.DiffusionWorkspace(panels_m, mesh.Hp, 0)
     for p in 1:6
-        fill!(ws_diff.dz_scratch[p], FT(50.0))
+        fill!(ws_diff.layer_thickness[p], FT(50.0))
     end
     kz_field = AT.CubedSphereField(ntuple(_ -> AT.ConstantField{FT, 3}(FT(2.0)), 6))
     op_diff = AT.ImplicitVerticalDiffusion(; kz_field)

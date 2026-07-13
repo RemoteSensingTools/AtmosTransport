@@ -91,5 +91,5 @@ runs on the host and may refresh caches before an operator launch.
   [`../../MetDrivers/README.md`](../../MetDrivers/README.md)
 - Tests:
   - [`../../../test/test_fields.jl`](../../../test/test_fields.jl)
-  - [`../../../test/test_diffusion_operator.jl`](../../../test/test_diffusion_operator.jl)
+  - [`../../../test/core/test_diffusion_mass_flux_conservation.jl`](../../../test/core/test_diffusion_mass_flux_conservation.jl)
   - [`../../../test/test_current_time.jl`](../../../test/test_current_time.jl)

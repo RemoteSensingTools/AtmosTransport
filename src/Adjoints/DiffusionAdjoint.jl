@@ -176,14 +176,13 @@ end
 
 function _require_cs_diffusion_workspace(workspace)
     workspace === nothing && throw(ArgumentError(
-        "CS adjoint diffusion requires a workspace with panel-native " *
-        "`w_scratch` and `dz_scratch`; pass the transport CSAdvectionWorkspace"))
-    hasproperty(workspace, :w_scratch) && hasproperty(workspace, :dz_scratch) ||
+        "CS adjoint diffusion requires a panel-native DiffusionWorkspace"))
+    hasproperty(workspace, :factors) && hasproperty(workspace, :layer_thickness) ||
         throw(ArgumentError(
             "CS adjoint diffusion requires a workspace with panel-native " *
-            "`w_scratch` and `dz_scratch` tuples"))
-    w_scratch = getproperty(workspace, :w_scratch)
-    dz_scratch = getproperty(workspace, :dz_scratch)
+            "`factors` and `layer_thickness` tuples"))
+    w_scratch = workspace.factors
+    dz_scratch = workspace.layer_thickness
     length(w_scratch) == 6 && length(dz_scratch) == 6 ||
         throw(DimensionMismatch("CS adjoint diffusion workspace must provide 6 panel scratch arrays"))
     return w_scratch, dz_scratch

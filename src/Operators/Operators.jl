@@ -67,8 +67,8 @@ export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemis
 export chemistry_block!
 
 # Diffusion solver infrastructure + operator types
-export solve_tridiagonal!, build_diffusion_coefficients
-export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
+export solve_tridiagonal!
+export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion, DiffusionWorkspace
 export AbstractSurfaceFluxCoupling, SplitSurfaceFluxCoupling,
        DiffusiveSurfaceFluxBoundary, uses_diffusive_surface_flux_boundary
 export apply_vertical_diffusion_vmr!

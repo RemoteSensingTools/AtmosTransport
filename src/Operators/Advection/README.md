@@ -111,4 +111,4 @@ the model-facing `apply!` entrypoints that the transport block calls.
   - [`../../../test/test_cubed_sphere_advection.jl`](../../../test/test_cubed_sphere_advection.jl)
   - [`../../../test/test_basis_explicit_core.jl`](../../../test/test_basis_explicit_core.jl)
   - [`../../../test/test_emissions_palindrome.jl`](../../../test/test_emissions_palindrome.jl)
-  - [`../../../test/test_diffusion_palindrome.jl`](../../../test/test_diffusion_palindrome.jl)
+  - [`../../../test/core/test_diffusion_palindrome_contract.jl`](../../../test/core/test_diffusion_palindrome_contract.jl)

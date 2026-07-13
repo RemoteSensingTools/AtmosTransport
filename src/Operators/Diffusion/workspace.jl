@@ -1,0 +1,55 @@
+"""
+    DiffusionWorkspace
+
+Preallocated storage for implicit vertical diffusion.
+
+- `factors` stores the tracer-independent Thomas superdiagonal factors.
+- `layer_thickness` stores geometric layer thickness [m] used to convert
+  cell-centered Kz [m² s⁻¹] into interface mass exchange [kg s⁻¹].
+- `references` stores one cancellation-reducing column reference per packed
+  cubed-sphere tracer. It is `nothing` for LL and reduced-Gaussian layouts.
+
+The workspace owns only diffusion data. Advection and convection buffers live
+in their respective workspace types.
+"""
+struct DiffusionWorkspace{F, D, R}
+    factors         :: F
+    layer_thickness :: D
+    references      :: R
+end
+
+function DiffusionWorkspace(air_mass::AbstractArray{FT, N}) where {FT, N}
+    N in (2, 3) || throw(ArgumentError(
+        "DiffusionWorkspace requires rank-2 or rank-3 air mass; got rank $N"))
+    return DiffusionWorkspace(similar(air_mass), similar(air_mass), nothing)
+end
+
+function DiffusionWorkspace(air_mass::NTuple{6, A}, halo_width::Integer,
+                            n_tracers::Integer) where {FT, A <: AbstractArray{FT, 3}}
+    Hp = Int(halo_width)
+    Nt = Int(n_tracers)
+    Hp >= 0 || throw(ArgumentError("halo_width must be nonnegative"))
+    Nt >= 0 || throw(ArgumentError("n_tracers must be nonnegative"))
+    Nxi, Nyi, Nz = size(air_mass[1])
+    Nx, Ny = Nxi - 2Hp, Nyi - 2Hp
+    Nx > 0 && Ny > 0 || throw(DimensionMismatch(
+        "air-mass panels are too small for halo_width=$Hp"))
+    all(size(panel) == (Nxi, Nyi, Nz) for panel in air_mass) ||
+        throw(DimensionMismatch("all cubed-sphere air-mass panels must have the same shape"))
+    factors = ntuple(_ -> similar(air_mass[1], FT, Nx, Ny, Nz), 6)
+    layer_thickness = ntuple(_ -> similar(air_mass[1], FT, Nx, Ny, Nz), 6)
+    references = ntuple(_ -> similar(air_mass[1], FT, Nx, Ny, Nt), 6)
+    return DiffusionWorkspace(factors, layer_thickness, references)
+end
+
+DiffusionWorkspace(state::CellState) = DiffusionWorkspace(state.air_mass)
+DiffusionWorkspace(state::CubedSphereState) =
+    DiffusionWorkspace(state.air_mass, state.halo_width, ntracers(state))
+
+function Adapt.adapt_structure(to, workspace::DiffusionWorkspace)
+    return DiffusionWorkspace(
+        Adapt.adapt(to, workspace.factors),
+        Adapt.adapt(to, workspace.layer_thickness),
+        Adapt.adapt(to, workspace.references),
+    )
+end

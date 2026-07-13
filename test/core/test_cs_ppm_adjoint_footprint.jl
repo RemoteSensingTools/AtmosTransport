@@ -111,9 +111,10 @@ end
 
 function _cs_diffusion_context(mesh, prototype; kz=2.0, dz=50.0)
     FT = eltype(prototype)
-    ws = AT.CSAdvectionWorkspace(mesh, prototype)
+    panels = ntuple(_ -> prototype, 6)
+    ws = AT.DiffusionWorkspace(panels, mesh.Hp, 0)
     for p in 1:6
-        fill!(ws.dz_scratch[p], FT(dz))
+        fill!(ws.layer_thickness[p], FT(dz))
     end
     kz_field = AT.CubedSphereField(ntuple(_ -> AT.ConstantField{FT, 3}(FT(kz)), 6))
     op = AT.ImplicitVerticalDiffusion(; kz_field)
@@ -124,9 +125,9 @@ function _cs_gchp_vdiff_diffusion_context(mesh, panels_m; dz=50.0)
     FT = eltype(panels_m[1])
     Nc = mesh.Nc
     Nz = size(panels_m[1], 3)
-    ws = AT.CSAdvectionWorkspace(mesh, panels_m[1])
+    ws = AT.DiffusionWorkspace(panels_m, mesh.Hp, 0)
     for p in 1:6
-        fill!(ws.dz_scratch[p], FT(dz))
+        fill!(ws.layer_thickness[p], FT(dz))
     end
 
     surface = AT.PBLSurfaceForcing(

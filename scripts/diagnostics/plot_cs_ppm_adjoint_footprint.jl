@@ -115,9 +115,9 @@ end
 
 function _demo_diffusion(mesh, prototype; kz=5.0, dz=50.0)
     FT = eltype(prototype)
-    ws = CSAdvectionWorkspace(mesh, prototype)
+    ws = DiffusionWorkspace(ntuple(_ -> prototype, 6), mesh.Hp, 0)
     for p in 1:6
-        fill!(ws.dz_scratch[p], FT(dz))
+        fill!(ws.layer_thickness[p], FT(dz))
     end
     kz_field = CubedSphereField(ntuple(_ -> ConstantField{FT, 3}(FT(kz)), 6))
     return ImplicitVerticalDiffusion(; kz_field), ws

@@ -18,7 +18,8 @@ using AtmosTransport: CellState, CubedSphereState, DryBasis,
                       NoAdvection, UpwindScheme,
                       AdvectionWorkspace, StructuredFaceFluxState,
                       allocate_face_fluxes,
-                      NoDiffusion, ImplicitVerticalDiffusion, ConstantField,
+                      NoDiffusion, ImplicitVerticalDiffusion, DiffusionWorkspace,
+                      ConstantField,
                       SurfaceFluxSource, SurfaceFluxOperator, NoSurfaceFlux,
                       apply!,
                       LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
@@ -134,7 +135,7 @@ end
     @test all(cs_state.tracers.CO2[p] == co2_before[p] for p in 1:6)
 end
 
-@testset "with_diffusion allocates cubed-sphere scratch for NoAdvection" begin
+@testset "with_diffusion allocates independent CS diffusion scratch" begin
     Nc, Hp, Nz = 2, 1, 2
     N = Nc + 2Hp
     mesh = CubedSphereMesh(; Nc, Hp, FT)
@@ -150,9 +151,10 @@ end
     kz = AtmosTransport.State.CubedSphereField(
         ntuple(_ -> ConstantField{FT, 3}(one(FT)), 6))
     with_kz = with_diffusion(model, ImplicitVerticalDiffusion(; kz_field=kz))
-    @test with_kz.workspace.advection_ws isa
-          AtmosTransport.Operators.Advection.CSAdvectionWorkspace
-    @test size(with_kz.workspace.advection_ws.dz_scratch[1]) == (Nc, Nc, Nz)
+    @test with_kz.workspace.advection_ws === nothing
+    @test with_kz.workspace.diffusion_ws isa DiffusionWorkspace
+    @test size(with_kz.workspace.diffusion_ws.layer_thickness[1]) ==
+          (Nc, Nc, Nz)
 end
 
 # ---------------------------------------------------------------------------
@@ -190,11 +192,13 @@ end
     # implicit solve has well-defined coefficients.
     kz = ConstantField{FT, 3}(FT(1.0))
     diff_op = ImplicitVerticalDiffusion(; kz_field=kz)
-    fill!(ws.dz_scratch, one(FT))
+    diffusion_ws = DiffusionWorkspace(state)
+    fill!(diffusion_ws.layer_thickness, one(FT))
     air_pre = copy(state.air_mass)
     co2_mass_pre = sum(state.tracers_raw[:, :, :, 1])
     apply!(state, fluxes, grid, NoAdvection(), FT(1800);
-           workspace=ws, diffusion_op=diff_op)
+           workspace=ws, diffusion_workspace=diffusion_ws,
+           diffusion_op=diff_op)
     @test state.air_mass == air_pre              # NoAdvection is air-inert
     @test isapprox(sum(state.tracers_raw[:, :, :, 1]), co2_mass_pre;
                    rtol = 1e-12, atol = 0)
@@ -203,7 +207,9 @@ end
     # surface a clear ArgumentError rather than a cryptic FieldError
     # from the kernel-internal `w_scratch` access.
     @test_throws ArgumentError apply!(state, fluxes, grid, NoAdvection(), FT(1800);
-                                      workspace=nothing, diffusion_op=diff_op)
+                                      workspace=nothing,
+                                      diffusion_workspace=nothing,
+                                      diffusion_op=diff_op)
 
     # Non-NoSurfaceFlux → ArgumentError pointing at the TOML knob.
     em_op = SurfaceFluxOperator(SurfaceFluxSource(:CO2, fill(FT(1.0), Nx, Ny)))
@@ -244,10 +250,12 @@ end
     # With a workspace + populated `dz_scratch`, RG NoAdvection +
     # diffusion runs and preserves column tracer mass to roundoff.
     rg_ws = AdvectionWorkspace(rg_state.air_mass)
-    fill!(rg_ws.dz_scratch, one(FT))
+    rg_diffusion_ws = DiffusionWorkspace(rg_state)
+    fill!(rg_diffusion_ws.layer_thickness, one(FT))
     rg_co2_pre = sum(rg_state.tracers_raw[:, :, 1])
     apply!(rg_state, rg_fluxes, rg_grid, NoAdvection(), FT(1800);
-           workspace=rg_ws, diffusion_op=rg_diff)
+           workspace=rg_ws, diffusion_workspace=rg_diffusion_ws,
+           diffusion_op=rg_diff)
     @test isapprox(sum(rg_state.tracers_raw[:, :, 1]), rg_co2_pre;
                    rtol = 1e-12, atol = 0)
 

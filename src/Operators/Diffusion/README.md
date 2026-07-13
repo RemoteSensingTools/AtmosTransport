@@ -20,7 +20,7 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
   provides `apply_vertical_diffusion_vmr!`
 - Numerical reference pieces:
   [`thomas_solve.jl`](thomas_solve.jl)
-  provides `solve_tridiagonal!` and `build_diffusion_coefficients`
+  provides the allocation-free `solve_tridiagonal!` reference
 - Kernel implementations:
   [`diffusion_kernels.jl`](diffusion_kernels.jl)
 
@@ -44,6 +44,8 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
   kernels for structured, face-indexed, and cubed-sphere panel solves
 - [`dz_helpers.jl`](dz_helpers.jl) — hydrostatic layer-thickness helper
   kernels and host wrappers shared by vertical diffusion paths
+- [`workspace.jl`](workspace.jl) — topology-aware `DiffusionWorkspace`
+  allocation and device adaptation
 - [`operators.jl`](operators.jl) — operator hierarchy, constructor
   validation, state-level `apply!`, array-level `apply_vertical_diffusion_vmr!`
 

@@ -497,12 +497,12 @@ using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
                               fill_dz_hydrostatic_virtualT!
 
 # ---------------------------------------------------------------------------
-# Diffusion `dz_scratch` populator.
+# Diffusion layer-thickness refresh.
 #
 # `apply_vertical_diffusion_vmr!` uses `dz` per cell — if the workspace's
-# `dz_scratch` array is left at its default zeros (the allocator initializes
+# `layer_thickness` array is left at its default zeros (the allocator initializes
 # it that way), every diffusion step nukes the tracer field to NaN starting
-# from frame 2.  We refresh `dz_scratch` from the just-loaded window's
+# from frame 2. We refresh it from the just-loaded window's
 # surface pressure + the grid's hybrid-σp coefficients each time the
 # simulation advances to a new met window.
 #
@@ -511,28 +511,28 @@ using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
 # ---------------------------------------------------------------------------
 @inline function _refresh_dz_for_window!(sim::DrivenSimulation)
     sim.model.diffusion isa NoDiffusion && return nothing
-    workspace = sim.model.workspace
-    dz_scratch = _window_dz_scratch(workspace)
-    dz_scratch === nothing && return nothing
+    diffusion_workspace = sim.model.workspace.diffusion_ws
+    diffusion_workspace === nothing && return nothing
+    layer_thickness = diffusion_workspace.layer_thickness
     vertical = sim.model.grid.vertical
     ps = sim.window.surface_pressure
-    _fill_dz_for_diffusion!(dz_scratch, ps, vertical.A, vertical.B,
+    _fill_dz_for_diffusion!(layer_thickness, ps, vertical.A, vertical.B,
                              sim.model.diffusion, sim.window)
     return nothing
 end
 
 # When the diffusion operator uses LocalHoltslagBovilleKzField (which
 # itself derives column geometry from VDIFF virtual-T), populate
-# dz_scratch from the SAME virtual-T-per-layer the Kz cache uses. Closes
+# layer thickness from the SAME virtual-T-per-layer the Kz cache uses. Closes
 # the previous inconsistency where the kernel divided by a 260 K-constant
 # `dz` while Kz had been computed on layer-varying `dz`.
 #
 # All other diffusion configurations stay on the constant-T_ref path.
-@inline _fill_dz_for_diffusion!(dz_scratch, ps, ak, bk, _diffop, _window) =
-    fill_dz_hydrostatic_constT!(dz_scratch, ps, ak, bk)
+@inline _fill_dz_for_diffusion!(layer_thickness, ps, ak, bk, _diffop, _window) =
+    fill_dz_hydrostatic_constT!(layer_thickness, ps, ak, bk)
 
 @inline function _fill_dz_for_diffusion!(
-        dz_scratch, ps, ak, bk,
+        layer_thickness, ps, ak, bk,
         op::ImplicitVerticalDiffusion{FT, <:LocalHoltslagBovilleKzField},
         window) where FT
     vdiff = window.vdiff
@@ -548,18 +548,11 @@ end
         Kz cache's virtual-T column geometry. Check the binary's VDIFF
         payload and the [diffusion] runtime config.
         """
-        return fill_dz_hydrostatic_constT!(dz_scratch, ps, ak, bk)
+        return fill_dz_hydrostatic_constT!(layer_thickness, ps, ak, bk)
     end
-    fill_dz_hydrostatic_virtualT!(dz_scratch, vdiff.t, vdiff.qv, ps, ak, bk)
-    return dz_scratch
+    fill_dz_hydrostatic_virtualT!(layer_thickness, vdiff.t, vdiff.qv, ps, ak, bk)
+    return layer_thickness
 end
-
-@inline _window_dz_scratch(_workspace) = nothing
-@inline _window_dz_scratch(workspace::TransportModelWorkspace) =
-    _window_dz_scratch(workspace.advection_ws)
-@inline _window_dz_scratch(workspace::AdvectionWorkspace) = workspace.dz_scratch
-@inline _window_dz_scratch(workspace::CSAdvectionWorkspace) = workspace.dz_scratch
-@inline _window_dz_scratch(workspace::CSLinRoodAdvectionWorkspace) = workspace.dz_scratch
 
 @inline _refresh_pbl_kz_for_window!(_field, _sim::DrivenSimulation) = nothing
 
@@ -586,9 +579,9 @@ function _refresh_pbl_kz_for_window!(field::PrecomputedCSDkgField,
     return nothing
 end
 
-@inline function _fill_dz_for_diffusion!(dz_scratch, _ps, _ak, _bk,
+@inline function _fill_dz_for_diffusion!(layer_thickness, _ps, _ak, _bk,
         ::ImplicitVerticalDiffusion{FT, <:PrecomputedCSDkgField}, _window) where FT
-    return dz_scratch
+    return layer_thickness
 end
 
 @inline _refresh_pbl_kz_for_window!(::NoDiffusion, _sim::DrivenSimulation) = nothing

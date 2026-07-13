@@ -24,7 +24,8 @@ using LinearAlgebra: dot
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.Operators: ImplicitVerticalDiffusion, NoSurfaceFlux
+using .AtmosTransport.Operators: ImplicitVerticalDiffusion, DiffusionWorkspace,
+                                  NoSurfaceFlux
 using .AtmosTransport.Operators.Diffusion: apply_vertical_diffusion_vmr!,
                                             _cs_scale_tracer_mass_to_vmr!,
                                             _cs_scale_vmr_to_tracer_mass!
@@ -113,7 +114,7 @@ end
 
     # Build the operator + workspace.
     op = ImplicitVerticalDiffusion(; kz_field = kz_field)
-    workspace = (w_scratch = w_scratch, dz_scratch = dz_scratch)
+    workspace = DiffusionWorkspace(w_scratch, dz_scratch, nothing)
 
     apply_vertical_diffusion_vmr!(panels_rm, panels_m, op, workspace,
                                    FT(450.0); halo_width = Hp)
@@ -139,10 +140,8 @@ end
         packed = ntuple(_ -> abs.(randn(rng, FT, N, N, Nz, Nt)), 6)
         expected = ntuple(p -> copy(packed[p]), 6)
         op = ImplicitVerticalDiffusion(; kz_field)
-        single_workspace = (
-            w_scratch = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6),
-            dz_scratch,
-        )
+        single_workspace = DiffusionWorkspace(
+            ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6), dz_scratch, nothing)
 
         for t in 1:Nt
             tracer = ntuple(p -> @view(expected[p][:, :, :, t]), 6)
@@ -151,12 +150,9 @@ end
                                            halo_width = Hp)
         end
 
-        packed_workspace = (
-            w_scratch = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6),
-            dz_scratch,
-            diffusion_reference =
-                ntuple(_ -> zeros(FT, Nc, Nc, Nt), 6),
-        )
+        packed_workspace = DiffusionWorkspace(
+            ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6), dz_scratch,
+            ntuple(_ -> zeros(FT, Nc, Nc, Nt), 6))
         apply_vertical_diffusion_vmr!(packed, panels_m, op, packed_workspace,
                                        FT(450); halo_width = Hp)
 
@@ -176,7 +172,7 @@ end
     w_scratch = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
 
     op = ImplicitVerticalDiffusion(; kz_field = kz_field)
-    workspace = (w_scratch = w_scratch, dz_scratch = dz_scratch)
+    workspace = DiffusionWorkspace(w_scratch, dz_scratch, nothing)
 
     # Random x (tracer-mass-like) and adjoint seed y on the interior.
     rng = MersenneTwister(31337)
@@ -263,7 +259,7 @@ using .AtmosTransport.State: ConstantField
     sum_pre = dropdims(sum(rm; dims = 3); dims = 3)   # (Nx, Ny, Nt)
 
     op = ImplicitVerticalDiffusion(; kz_field = kz_field)
-    workspace = (w_scratch = w_scratch, dz_scratch = dz_scratch)
+    workspace = DiffusionWorkspace(w_scratch, dz_scratch, nothing)
     apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, FT(450.0))
 
     sum_post = dropdims(sum(rm; dims = 3); dims = 3)
@@ -298,7 +294,7 @@ end
     sum_pre = dropdims(sum(rm; dims = 2); dims = 2)   # (ncells, Nt)
 
     op = ImplicitVerticalDiffusion(; kz_field = kz_field)
-    workspace = (w_scratch = w_scratch, dz_scratch = dz_scratch)
+    workspace = DiffusionWorkspace(w_scratch, dz_scratch, nothing)
     apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, FT(450.0))
 
     sum_post = dropdims(sum(rm; dims = 2); dims = 2)
@@ -332,7 +328,7 @@ end
     sum_pre = dropdims(sum(rm; dims = 2); dims = 2)   # (ncells,)
 
     op = ImplicitVerticalDiffusion(; kz_field = kz_field)
-    workspace = (w_scratch = w_scratch, dz_scratch = dz_scratch)
+    workspace = DiffusionWorkspace(w_scratch, dz_scratch, nothing)
     apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, FT(450.0))
 
     sum_post = dropdims(sum(rm; dims = 2); dims = 2)

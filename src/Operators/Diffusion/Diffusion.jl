@@ -27,13 +27,14 @@ using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 using ...State: CellState, CubedSphereState,
                 AbstractTimeVaryingField, AbstractCubedSphereField,
                 PrecomputedCSDkgField,
-                field_value, update_field!, panel_field, eachtracer
+                field_value, update_field!, panel_field, eachtracer, ntracers
 using ...MetDrivers: current_time
 import ..apply!
 import ..AbstractDiffusion                # global root from src/Operators/AbstractOperators.jl
 
-export solve_tridiagonal!, build_diffusion_coefficients
+export solve_tridiagonal!
 export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
+export DiffusionWorkspace
 export AbstractSurfaceFluxCoupling, SplitSurfaceFluxCoupling,
        DiffusiveSurfaceFluxBoundary, uses_diffusive_surface_flux_boundary
 export apply_vertical_diffusion_vmr!
@@ -42,6 +43,7 @@ export fill_dz_hydrostatic_constT!, fill_dz_hydrostatic_virtualT!
 include("thomas_solve.jl")
 include("diffusion_kernels.jl")
 include("dz_helpers.jl")
+include("workspace.jl")
 include("operators.jl")
 
 end # module Diffusion

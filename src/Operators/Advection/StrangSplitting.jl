@@ -55,12 +55,6 @@ stencil's read-before-write assumption and break mass conservation by
 - `rm_4d_A::A4`, `rm_4d_B::A4` — 4D tracer-mass ping-pong pair for the
   multi-tracer fused path (`(Nx, Ny, Nz, Nt)`). Both are allocated to
   size 0×0×0×0 when `n_tracers == 0`.
-- `w_scratch::A` — Thomas-factor scratch matching `air_mass`'s shape:
-  `(Nx, Ny, Nz)` for structured grids, `(ncells, Nz)` for
-  face-indexed grids.
-- `dz_scratch::A` — layer-thickness input matching `air_mass`'s shape.
-  Caller is expected to fill this with current dz [m] (via hydrostatic
-  from delp) before each diffusion `apply!`.
 
 # Constructors
 
@@ -84,8 +78,6 @@ struct AdvectionWorkspace{FT, A <: AbstractArray{FT}, V1 <: AbstractVector{Int32
     face_right     :: V1
     rm_4d_A        :: A4
     rm_4d_B        :: A4
-    w_scratch      :: A
-    dz_scratch     :: A
 end
 
 function _face_connectivity_vectors(mesh::AbstractHorizontalMesh)
@@ -114,8 +106,7 @@ function AdvectionWorkspace(m::AbstractArray{FT,3};
         similar(m), similar(m),                       # rm_A, m_A
         similar(m), similar(m),                       # rm_B, m_B
         cs_dev, face_left, face_right,
-        rm_4d_A, rm_4d_B,
-        similar(m), similar(m))                       # w_scratch, dz_scratch
+        rm_4d_A, rm_4d_B)
 end
 
 function AdvectionWorkspace(m::AbstractArray{FT,2};
@@ -141,8 +132,7 @@ function AdvectionWorkspace(m::AbstractArray{FT,2};
         similar(m), similar(m),                       # rm_A, m_A
         similar(m), similar(m),                       # rm_B, m_B
         cs_dev, face_left, face_right,
-        rm_4d_A, rm_4d_B,
-        similar(m), similar(m))                       # w_scratch, dz_scratch
+        rm_4d_A, rm_4d_B)
 end
 
 """
@@ -179,13 +169,10 @@ function Adapt.adapt_structure(to, ws::AdvectionWorkspace{FT}) where {FT}
     face_right     = Adapt.adapt(to, getfield(ws, :face_right))
     rm_4d_A        = Adapt.adapt(to, getfield(ws, :rm_4d_A))
     rm_4d_B        = Adapt.adapt(to, getfield(ws, :rm_4d_B))
-    w_scratch      = Adapt.adapt(to, getfield(ws, :w_scratch))
-    dz_scratch     = Adapt.adapt(to, getfield(ws, :dz_scratch))
     return AdvectionWorkspace{FT, typeof(rm_A), typeof(cluster_sizes), typeof(rm_4d_A)}(
         rm_A, m_A, rm_B, m_B,
         cluster_sizes, face_left, face_right,
-        rm_4d_A, rm_4d_B,
-        w_scratch, dz_scratch)
+        rm_4d_A, rm_4d_B)
 end
 
 # =========================================================================
@@ -995,6 +982,7 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                        grid::AtmosGrid{<:LatLonMesh},
                        scheme::AbstractAdvectionScheme;
                        workspace::AdvectionWorkspace,
+                       diffusion_workspace = workspace,
                        cfl_limit::Real = one(eltype(state.air_mass)),
                        diffusion_op::AbstractDiffusion = NoDiffusion(),
                        emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
@@ -1010,6 +998,7 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
     strang_split_mt!(state.tracers_raw, m, am, bm, cm, scheme, workspace;
                      cfl_limit = cfl_limit,
                      diffusion_op = diffusion_op,
+                     diffusion_workspace = diffusion_workspace,
                      emissions_op = emissions_op,
                      tracer_names = state.tracer_names,
                      meteo = meteo,
@@ -1133,6 +1122,7 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                        grid::AtmosGrid{<:CubedSphereMesh},
                        scheme::AbstractAdvectionScheme;
                        workspace,
+                       diffusion_workspace = workspace,
                        cfl_limit::Real = 0.95,
                        diffusion_op::AbstractDiffusion = NoDiffusion(),
                        emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
@@ -1153,7 +1143,7 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
         fill_panel_halos!(state.tracers_raw, grid.horizontal; dir=1)
         midpoint! = if emissions_op isa NoSurfaceFlux
             (active_rm, active_m) -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                active_rm, active_m, diffusion_op, workspace, dt, meteo;
+                active_rm, active_m, diffusion_op, diffusion_workspace, dt, meteo;
                 halo_width = state.halo_width)
         elseif uses_diffusive_surface_flux_boundary(diffusion_op)
             (active_rm, active_m) -> begin
@@ -1161,20 +1151,20 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                                     tracer_names = state.tracer_names,
                                     halo_width = state.halo_width)
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    active_rm, active_m, diffusion_op, workspace, dt, meteo;
+                    active_rm, active_m, diffusion_op, diffusion_workspace, dt, meteo;
                     halo_width = state.halo_width)
             end
         else
             half_dt = dt / 2
             (active_rm, active_m) -> begin
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    active_rm, active_m, diffusion_op, workspace, half_dt, meteo;
+                    active_rm, active_m, diffusion_op, diffusion_workspace, half_dt, meteo;
                     halo_width = state.halo_width)
                 apply_surface_flux!(active_rm, emissions_op, workspace, dt, meteo, grid;
                                     tracer_names = state.tracer_names,
                                     halo_width = state.halo_width)
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    active_rm, active_m, diffusion_op, workspace, half_dt, meteo;
+                    active_rm, active_m, diffusion_op, diffusion_workspace, half_dt, meteo;
                     halo_width = state.halo_width)
             end
         end
@@ -1202,7 +1192,7 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
         tracer_name = tracer_names[idx]
         midpoint! = if emissions_op isa NoSurfaceFlux
             () -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                rm_tracer, m, diffusion_op, workspace, dt, meteo;
+                rm_tracer, m, diffusion_op, diffusion_workspace, dt, meteo;
                 halo_width = state.halo_width)
         elseif uses_diffusive_surface_flux_boundary(diffusion_op)
             () -> begin
@@ -1210,20 +1200,20 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                                     tracer_names = (tracer_name,),
                                     halo_width = state.halo_width)
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    rm_tracer, m, diffusion_op, workspace, dt, meteo;
+                    rm_tracer, m, diffusion_op, diffusion_workspace, dt, meteo;
                     halo_width = state.halo_width)
             end
         else
             half_dt = dt / 2
             () -> begin
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    rm_tracer, m, diffusion_op, workspace, half_dt, meteo;
+                    rm_tracer, m, diffusion_op, diffusion_workspace, half_dt, meteo;
                     halo_width = state.halo_width)
                 apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
                                     tracer_names = (tracer_name,),
                                     halo_width = state.halo_width)
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    rm_tracer, m, diffusion_op, workspace, half_dt, meteo;
+                    rm_tracer, m, diffusion_op, diffusion_workspace, half_dt, meteo;
                     halo_width = state.halo_width)
             end
         end
@@ -1253,12 +1243,14 @@ function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                 grid::AtmosGrid{<:LatLonMesh},
                 scheme::AbstractAdvectionScheme, dt;
                 workspace::AdvectionWorkspace,
+                diffusion_workspace = workspace,
                 cfl_limit::Real = one(eltype(state.air_mass)),
                 diffusion_op::AbstractDiffusion = NoDiffusion(),
                 emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                 meteo = nothing) where {B <: AbstractMassBasis}
     strang_split!(state, fluxes, grid, scheme;
                   workspace = workspace, cfl_limit = cfl_limit,
+                  diffusion_workspace = diffusion_workspace,
                   diffusion_op = diffusion_op,
                   emissions_op = emissions_op,
                   meteo = meteo, dt = dt)
@@ -1278,12 +1270,13 @@ end
                          grid::AtmosGrid{<:LatLonMesh},
                          ::NoAdvection, dt;
                          workspace = nothing,
+                         diffusion_workspace = workspace,
                          cfl_limit::Real = one(eltype(state.air_mass)),
                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
     _noadvection_reject_emissions_op(emissions_op)
-    _noadvection_require_workspace(workspace, diffusion_op)
+    _noadvection_require_workspace(diffusion_workspace, diffusion_op)
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion: skip the Strang half-step structure
         # entirely and apply a single V(dt) step on the LL state. The
@@ -1291,7 +1284,7 @@ end
         # roundoff, so this is the natural "diffusion-only"
         # experimental setup.
         apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
-                                       diffusion_op, workspace, dt, meteo)
+                                       diffusion_op, diffusion_workspace, dt, meteo)
     end
     return nothing
 end
@@ -1314,20 +1307,17 @@ end
 end
 
 # Workspace guard for the direct `apply!` API: when diffusion is active
-# the mass-flux VMR kernels read `workspace.w_scratch` (and on the LL
-# path, `workspace`-owned scale buffers). The production `TransportModel`
+# the mass-flux VMR kernels require a dedicated `DiffusionWorkspace`. The production `TransportModel`
 # constructor allocates a workspace automatically when diffusion is on,
 # so this only trips when callers reach the public apply! directly with
 # `workspace = nothing`. Throw an ArgumentError pointing at the fix.
-@inline function _noadvection_require_workspace(workspace, diffusion_op::AbstractDiffusion)
-    if !(diffusion_op isa NoDiffusion) && workspace === nothing
+@inline function _noadvection_require_workspace(diffusion_workspace,
+                                                diffusion_op::AbstractDiffusion)
+    if !(diffusion_op isa NoDiffusion) && diffusion_workspace === nothing
         throw(ArgumentError(
-            "NoAdvection + diffusion requires an advection workspace " *
-            "(the mass-flux VMR kernel uses `workspace.w_scratch`). " *
-            "Pass `workspace = AdvectionWorkspace(state.air_mass)` (LL/RG) " *
-            "or `CSAdvectionWorkspace(grid.horizontal, state.air_mass[1]; " *
-            "n_tracers = …)` (CS), or build the model via TransportModel(...) " *
-            "which allocates one automatically."))
+            "NoAdvection + diffusion requires `diffusion_workspace = " *
+            "DiffusionWorkspace(state)`, or a TransportModel that allocates " *
+            "the workspace automatically."))
     end
     return nothing
 end
@@ -1343,12 +1333,14 @@ function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
                 grid::AtmosGrid{<:CubedSphereMesh},
                 scheme::AbstractAdvectionScheme, dt;
                 workspace,
+                diffusion_workspace = workspace,
                 cfl_limit::Real = 0.95,
                 diffusion_op::AbstractDiffusion = NoDiffusion(),
                 emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                 meteo = nothing) where {B <: AbstractMassBasis}
     strang_split!(state, fluxes, grid, scheme;
                   workspace = workspace,
+                  diffusion_workspace = diffusion_workspace,
                   cfl_limit = cfl_limit,
                   diffusion_op = diffusion_op,
                   emissions_op = emissions_op,
@@ -1366,17 +1358,18 @@ end
                          grid::AtmosGrid{<:CubedSphereMesh},
                          ::NoAdvection, dt;
                          workspace = nothing,
+                         diffusion_workspace = workspace,
                          cfl_limit::Real = 0.95,
                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
     _noadvection_reject_emissions_op(emissions_op)
-    _noadvection_require_workspace(workspace, diffusion_op)
+    _noadvection_require_workspace(diffusion_workspace, diffusion_op)
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion on CS: single V(dt) step via the
         # mass-flux VMR wrapper. State carries `state.halo_width`.
         apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
-                                       diffusion_op, workspace, dt, meteo;
+                                       diffusion_op, diffusion_workspace, dt, meteo;
                                        halo_width = state.halo_width)
     end
     return nothing
@@ -1392,16 +1385,17 @@ end
                          grid::AtmosGrid{<:AbstractHorizontalMesh},
                          ::NoAdvection, dt;
                          workspace = nothing,
+                         diffusion_workspace = workspace,
                          cfl_limit::Real = one(eltype(state.air_mass)),
                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
     _noadvection_reject_emissions_op(emissions_op)
-    _noadvection_require_workspace(workspace, diffusion_op)
+    _noadvection_require_workspace(diffusion_workspace, diffusion_op)
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion on face-indexed RG: single V(dt) step.
         apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
-                                       diffusion_op, workspace, dt, meteo)
+                                       diffusion_op, diffusion_workspace, dt, meteo)
     end
     return nothing
 end
@@ -1423,6 +1417,7 @@ for (scheme_type, h_sweep, v_sweep) in (
                           grid::AtmosGrid{<:AbstractHorizontalMesh},
                           scheme::$scheme_type, dt;
                           workspace::AdvectionWorkspace,
+                          diffusion_workspace = workspace,
                           cfl_limit::Real = one(eltype(state.air_mass)),
                           diffusion_op::AbstractDiffusion = NoDiffusion(),
                           emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
@@ -1464,13 +1459,13 @@ for (scheme_type, h_sweep, v_sweep) in (
             # is the per-tracer mass slice `(ncells, Nz)`. The wrapper
             # does pre-scale → mass-flux kernel → post-scale internally.
             if emissions_op isa NoSurfaceFlux
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(rm_tracer, m, diffusion_op, workspace, dt, meteo)
+                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(rm_tracer, m, diffusion_op, diffusion_workspace, dt, meteo)
             else
                 half_dt = dt / 2
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(rm_tracer, m, diffusion_op, workspace, half_dt, meteo)
+                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(rm_tracer, m, diffusion_op, diffusion_workspace, half_dt, meteo)
                 apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
                                     tracer_names = (tracer_name,))
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(rm_tracer, m, diffusion_op, workspace, half_dt, meteo)
+                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(rm_tracer, m, diffusion_op, diffusion_workspace, half_dt, meteo)
             end
             _sweep_vertical_face_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)
             _sweep_horizontal_face_subcycled!(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, cfl_limit_ft)
@@ -1576,6 +1571,7 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
                           ws::AdvectionWorkspace{FT};
                           cfl_limit::Real = one(FT),
                           diffusion_op::AbstractDiffusion = NoDiffusion(),
+                          diffusion_workspace = ws,
                           emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                           tracer_names::Union{Nothing, Tuple} = nothing,
                           meteo = nothing,
@@ -1639,7 +1635,7 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
     # `(Nx, Ny, Nz, Nt)` tracer storage; the wrapper does the
     # tracer_mass ↔ VMR scaling internally.
     if emissions_op isa NoSurfaceFlux
-        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, ws, dt, meteo)
+        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, diffusion_workspace, dt, meteo)
     elseif uses_diffusive_surface_flux_boundary(diffusion_op)
         tracer_names === nothing && throw(ArgumentError(
             "strang_split_mt!: `emissions_op` is non-trivial but " *
@@ -1648,7 +1644,7 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
             "`tracer_names = state.tracer_names`."))
         apply_surface_flux!(rm_cur, emissions_op, ws, dt, meteo, grid;
                             tracer_names = tracer_names)
-        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, ws, dt, meteo)
+        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, diffusion_workspace, dt, meteo)
     else
         tracer_names === nothing && throw(ArgumentError(
             "strang_split_mt!: `emissions_op` is non-trivial but " *
@@ -1656,10 +1652,10 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
             "kernel needs per-tracer index resolution. Pass " *
             "`tracer_names = state.tracer_names`."))
         half_dt = dt === nothing ? nothing : dt / 2
-        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, ws, half_dt, meteo)
+        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, diffusion_workspace, half_dt, meteo)
         apply_surface_flux!(rm_cur, emissions_op, ws, dt, meteo, grid;
                             tracer_names = tracer_names)
-        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, ws, half_dt, meteo)
+        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, diffusion_workspace, half_dt, meteo)
     end
 
     # Reverse half: Z → Y → X

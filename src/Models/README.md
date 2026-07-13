@@ -113,6 +113,6 @@ read.
   [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)
 - Tests:
   - [`../../test/test_driven_simulation.jl`](../../test/test_driven_simulation.jl)
-  - [`../../test/test_transport_model_diffusion.jl`](../../test/test_transport_model_diffusion.jl)
+  - [`../../test/core/test_no_advection.jl`](../../test/core/test_no_advection.jl)
   - [`../../test/test_transport_model_emissions.jl`](../../test/test_transport_model_emissions.jl)
   - [`../../test/test_current_time.jl`](../../test/test_current_time.jl)

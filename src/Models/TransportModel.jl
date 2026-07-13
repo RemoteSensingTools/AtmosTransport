@@ -4,23 +4,22 @@ const _TRANSPORT_MODEL_OVERVIEW = """
 Minimal Oceanigans-style model object for standalone `src` transport runs.
 
 Carries advection, chemistry, vertical diffusion, surface emissions,
-and convection operators. The composition target from
-`OPERATOR_COMPOSITION.md` §3.1 is:
-
+and convection operators. The step composition is:
     transport_block(dt)   →   convection_block(dt)   →   chemistry_block(dt)
 
 where `transport_block` runs the full palindrome with diffusion and
 emissions at the center:
 
     X → Y → Z → V(dt/2) → S(dt) → V(dt/2) → Z → Y → X      (emissions active)
+    X → Y → Z → S(dt) → V(dt) → Z → Y → X                  (diffusive boundary coupling)
     X → Y → Z → V(dt) → Z → Y → X                          (no emissions)
 
 `step!(model, dt)` executes the full runtime composition:
 transport block → convection block → chemistry block.
 
 Defaults `chemistry = NoChemistry()`, `diffusion = NoDiffusion()`,
-`emissions = NoSurfaceFlux()`, `convection = NoConvection()` keep
-the inactive operator slots compile to no-op dispatches.
+`emissions = NoSurfaceFlux()`, and `convection = NoConvection()` make the
+inactive operator slots compile to no-op dispatches.
 
 # Convection fields
 

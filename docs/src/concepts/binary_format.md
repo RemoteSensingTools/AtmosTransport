@@ -62,8 +62,8 @@ the runtime actually dispatches on:
 | `steps_per_window` | `Int` | compatibility scalar, equal to `maximum(steps_per_window_by_window)` |
 | `steps_per_window_by_window` | `Vector{Int}` | required v4 per-window substep schedule used by replay gates and runtime stepping |
 | `time_step_schedule` | `Symbol` | `:constant` or `:per_window` |
-| `flux_sampling` | `Symbol` | currently `:window_constant` (same flux at every substep) |
-| `flux_kind` | `Symbol` | currently `:substep_mass_amount` (kg per substep, not integrated over window) |
+| `flux_sampling` | `Symbol` | `:window_start_endpoint`, `:window_constant`, or `:window_mean` |
+| `flux_kind` | `Symbol` | `:substep_mass_amount` or `:full_window_mass_amount` |
 | `float_type` (JSON key; struct field `on_disk_float_type`) | `Symbol` | `:Float32` or `:Float64` |
 | `nwindow` | `Int` | windows per day (typically 24) |
 | `payload_sections` | `Vector{Symbol}` | which arrays this binary actually contains |
@@ -131,12 +131,12 @@ returns a `NamedTuple`:
 
 | Field | Meaning |
 |---|---|
-| `advection :: Bool` | `true` iff `:m, :am, :bm, :cm` are all present |
+| `advection :: Bool` | `true` iff structured `:m/:am/:bm/:cm` or face-indexed RG `:m/:hflux/:cm` sections are present |
 | `replay_gate :: Bool` | `true` iff the flux-delta sections needed for plan-39 replay are present |
 | `tm5_convection :: Bool` | `true` iff all four TM5 sections are present |
 | `cmfmc_convection :: Bool` | `true` iff `:cmfmc` is present (CS only) |
 | `pbl_diffusion :: Bool` | `true` iff the four PBL surface sections (`:pblh`, `:ustar`, `:pbl_hflux`, `:t2m`) are present (CS only) |
-| `gchp_vdiff :: Bool` | `true` iff the four GCHP VDIFF payload sections (`:vdiff_u`, `:vdiff_v`, `:vdiff_t`, `:vdiff_qv`) are present (CS only) |
+| `gchp_vdiff :: Bool` | `true` iff all GCHP VDIFF fields and all four PBL surface fields are present (CS only) |
 | `surface_pressure :: Bool` | `true` iff `:ps` is present |
 | `humidity :: Bool` | `true` iff `:qv` (or the start/end pair) is present |
 | `mass_basis :: Symbol` | `:dry` or `:moist` (echoed from header) |
@@ -147,6 +147,7 @@ returns a `NamedTuple`:
 | `variable_step_schedule :: Bool` | `true` iff per-window step counts are not all equal |
 | `adaptive_substeps :: Union{Nothing, Bool}` | explicit `adaptive_substeps` header value for CS; `nothing` when not recorded |
 | `preprocessor_contract :: Union{Nothing, String}` | preprocessor contract tag (CS only); e.g. `"plan41_variable_substeps"` |
+| `vertical_Nz_output :: Union{Nothing, Int}` | preprocessor-recorded output level count for CS; `nothing` otherwise |
 | `payload_sections :: Vector{Symbol}` | the raw list, for advanced filtering |
 
 The CLI tool `scripts/diagnostics/inspect_transport_binary.jl` is a

@@ -33,8 +33,8 @@ struct SplitSurfaceFluxCoupling <: AbstractSurfaceFluxCoupling end
 """
     DiffusiveSurfaceFluxBoundary()
 
-Apply surface flux as the lower boundary condition of one implicit vertical
-diffusion solve.
+Inject surface mass immediately before one full implicit vertical diffusion
+solve, so the new surface mass participates in that solve.
 """
 struct DiffusiveSurfaceFluxBoundary <: AbstractSurfaceFluxCoupling end
 

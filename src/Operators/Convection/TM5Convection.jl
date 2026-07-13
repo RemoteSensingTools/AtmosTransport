@@ -8,7 +8,8 @@
 # ---------------------------------------------------------------------------
 
 """
-    TM5Convection(; tile_workspace_gib = 1.0)
+    TM5Convection(; tile_workspace_gib=1.0, use_collab_lu=false,
+                    lmax_conv=0, n_merge=1)
 
 TM5-style convective transport operator. Four-field mass-flux scheme
 following Tiedtke (1989) as implemented in TM5-4DVAR: two entrainment
@@ -16,6 +17,10 @@ and two detrainment fields (updraft + downdraft). The backward-Euler
 transport matrix `conv1 = I - dt·D` is dense within the cloud window
 and identity above; the solver assembles and factorizes only the active
 lower-right cloud block and stores the pivot vector for adjoint replay.
+
+`use_collab_lu` selects the workgroup-collaborative solver. `lmax_conv=0`
+uses all vertical levels; a positive value limits the active lower atmosphere.
+`n_merge` optionally aggregates adjacent active layers before the solve.
 
 The forcing arrays `(entu, detu, entd, detd)` arrive via
 `TransportModel.convection_forcing.tm5_fields`, populated each

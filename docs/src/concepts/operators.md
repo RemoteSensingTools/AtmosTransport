@@ -78,7 +78,7 @@ specialized kernels via Julia's multiple dispatch on the grid type.
 | --- | --- | --- |
 | `UpwindScheme` | 1 | Donor-cell; cheap, very diffusive. |
 | `SlopesScheme{L}` | 2 | Russell-Lerner slopes (TM5 `sl_advection` port). Limiter parameter `L`. |
-| `PPMScheme{L}` | 3 in smooth regions | Putman-Lin Piecewise Parabolic. Limiter parameter `L`. Multi-tracer fused on LL/RG/CS split-sweep. |
+| `PPMScheme{L}` | 3 in smooth regions | Putman-Lin Piecewise Parabolic. Limiter parameter `L`. Supported on LL and CS split-sweep; RG supports upwind only. |
 | `LinRoodPPMScheme` | 5 or 7 | FV3 Lin-Rood PPM with cross-term advection (CS only); ORD=7 adds a panel-boundary correction. Selectable `ppm_order ∈ {5, 7}`. |
 
 Limiter parameter `L` ranges over `NoLimiter`, `MonotoneLimiter`,
@@ -174,10 +174,9 @@ error**, not a silent fallback.
 | `NoSurfaceFlux()` | Identity no-op; default. |
 | `SurfaceFluxOperator{M}` | Applies a `PerTracerFluxMap` of `SurfaceFluxSource`s to the bottom-most layer (`k = Nz`). |
 
-`SurfaceFluxOperator` is built **programmatically**, not from the
-TOML, and is the path for emissions inventories (EDGAR, GFED,
-GridFED, LMDz, …). The `[tracers.<name>.emission]` block in run
-configs drives this construction; see the worked CATRINE configs
+`SurfaceFluxOperator` is materialized from
+`[tracers.<name>.surface_flux]` blocks and is the path for emissions
+inventories (EDGAR, GFED, GridFED, LMDz, …). See the worked CATRINE configs
 (`config/runs/catrine_*.toml`) for examples.
 
 ## Strang palindrome

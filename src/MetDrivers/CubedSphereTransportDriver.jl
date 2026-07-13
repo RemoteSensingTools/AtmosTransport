@@ -9,8 +9,9 @@
     CubedSphereTransportWindow
 
 One decoded v4 forcing window with panel-native air mass, pressure, face
-fluxes, optional humidity endpoints, replay deltas, convection, surface
-forcing, VDIFF fields, and exact TM5 diffusion exchange.
+fluxes, replay deltas, convection, surface
+forcing, VDIFF fields, and exact TM5 diffusion exchange. Canonical CS binaries
+do not carry humidity payloads.
 """
 struct CubedSphereTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C, S, V, DK} <: AbstractTransportWindow{Basis}
     air_mass         :: M
@@ -63,7 +64,7 @@ function Adapt.adapt_structure(to, deltas::CubedSphereFluxDeltas)
 end
 
 """
-    CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=nothing)
+    CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1)
 
 Runtime driver for canonical v4 cubed-sphere binaries. It owns a validated
 reader and reconstructs the AtmosGrid used to allocate panel-native state and

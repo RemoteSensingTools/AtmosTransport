@@ -47,6 +47,13 @@ struct StructuredTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C} 
     convection       :: C   # ::Union{Nothing, ConvectionForcing}
 end
 
+"""
+    FaceIndexedTransportWindow
+
+One decoded v4 reduced-Gaussian forcing window: face-indexed air mass,
+surface pressure, horizontal/vertical fluxes, optional humidity endpoints,
+replay deltas, and convection forcing.
+"""
 struct FaceIndexedTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C} <: AbstractTransportWindow{Basis}
     air_mass         :: M
     surface_pressure :: PS

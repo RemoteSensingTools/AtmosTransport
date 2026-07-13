@@ -14,6 +14,7 @@ const DOCUMENTED_CORE_API = (
     :TransportBinaryDriver,
     :CubedSphereTransportDriver,
     :StructuredTransportWindow,
+    :FaceIndexedTransportWindow,
     :CubedSphereTransportWindow,
     :TransportTracerSpec,
     :write_transport_binary,

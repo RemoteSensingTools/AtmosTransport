@@ -82,3 +82,8 @@ end
     end
     @test isempty(missing)
 end
+
+@testset "home page exposes VitePress front matter first" begin
+    home = read(joinpath(REPOSITORY_ROOT, "docs", "src", "index.md"), String)
+    @test startswith(home, "```@raw html\n---\nlayout: home\n")
+end

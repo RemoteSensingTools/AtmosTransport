@@ -30,19 +30,24 @@ DocMeta.setdocmeta!(AtmosTransport, :DocTestSetup, :(using AtmosTransport);
 
 const PAGES = [
     "Home" => "index.md",
-    "Start Here" => [
-        "getting_started/installation.md",
-        "getting_started/julia_basics.md",
-        "getting_started/quickstart.md",
-        "getting_started/first_run.md",
-        "getting_started/inspecting_output.md",
-    ],
-    "User Guide" => [
-        "concepts/architecture.md",
-        "concepts/grids.md",
-        "concepts/state_and_basis.md",
-        "concepts/operators.md",
-        "concepts/binary_format.md",
+    "Learn" => [
+        "Start here" => [
+            "getting_started/installation.md",
+            "getting_started/julia_basics.md",
+            "getting_started/quickstart.md",
+            "getting_started/first_run.md",
+            "getting_started/inspecting_output.md",
+        ],
+        "Core concepts" => [
+            "concepts/architecture.md",
+            "concepts/grids.md",
+            "concepts/state_and_basis.md",
+            "concepts/operators.md",
+            "concepts/binary_format.md",
+        ],
+        "Tutorials" => [
+            "tutorials/_generated/synthetic_latlon.md",
+        ],
     ],
     "Workflows" => [
         "Configuration and runtime" => [
@@ -59,24 +64,21 @@ const PAGES = [
             "preprocessing/conventions.md",
         ],
     ],
-    "Examples" => [
-        "tutorials/_generated/synthetic_latlon.md",
-    ],
-    "For TM5 & GCHP Users" => [
+    "TM5 & GCHP" => [
         "for_tm5_gchp_users/philosophy.md",
         "for_tm5_gchp_users/binary_pipeline.md",
         "for_tm5_gchp_users/operators_on_binaries.md",
         "for_tm5_gchp_users/adjoints.md",
         "for_tm5_gchp_users/kernel_architecture.md",
     ],
-    "Theory & Validation" => [
+    "Theory" => [
         "theory/mass_conservation.md",
         "theory/advection_schemes.md",
         "theory/conservation_budgets.md",
         "theory/validation_status.md",
         "theory/adjoint_status.md",
     ],
-    "API Reference" => [
+    "API" => [
         "api/public_api.md",
         "api/index.md",
         "api/architectures.md",
@@ -113,6 +115,28 @@ makedocs(
     warnonly = false,
     checkdocs = :exports,
 )
+
+# VitePress front matter must be the first bytes of the converted Markdown.
+# A preceding Documenter-only block produces a blank line, causing VitePress to
+# render the YAML as page content instead of selecting its home-page layout.
+const CONVERTED_HOME = joinpath(@__DIR__, "build", ".documenter", "index.md")
+const converted_home = read(CONVERTED_HOME, String)
+startswith(converted_home, "---\nlayout: home\n") ||
+    error("converted home page does not begin with VitePress front matter")
+
+const rendered_homes = filter(readdir(joinpath(@__DIR__, "build"); join = true)) do path
+    isfile(joinpath(path, "index.html"))
+end
+isempty(rendered_homes) && error("VitePress produced no rendered home page")
+for path in rendered_homes
+    rendered_home = read(joinpath(path, "index.html"), String)
+    isfile(joinpath(path, "logo.png")) ||
+        error("rendered home page is missing its public logo asset")
+    occursin("VPHome", rendered_home) ||
+        error("rendered home page did not select the VitePress home layout")
+    occursin("<p>layout: home</p>", rendered_home) &&
+        error("rendered home page contains unparsed VitePress front matter")
+end
 
 # DocumenterVitepress builds separate VitePress outputs under docs/build/1,
 # docs/build/2, ... and records their destination folders in docs/build/bases.txt.

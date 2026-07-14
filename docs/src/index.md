@@ -1,7 +1,3 @@
-```@meta
-CurrentModule = AtmosTransport
-```
-
 ```@raw html
 ---
 layout: home
@@ -10,17 +6,17 @@ hero:
   name: "AtmosTransport.jl"
   tagline: "Mass-conserving offline atmospheric tracer transport on CPUs and GPUs."
   image:
-    src: /assets/brand/AtmosTransport_card.png
+    src: /logo.png
     alt: AtmosTransport
   actions:
     - theme: brand
       text: Get started
       link: /getting_started/installation
     - theme: alt
-      text: Run the quickstart
+      text: Quickstart
       link: /getting_started/quickstart
     - theme: alt
-      text: View on GitHub
+      text: GitHub
       link: https://github.com/RemoteSensingTools/AtmosTransport.jl
 ---
 ```

@@ -91,7 +91,7 @@ permit signed undershoots, `LinRoodPPMScheme` (next section) is the relevant
 variant. Use default monotone `PPMScheme` or `UpwindScheme` when preserving a
 non-negative species is the stronger requirement.
 
-## Lin-Rood PPM with cross-term (`LinRoodPPMScheme{ORD}`)
+## [Lin-Rood PPM with cross-term (`LinRoodPPMScheme{ORD}`)](@id Lin-Rood-PPM-with-cross-term)
 
 The cubed-sphere variant. Extends PPM with the **two-step Lin-Rood
 splitting** (`fv_tp_2d_cs!` in

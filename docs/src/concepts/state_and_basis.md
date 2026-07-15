@@ -41,7 +41,7 @@ classDiagram
     CubedSphereState ..> AbstractMassBasis : Basis param
 ```
 
-### `CellState{Basis, A, Raw, Names}`
+### [`CellState{Basis, A, Raw, Names}`](@id CellState)
 
 ```julia
 struct CellState{Basis <: AbstractMassBasis, A, Raw, Names}
@@ -57,7 +57,7 @@ User-facing surface:
 - `state.tracer_names` — tuple of symbols.
 - `mass_basis(state)` — `DryBasis()` or `MoistBasis()`.
 
-### `CubedSphereState{Basis, A3, Raw4, Names}`
+### [`CubedSphereState{Basis, A3, Raw4, Names}`](@id CubedSphereState)
 
 ```julia
 struct CubedSphereState{Basis, A3, Raw4, Names}

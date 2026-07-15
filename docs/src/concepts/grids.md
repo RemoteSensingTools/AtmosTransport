@@ -89,7 +89,7 @@ gaussian_number = 90              # ring count per hemisphere → O90
 nlon_mode       = "octahedral"    # ECMWF O-grid (octahedral) ring distribution
 ```
 
-## `LatLonMesh{FT}`
+## [`LatLonMesh{FT}`](@id LatLonMesh)
 
 A regular `Nx × Ny` lat-lon mesh with periodic longitude and pole
 truncation. Constructor:
@@ -119,7 +119,7 @@ The face arrays follow the
 this shift was a real bug; the API codifies the convention so users
 don't trip on it.
 
-## `ReducedGaussianMesh{FT}`
+## [`ReducedGaussianMesh{FT}`](@id ReducedGaussianMesh)
 
 A reduced-Gaussian grid is a sphere of latitude **rings** with a
 variable number of cells per ring (more cells near the equator, fewer
@@ -152,7 +152,7 @@ Per-ring meridional faces use a least-common-multiple segmentation
 between adjacent rings — necessary so flux conservation holds across
 ring boundaries with different `nlon`.
 
-## `CubedSphereMesh{FT, C, D}`
+## [`CubedSphereMesh{FT, C, D}`](@id CubedSphereMesh)
 
 A six-panel cubed-sphere mesh of resolution `Nc × Nc` per panel. The mesh
 stores a full cubed-sphere **definition** rather than assuming that all CS
@@ -257,7 +257,7 @@ The tangent basis is what
 `rotate_winds_to_panel_local!` and `rotate_panel_to_geographic!` (in
 `Preprocessing/cs_transport_helpers.jl`) consume.
 
-## `AtmosGrid{H, V, Arch, P, FT}`
+## [`AtmosGrid{H, V, Arch, P, FT}`](@id AtmosGrid)
 
 The composite grid type that the runtime carries:
 

@@ -5,8 +5,9 @@ The default runtime output is a **NetCDF4** snapshot file declared by
 writes one file per daily binary. This page documents the exact NetCDF
 variables, dimensions, units, and per-topology conventions.
 
-For long runs, `format = "binary_mmap"` writes Float32 ATMSNAP files first;
-convert them to this same NetCDF schema with
+For long runs, `format = "binary_mmap"` writes ATMSNAP files with a Float32
+spatial payload and compensated Float64 tracer totals; convert them to this
+same NetCDF schema with
 `scripts/postprocess/binary_to_netcdf.jl`. See [TOML schema](@ref) for that
 throughput-oriented workflow.
 
@@ -18,6 +19,14 @@ below is written. Setting `layers = "none"` suppresses per-level tracer VMR
 variables; setting `layers = "selected"` writes the same variable names on the
 `lev_selected` dimension. `tracers = [...]` restricts all tracer diagnostics to
 that subset, with optional `[output.fields.per_tracer.<name>]` overrides.
+
+Every selected tracer also has a topology-independent
+`<tracer>_total_mass(time)` variable. It is the compensated Float64 global sum
+of the conservative `mixing_ratio × carrier_air_mass` storage captured from the
+model state. Negative values are valid, and `kg` refers to the carrier-mass
+storage unit rather than physical kilograms of tracer species. This is the
+authoritative snapshot conservation series; do not reconstruct it by summing a
+Float32 spatial payload when signed components can cancel.
 
 ## Global attributes
 
@@ -89,6 +98,7 @@ Per-tracer fields (one set per `[tracers.<name>]` block). The
 | `<tracer>` | `(lon, lat, lev, time)` | `mol mol-1 dry` | `mol mol-1` |
 | `<tracer>_column_mean` | `(lon, lat, time)` | `mol mol-1 dry` | `mol mol-1` |
 | `<tracer>_column_mass_per_area` | `(lon, lat, time)` | `kg m-2` model storage | `kg m-2` model storage |
+| `<tracer>_total_mass` | `(time,)`, Float64 | `kg` model storage | `kg` model storage |
 
 The per-tracer full-3D field `<tracer>` is the mixing ratio. The
 `<tracer>_column_mass_per_area` diagnostic is the sum of the model's
@@ -122,6 +132,7 @@ for any quantitative analysis.
 | `<tracer>_column_mean_native` | `(cell, time)` | — |
 | `<tracer>_column_mean` | — | `(lon, lat, time)` (rasterized via nearest-neighbor — diagnostic only) |
 | `<tracer>_column_mass_per_area` | `(cell, time)` | no |
+| `<tracer>_total_mass` | `(time,)`, Float64 | no |
 
 The native fields are authoritative; the rasterized ones are for
 visualization.
@@ -151,6 +162,7 @@ Per-topology fields:
 | `<tracer>` | `(Xdim, Ydim, nf, lev, time)` | `mol mol-1 dry` (or `mol mol-1` on moist basis) |
 | `<tracer>_column_mean` | `(Xdim, Ydim, nf, time)` | same as `<tracer>` |
 | `<tracer>_column_mass_per_area` | `(Xdim, Ydim, nf, time)` | `kg m-2` |
+| `<tracer>_total_mass` | `(time,)`, Float64 | `kg` model storage |
 
 A `grid_mapping = "cubed_sphere"` attribute is set on the
 horizontally-resolved variables; the active CS definition, coordinate law,

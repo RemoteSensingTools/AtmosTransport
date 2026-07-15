@@ -24,6 +24,7 @@
 #               "coordinate_law": str, "center_law": str },
 #     "fields": [ "air_mass", tracer_name_1, ... ],   # air_mass is always first
 #     "times_hours": [ float, ... ],
+#     "tracer_total_mass": { tracer_name_1: [float64, ...], ... },
 #     "n_frames": int, "payload_offset": int, "payload_bytes": int }
 #
 # Tracer storage is mass (not mixing ratio) — same contract as `SnapshotFrame`.
@@ -89,6 +90,11 @@ function write_snapshot_binary(path::AbstractString,
         ),
         "fields" => field_names,
         "times_hours" => [frame.time_hours for frame in frames],
+        "tracer_total_mass" => Dict(
+            String(name) => [frame.tracer_total_mass[name] for frame in frames]
+            for name in tracer_keys),
+        "tracer_total_mass_dtype" => "Float64",
+        "tracer_total_mass_storage" => "mixing_ratio_times_carrier_air_mass",
         "n_frames" => n_frames,
         "payload_bytes" => payload_bytes,
     )

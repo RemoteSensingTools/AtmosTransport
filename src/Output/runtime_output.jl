@@ -209,9 +209,10 @@ function _output_options(output_cfg::AbstractDict, ::Type{FT},
     # Float32-only on disk (`binary_writer.jl`), so for that format the on-disk
     # dtype is coerced to Float32. Float32 snapshots are ample for
     # visualization/diagnostics even when the model integrates in Float64; the
-    # Float64 precision benefit lives in the in-run transport accumulation, and
-    # the F64 mass-balance check comes from the runtime budget log, not the
-    # snapshot file.
+    # Float64 precision benefit lives in the in-run transport accumulation.
+    # SnapshotFrame also records a compensated Float64 global total per tracer;
+    # ATMSNAP stores those totals in its JSON header even though its spatial
+    # payload remains Float32.
     on_disk = FT
     if format === :binary_mmap && on_disk !== Float32
         @info "Binary (ATMSNAP) output is Float32-only on disk; storing Float32 \

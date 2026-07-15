@@ -87,6 +87,7 @@ function _read_frames(header::Dict{String, Any}, path::AbstractString)
     n_frames = Int(header["n_frames"])
     times = Float64.(header["times_hours"])
     mass_basis = Symbol(String(header["mass_basis"]))
+    stored_totals = get(header, "tracer_total_mass", nothing)
 
     panel_floats = Nc * Nc * Nz
 
@@ -109,7 +110,14 @@ function _read_frames(header::Dict{String, Any}, path::AbstractString)
                 name == "air_mass" && continue
                 tracers[Symbol(name)] = field_arrays[name]
             end
-            frames[fi] = SnapshotFrame(times[fi], air, tracers, mass_basis)
+            if stored_totals === nothing
+                frames[fi] = SnapshotFrame(times[fi], air, tracers, mass_basis)
+            else
+                totals = Dict(Symbol(name) => Float64(stored_totals[name][fi])
+                              for name in fields if name != "air_mass")
+                frames[fi] = SnapshotFrame(times[fi], air, tracers, mass_basis;
+                                           tracer_total_mass = totals)
+            end
         end
     end
     return frames, mass_basis

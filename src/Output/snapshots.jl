@@ -11,29 +11,87 @@ CPU-resident snapshot of one model state at one output time.
 
 Tracer arrays store the model's conservative `χ × carrier-air-mass` quantity,
 not mixing ratio or physical kg species. Derived VMR and column diagnostics are
-computed by [`write_snapshot_netcdf`](@ref), which keeps the runtime capture
-contract lossless enough for per-level extraction and area-normalized storage
-diagnostics.
+computed by [`write_snapshot_netcdf`](@ref). `tracer_total_mass` stores a
+compensated Float64 sum of that conservative quantity for every tracer. It is
+kept separately so Float32 visualization payloads cannot degrade global signed
+mass diagnostics through cancellation or output conversion.
 """
 struct SnapshotFrame{A}
     time_hours::Float64
     air_mass::A
     tracers::Dict{Symbol, A}
     mass_basis::Symbol
+    tracer_total_mass::Dict{Symbol, Float64}
+end
+
+@inline function _compensated_add_f64(sum::Float64, correction::Float64, raw)
+    x = Float64(raw)
+    total = sum + x
+    correction += abs(sum) >= abs(x) ? (sum - total) + x : (x - total) + sum
+    return total, correction
+end
+
+function _tracer_total_mass_f64(field::AbstractArray)
+    sum = 0.0
+    correction = 0.0
+    @inbounds for value in field
+        sum, correction = _compensated_add_f64(sum, correction, value)
+    end
+    total = sum + correction
+    isfinite(total) || throw(ArgumentError(
+        "snapshot tracer total is not finite; check the captured tracer state"))
+    return total
+end
+
+function _tracer_total_mass_f64(panels::NTuple{6, <:AbstractArray})
+    sum = 0.0
+    correction = 0.0
+    @inbounds for panel in panels, value in panel
+        sum, correction = _compensated_add_f64(sum, correction, value)
+    end
+    total = sum + correction
+    isfinite(total) || throw(ArgumentError(
+        "snapshot tracer total is not finite; check the captured tracer state"))
+    return total
+end
+
+function _snapshot_tracer_totals(tracers)
+    return Dict(name => _tracer_total_mass_f64(tracer)
+                for (name, tracer) in tracers)
+end
+
+function _validated_tracer_totals(tracers, provided)
+    tracer_keys = Set(keys(tracers))
+    total_keys = Set(keys(provided))
+    total_keys == tracer_keys || throw(ArgumentError(
+        "snapshot tracer-total keys $(sort!(collect(total_keys))) do not match " *
+        "tracer keys $(sort!(collect(tracer_keys)))"))
+    totals = Dict{Symbol, Float64}()
+    for name in keys(tracers)
+        value = Float64(provided[name])
+        isfinite(value) || throw(ArgumentError(
+            "snapshot tracer total for $(name) is not finite: $(value)"))
+        totals[name] = value
+    end
+    return totals
 end
 
 function SnapshotFrame(time_hours::Real,
                        air_mass::A,
                        tracers::AbstractDict{Symbol, <:Any},
-                       mass_basis::Symbol) where A
+                       mass_basis::Symbol;
+                       tracer_total_mass=nothing) where A
     typed_tracers = Dict{Symbol, A}()
     for (name, tracer) in tracers
         tracer isa A || throw(ArgumentError(
             "snapshot tracer $(name) has type $(typeof(tracer)); expected $(A) to match air_mass"))
         typed_tracers[name] = tracer
     end
+    totals = tracer_total_mass === nothing ?
+             _snapshot_tracer_totals(typed_tracers) :
+             _validated_tracer_totals(typed_tracers, tracer_total_mass)
     return SnapshotFrame{A}(Float64(time_hours), air_mass, typed_tracers,
-                            mass_basis)
+                            mass_basis, totals)
 end
 
 """
@@ -123,6 +181,9 @@ function _check_same_keys(frames)
         keys_i = _frame_tracer_names(frame)
         keys_i == keys0 || throw(ArgumentError(
             "snapshot frame $(idx) has tracer keys $(keys_i), expected $(keys0)"))
+        total_keys = sort!(collect(keys(frame.tracer_total_mass)))
+        total_keys == keys0 || throw(ArgumentError(
+            "snapshot frame $(idx) has tracer-total keys $(total_keys), expected $(keys0)"))
     end
     return keys0
 end

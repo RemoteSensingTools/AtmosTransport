@@ -1,5 +1,6 @@
 using Test
 using NCDatasets
+using JSON3
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
@@ -126,6 +127,72 @@ using .AtmosTransport.Output
             @test_throws DimensionMismatch write_snapshot_netcdf(joinpath(dir, "shape.nc"),
                                                                   [frame, bad_shape], grid;
                                                                   mass_basis=:dry)
+        end
+    end
+
+    @testset "signed tracer totals survive Float32 output cancellation" begin
+        mktempdir() do dir
+            mesh = LatLonMesh(; FT=Float32, Nx=4, Ny=2)
+            grid = AtmosGrid(mesh,
+                             HybridSigmaPressure(Float32[0, 1], Float32[0, 1]),
+                             CPU(); FT=Float32)
+            air = ones(Float32, 4, 2, 1)
+            signed = zeros(Float32, 4, 2, 1)
+            signed[1, 1, 1] = 1f8
+            signed[2, 1, 1] = 1f0
+            signed[3, 1, 1] = -1f8
+
+            frame = SnapshotFrame(0.0, air, Dict(:signed => signed), :dry)
+            @test frame.tracer_total_mass[:signed] == 1.0
+            @test sum(signed) == 0f0
+            @test_throws ArgumentError SnapshotFrame(
+                0.0, air, Dict(:signed => signed), :dry;
+                tracer_total_mass = Dict(:other => 1.0))
+
+            path = write_snapshot_netcdf(joinpath(dir, "signed.nc"), [frame], grid;
+                                         mass_basis = :dry,
+                                         options = SnapshotWriteOptions(float_type = Float32))
+            NCDataset(path, "r") do ds
+                total = ds["signed_total_mass"]
+                @test eltype(total) === Float64
+                @test total[:] == [1.0]
+                @test total.attrib["units"] == "kg"
+                @test total.attrib["storage_contract"] ==
+                      "mixing_ratio_times_carrier_air_mass"
+            end
+        end
+    end
+
+    @testset "ATMSNAP header preserves authoritative signed totals" begin
+        mktempdir() do dir
+            mesh = CubedSphereMesh(; FT=Float32, Nc=2)
+            grid = AtmosGrid(mesh,
+                             HybridSigmaPressure(Float32[0, 1], Float32[0, 1]),
+                             CPU(); FT=Float32)
+            air = ntuple(_ -> ones(Float32, 2, 2, 1), 6)
+            signed = ntuple(6) do panel
+                values = zeros(Float32, 2, 2, 1)
+                if panel == 1
+                    values[1] = 1f8
+                    values[2] = 1f0
+                    values[3] = -1f8
+                end
+                values
+            end
+            frame = SnapshotFrame(0.0, air, Dict(:signed => signed), :dry)
+            @test frame.tracer_total_mass[:signed] == 1.0
+
+            path = write_snapshot_binary(joinpath(dir, "signed.atmsnap"),
+                                         [frame], grid; mass_basis = :dry)
+            header = open(path, "r") do io
+                @test String(read(io, 8)) == "ATMSNAP1"
+                header_size = read(io, UInt64)
+                JSON3.read(String(read(io, Int(header_size))), Dict{String, Any})
+            end
+            @test header["tracer_total_mass_dtype"] == "Float64"
+            @test header["tracer_total_mass_storage"] ==
+                  "mixing_ratio_times_carrier_air_mass"
+            @test Float64(header["tracer_total_mass"]["signed"][1]) == 1.0
         end
     end
 

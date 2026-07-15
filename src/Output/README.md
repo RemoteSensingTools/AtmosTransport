@@ -9,7 +9,8 @@ writing topology-specific NetCDF files directly.
 
 ## Files
 
-- `snapshots.jl` defines `SnapshotFrame`, `SnapshotWriteOptions`, and model-state capture.
+- `snapshots.jl` defines `SnapshotFrame`, `SnapshotWriteOptions`, model-state
+  capture, and compensated Float64 signed tracer totals.
 - `diagnostics.jl` derives VMR, column means, and mass-per-area fields.
 - `netcdf_schema.jl` defines topology-specific dimensions, coordinates, and metadata.
 - `netcdf_writer.jl` writes topology-specific payload variables through one public API.
@@ -20,6 +21,11 @@ writing topology-specific NetCDF files directly.
 - RG writes authoritative native `cell` variables, quadrilateral cell bounds,
   plus a diagnostic lon/lat raster for quick plots.
 - CS writes native `(Xdim, Ydim, nf, lev, time)` fields with `lons`, `lats`, corners, cell area, and a `cubed_sphere` mapping variable.
+
+Every selected tracer also writes `<tracer>_total_mass(time)` as Float64. The
+value is captured before spatial output conversion and is the authoritative
+global sum of model storage. ATMSNAP carries it in the JSON header so its
+Float32 spatial payload does not erase small signed residuals.
 
 To add a topology, implement schema and payload methods for the new mesh type.
 Do not special-case the runner.

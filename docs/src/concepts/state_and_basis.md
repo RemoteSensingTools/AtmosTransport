@@ -92,6 +92,13 @@ restore `q = r_anomaly / air_mass + q0` in diagnostics. Because air mass evolves
 restoring the reference in mass space requires the current `q0 * air_mass`, not
 a fixed tracer-mass offset.
 
+Snapshot capture computes a compensated Float64 sum of each signed storage
+field. NetCDF exposes it as `<tracer>_total_mass`; ATMSNAP keeps the same value
+in its JSON header while its large spatial payload remains Float32. Use this
+scalar time series for conservation checks where positive and negative
+components nearly cancel. It is model storage (`q × carrier-air-mass`), not
+physical kilograms of the tracer species.
+
 ## The dry-basis contract
 
 By default, `state.air_mass` carries **dry-air mass** and every tracer

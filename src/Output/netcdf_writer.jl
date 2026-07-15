@@ -167,6 +167,27 @@ function _validate_snapshot_inputs(frames, mesh, mass_basis_sym::Symbol)
     return nothing
 end
 
+function _write_tracer_total_mass!(ds, frames, tracer_keys, mass_basis_sym::Symbol)
+    for name in tracer_keys
+        label = String(name)
+        variable = defVar(
+            ds, "$(label)_total_mass", Float64, ("time",),
+            attrib = _var_attrib(
+                units = "kg",
+                long_name = "global total conservative $(label) tracer storage",
+                extra = Dict(
+                    "description" =>
+                        "Compensated Float64 sum captured before any spatial output precision conversion",
+                    "storage_contract" => "mixing_ratio_times_carrier_air_mass",
+                    "mass_basis" => String(mass_basis_sym),
+                ),
+            ),
+        )
+        variable[:] = [frame.tracer_total_mass[name] for frame in frames]
+    end
+    return nothing
+end
+
 """
     write_snapshot_netcdf(path, frames, grid; mass_basis=:dry, options=SnapshotWriteOptions(),
                           fields=output_field_spec())
@@ -198,6 +219,7 @@ function write_snapshot_netcdf(path::AbstractString,
         _define_common_attributes!(ds, mesh, frames, mass_basis; options = options)
         ds.attrib["output_fields"] = _fields_string(fields, tracer_keys)
         geometry = _define_geometry!(ds, mesh, Nz, times)
+        _write_tracer_total_mass!(ds, frames, tracer_keys, mass_basis)
         _write_snapshot_payload!(ds, mesh, frames, tracer_keys, geometry,
                                  mass_basis, options, fields)
     end

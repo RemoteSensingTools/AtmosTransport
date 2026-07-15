@@ -275,9 +275,11 @@ files inline (skipping the NetCDF/HDF5 encode in the GPU run), to be converted
 to NetCDF offline on CPU with `scripts/postprocess/binary_to_netcdf.jl`. This
 is the throughput path for long multi-day runs. The ATMSNAP payload is **always
 Float32 on disk**, including for `float_type = "Float64"` runs — the on-disk
-snapshot precision is independent of the compute precision (the F64 benefit is
-in the in-run transport; the F64 mass-balance check comes from the runtime
-budget log, not the snapshot file).
+spatial precision is independent of the compute precision. Each snapshot also
+stores a compensated Float64 global tracer total in the ATMSNAP JSON header;
+offline conversion copies it exactly to `<tracer>_total_mass(time)` in NetCDF.
+This preserves signed mass-balance diagnostics even when large positive and
+negative spatial values nearly cancel.
 
 Optional field selection keeps production files small:
 

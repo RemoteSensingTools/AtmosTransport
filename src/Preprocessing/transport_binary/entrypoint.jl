@@ -309,11 +309,16 @@ function _process_day_native(cfg::AbstractDict;
         :moisture_filtered
     elseif cm_closure_raw in ("pfix_corrected", "pfixcorrected", "pfix", "pressure_fixer_corrected")
         :pfix_corrected
-    elseif cm_closure_raw in ("omega_consistent", "omegaconsistent", "omega", "omega_cm")
-        :omega_consistent
+    elseif cm_closure_raw in ("omega_regularized", "omegaregularized", "omega_reg",
+                              "regularized_omega", "omega_consistent",
+                              "omegaconsistent", "omega", "omega_cm")
+        :omega_regularized
+    elseif cm_closure_raw in ("omega_full_replacement", "omega_full", "full_omega")
+        :omega_full_replacement
     else
         error("[numerics].geos_cm_closure must be \"endpoint_balanced\", \"pressure_fixer\", " *
-              "\"moisture_filtered\", \"pfix_corrected\", or \"omega_consistent\"; got $(repr(cm_closure_raw))")
+              "\"moisture_filtered\", \"pfix_corrected\", \"omega_regularized\", or " *
+              "\"omega_full_replacement\"; got $(repr(cm_closure_raw))")
     end
     # cm-closure status (2026-06-03): `:endpoint_balanced` is the ONLY validated
     # production default. ALL of `:pressure_fixer`, `:moisture_filtered`, and
@@ -324,30 +329,55 @@ function _process_day_native(cfg::AbstractDict;
     #   :pfix_corrected    → reduces upper-UTLS noise but makes ~164-280 hPa WORSE
     #                        (the drift correction emits a spurious surface cm flux),
     #                        and chain_mass=true accumulates negative UTLS mass.
-    #   :omega_consistent  → anchors cm to the A3dyn OMEGA resolved vertical motion
+    #   :omega_full_replacement → replaces all resolved convergence with OMEGA
     #                        (vdiv=+vdiv_om, smooth); continuity exact by
-    #                        construction. Binary-validated (r_vdiv 0.197 ≈ MERRA-2
-    #                        CLEAN, cor(cm,OMEGA)=+1.00); UNDER tracer validation —
-    #                        keep gated until the adv-only tracer fingering is
-    #                        confirmed ≤ DIRTY (see fingerfix_proto_omega-...jl).
+    #                        construction, but changes bottom-layer horizontal
+    #                        fluxes by 2-7× and spuriously vents surface plumes.
+    #                        It is retained only for reproducing the failed test.
+    #   :omega_regularized → preserves endpoint-balanced resolved scales and uses
+    #                        OMEGA only as a pressure-local, high-pass, capped prior.
     # The fingering is the intrinsic MFXC↔DELP residual; the validated cure is
-    # input-side (wind-derived / ERA5). `:omega_consistent` is the native-cube
-    # candidate cure that keeps the GEOS mass fluxes but re-anchors cm to OMEGA.
-    if cm_closure !== :endpoint_balanced
+    # input-side (wind-derived / ERA5). `:omega_regularized` is the conservative
+    # native-cube candidate that avoids the full OMEGA pathway's oversmoothing.
+    if cm_closure === :omega_full_replacement
+        @warn "[numerics].geos_cm_closure=:omega_full_replacement is a known-failed " *
+              "diagnostic: it rewrites PBL horizontal fluxes by 2-7× and corrupts " *
+              "surface-plume transport. Use :omega_regularized or :endpoint_balanced."
+    elseif cm_closure !== :endpoint_balanced
         @warn "[numerics].geos_cm_closure=$(cm_closure) is DIAGNOSTIC/CANDIDATE, NOT " *
               "the science-validated production default (see " *
               "docs/reference/GEOS_MASS_FLUX_UTLS_FINGERING.md). Use " *
               ":endpoint_balanced for production and the ERA5/wind-derived path " *
-              "for UTLS-sensitive science. :omega_consistent is binary-validated " *
-              "and under tracer validation."
+              "for UTLS-sensitive science. :omega_regularized limits OMEGA to a " *
+              "UTLS high-pass prior and still requires tracer validation."
     end
     # Spatial low-pass sweeps: the `:moisture_filtered` residual smoother and the
     # `:pfix_corrected` column-drift smoother (ignored by the other closures).
     smooth_iters = Int(get(numerics_cfg, "geos_moisture_filter_smooth_iters", 8))
     smooth_iters >= 0 ||
         error("[numerics].geos_moisture_filter_smooth_iters must be ≥ 0; got $(smooth_iters)")
+    omega_cfg = get(numerics_cfg, "omega_regularization", Dict{String, Any}())
+    omega_cfg isa AbstractDict ||
+        error("[numerics.omega_regularization] must be a TOML table")
+    taper_raw = get(omega_cfg, "pressure_taper_hpa", [50.0, 80.0, 300.0, 350.0])
+    taper_raw isa AbstractVector && length(taper_raw) == 4 ||
+        error("[numerics.omega_regularization].pressure_taper_hpa must contain four values")
+    omega_regularization = OmegaRegularization(
+        pressure_taper_hpa = ntuple(i -> Float64(taper_raw[i]), 4),
+        smoothing_steps = Int(get(omega_cfg, "smoothing_steps", 3)),
+        smoothing_fraction = Float64(get(omega_cfg, "smoothing_fraction", 0.10)),
+        max_relative_flux_correction = Float64(
+            get(omega_cfg, "max_relative_flux_correction", 0.10)),
+        max_bottom_flux_correction = Float64(
+            get(omega_cfg, "max_bottom_flux_correction", 0.01)),
+    )
+    cm_closure === :omega_regularized &&
+        _validate_omega_regularization(omega_regularization)
     mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
     global_mass_pin = _config_bool(mass_fix_cfg, "enable", false, "[mass_fix].enable")
+    _uses_omega(cm_closure) && !global_mass_pin &&
+        error("OMEGA-based GEOS cm closures require [mass_fix].enable=true so " *
+              "the per-level Poisson targets have zero global column tendency")
     configured_global_mass_target_kg = _native_mass_fix_target_kg(cfg, grid)
     ensure_preprocessor_pair_supported(grid, settings; context = "native-source")
 
@@ -389,6 +419,7 @@ function _process_day_native(cfg::AbstractDict;
             balance_mode = balance_mode,
             cm_closure = cm_closure,
             smooth_iters = smooth_iters,
+            omega_regularization = omega_regularization,
         )
         return process_day(d, day_grid, settings, vertical; day_kwargs...)
     end
@@ -396,7 +427,7 @@ function _process_day_native(cfg::AbstractDict;
     threaded = Threads.nthreads() > 1 && length(dates) > 1 &&
                supports_day_threading(settings) && !chain_mass &&
                !(global_mass_pin && !isfinite(configured_global_mass_target_kg))
-    # When the day loop itself is threaded, the inner `:omega_consistent`
+    # When the day loop itself is threaded, the inner OMEGA reconstruction
     # per-level Poisson loop must run SERIAL so day-workers don't each re-grab
     # the whole pool (oversubscription). In the single-day-per-process (`--day`)
     # path the day loop is serial, so the level solve keeps the full pool.
@@ -442,6 +473,7 @@ function _process_day_native(cfg::AbstractDict;
                 balance_mode = balance_mode,
                 cm_closure = cm_closure,
                 smooth_iters = smooth_iters,
+                omega_regularization = omega_regularization,
             )
             result = process_day(d, day_grid, settings, vertical; day_kwargs...)
             seed_m = get(result, :final_m, nothing)

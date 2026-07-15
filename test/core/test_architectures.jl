@@ -7,6 +7,9 @@ using .AtmosTransport
 
 const Arch = AtmosTransport.Architectures
 
+struct MockCUDAArray end
+struct MockMetalArray end
+
 @testset "execution architecture selection" begin
     cpu = Arch.architecture_from_config(Dict("backend" => "cpu"))
     @test cpu isa Arch.CPU
@@ -14,6 +17,17 @@ const Arch = AtmosTransport.Architectures
     @test Arch.array_adapter(cpu) === Array
     @test Arch.architecture_label(cpu) == "CPU"
     @test Arch.array_adapter_for(zeros(Float32, 2, 2)) === Array
+
+    # A working-tree CLI may include AtmosTransport after loading CUDA or
+    # Metal. In that mode package extensions cannot attach to the local module,
+    # so adapter discovery must also recognize arrays through loaded runtimes.
+    loaded = Dict{Base.PkgId, Any}(
+        Arch._RUNTIME_PACKAGE_IDS.CUDA => (CuArray = MockCUDAArray,),
+        Arch._RUNTIME_PACKAGE_IDS.Metal => (MtlArray = MockMetalArray,),
+    )
+    @test Arch._loaded_gpu_adapter(MockCUDAArray(), loaded) === MockCUDAArray
+    @test Arch._loaded_gpu_adapter(MockMetalArray(), loaded) === MockMetalArray
+    @test Arch._loaded_gpu_adapter(zeros(Float32, 2), loaded) === Array
 
     @test Arch.architecture_from_config(Dict("use_gpu" => false)) isa Arch.CPU
     @test Arch.architecture_from_config(Dict("backend" => "cuda")) isa Arch.GPU{:cuda}

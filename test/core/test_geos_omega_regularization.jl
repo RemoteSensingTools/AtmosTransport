@@ -76,10 +76,12 @@ const P = AtmosTransport.Preprocessing
         scratch = P.OmegaRegularizationScratch(
             ntuple(_ -> zeros(Float64, Nc, Nc, Nz + 1), 6),
             zeros(nc), zeros(nc), zeros(nc), zeros(nc),
+            falses(Nz),
         )
         options = P.OmegaRegularization()
         P._regularize_omega_target!(target, native_cm, omega_vdiv, m, m, grid,
                                     P.GRAV, 1.0, options, scratch)
+        @test scratch.active_levels == Bool[false, true, true, true, false]
 
         for p in 1:6
             # Telescoping target retains the native top and surface endpoints.
@@ -120,10 +122,14 @@ const P = AtmosTransport.Preprocessing
         diagnostics = P._reconstruct_omega_target!(
             am, bm, dm, vdiv, grid, 1.0;
             max_relative_correction = 0.05,
+            active_levels = Bool[true, false],
         )
         @test diagnostics.max_relative_correction <= 0.05 * (1 + 1e-12)
         @test diagnostics.max_relative_correction > 0.049
         @test diagnostics.max_local_relative_correction > 0.0
+        @test diagnostics.relative_correction_by_level[2] == 0.0
+        @test all(panel[:, :, 2] == ones(Nc + 1, Nc) for panel in am)
+        @test all(panel[:, :, 2] == ones(Nc, Nc + 1) for panel in bm)
         @test all(all(isfinite, panel) for panel in am)
         @test all(all(isfinite, panel) for panel in bm)
     end

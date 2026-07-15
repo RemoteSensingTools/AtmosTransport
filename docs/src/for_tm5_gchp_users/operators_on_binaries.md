@@ -300,6 +300,6 @@ The current validation boundary is summarized in
 - For how the multi-tracer kernels actually launch on CPU, CUDA, and
   Metal from a single source, see
   [Kernel architecture](kernel_architecture.md).
-- For the deep-physics treatment (palindrome derivation,
-  monotonicity, fillz repair), see
+- For the deep-physics treatment (palindrome derivation, monotonicity, and
+  signed-tracer boundedness tradeoffs), see
   [Advection schemes](../theory/advection_schemes.md).

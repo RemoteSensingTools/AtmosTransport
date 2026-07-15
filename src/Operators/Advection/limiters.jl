@@ -195,6 +195,11 @@ No moment limiting — returns ``s_x`` unchanged.
     _limited_moment(sx, rm_cell, ::PositivityLimiter)
 
 Clamp ``s_x`` to ``[-r_m, r_m]``. This limiter requires a non-negative
-tracer field and is intentionally incompatible with signed tracers.
+tracer field and is intentionally incompatible with signed tracers. A
+non-positive cell mean returns a zero moment instead of reversing the clamp
+bounds; this is a misuse guard, not a signed-tracer transport policy.
 """
-@inline _limited_moment(sx, rm_cell, ::PositivityLimiter) = max(min(sx, rm_cell), -rm_cell)
+@inline function _limited_moment(sx, rm_cell, ::PositivityLimiter)
+    limited = max(min(sx, rm_cell), -rm_cell)
+    return ifelse(rm_cell > zero(rm_cell), limited, zero(sx))
+end

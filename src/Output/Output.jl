@@ -25,6 +25,7 @@ module Output
 
 using Dates
 using JSON3
+using KernelAbstractions: CPU, get_backend
 using NCDatasets
 using Printf
 

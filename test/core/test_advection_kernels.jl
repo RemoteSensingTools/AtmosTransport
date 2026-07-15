@@ -23,7 +23,8 @@ include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport: Operators, Grids
 using .AtmosTransport.Grids: cell_areas_by_latitude
-using .AtmosTransport.Operators: MonotoneLimiter, strang_split!, strang_split_mt!
+using .AtmosTransport.Operators: MonotoneLimiter, PositivityLimiter,
+                                  strang_split!, strang_split_mt!
 using .AtmosTransport.Operators.Advection: _limited_moment, _xface_tracer_flux
 using .AtmosTransport.MetDrivers: diagnose_cm_from_continuity!
 using .AtmosTransport.State: StructuredFaceFluxState
@@ -147,6 +148,7 @@ end
     @test _limited_moment(0.0, -1.0, limiter) == 0.0
     @test _limited_moment(-0.25, -1.0, limiter) == -0.25
     @test _limited_moment(2.0, 1.0, limiter) == 2.0
+    @test _limited_moment(-0.25, -1.0, PositivityLimiter()) == 0.0
 end
 
 @testset "structured monotone advection supports signed VMR" begin

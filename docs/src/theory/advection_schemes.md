@@ -11,7 +11,7 @@ in reconstruction order, monotonicity, and panel-edge handling.
 | `UpwindScheme` | 1st order (donor cell) | yes (trivially) | preserves a non-negative input under its CFL contract; also supports signed tracers | yes | yes | **yes — RG's only option today** |
 | `SlopesScheme{L}` | 2nd order in smooth regions (van Leer / Russell-Lerner) | yes if `L = MonotoneLimiter` (default) | no zero clamp in the default signed path; `PositivityLimiter` is explicit opt-in | yes | yes | no (the face-indexed Strang path restricts to `AbstractConstantScheme`) |
 | `PPMScheme{L}` | 3rd order in smooth regions (Colella-Woodward 1984) | yes with `MonotoneLimiter`, may oscillate without | as `Slopes` | yes | yes — covered by `test/core/test_cubed_sphere_advection.jl` | no (same rejection) |
-| `LinRoodPPMScheme{ORD}` | piecewise-parabolic; `ORD ∈ {5, 7}` selects the boundary stencil | yes (FV3 piecewise-parabolic limiter) | signed; no post-advection `fillz` repair | n/a | yes — uses FV3 cross-term advection (`fv_tp_2d_cs!`) | n/a |
+| `LinRoodPPMScheme{ORD}` | piecewise-parabolic; `ORD ∈ {5, 7}` selects the boundary stencil | profile-limited, but the full split update can undershoot | signed; not positivity-preserving | n/a | yes — uses FV3 cross-term advection (`fv_tp_2d_cs!`) | n/a |
 
 The "order" column reports the spatial accuracy of the **per-face
 reconstruction** in smooth regions; near limiters / discontinuities
@@ -86,9 +86,10 @@ The face flux is the integral of this parabola over the swept region
   **`UpwindScheme` is the only advection option for RG production
   runs today**.
 
-For cubed-sphere production runs that need the FV3 cross-term
-advection at panel edges, `LinRoodPPMScheme` (next section) is the
-preferred variant.
+For cubed-sphere runs that need the FV3 cross-term advection at panel edges and
+permit signed undershoots, `LinRoodPPMScheme` (next section) is the relevant
+variant. Use default monotone `PPMScheme` or `UpwindScheme` when preserving a
+non-negative species is the stronger requirement.
 
 ## Lin-Rood PPM with cross-term (`LinRoodPPMScheme{ORD}`)
 
@@ -104,9 +105,12 @@ that FV3 uses internally. Two reconstruction orders are selectable:
 | `7` | Special boundary treatment for panel edges | runs where panel edges dominate the flow (cross-pole transport, equatorial jets crossing panel boundaries) |
 
 `PPMScheme` is the strict-structured PPM; `LinRoodPPMScheme` is the
-cross-term-aware CS-native variant. **Pick `LinRoodPPMScheme` for any CS
-production run**; the bare `PPMScheme` is mainly for LL benchmarking
-and per-direction kernel testing.
+cross-term-aware CS-native variant. Lin-Rood no longer runs the zero-referenced
+`fillz` repair, because that repair destroys negative anomaly mass. The tradeoff
+is explicit: a non-negative input can develop small negative undershoots even
+while carrier air mass remains positive and global tracer storage is conserved.
+Choose it for signed/anomaly transport or after validating that this boundedness
+tradeoff is acceptable for the tracer being simulated.
 
 A divergence-damping (del-2) operator is layered on top
 (`_divergence_damping_cs_kernel!` in `LinRood.jl`) to suppress the
@@ -176,7 +180,7 @@ entry points:
 | Lat-lon (structured-grid Strang, `strang_split!`) | `1.0` | |
 | Reduced Gaussian (face-indexed Strang) | `1.0` | Only `UpwindScheme` reachable today. |
 | Cubed-sphere (`SlopesScheme` / `PPMScheme`, `strang_split_cs!`) | `0.95` | Palindrome-budget metric. |
-| Cubed-sphere (`LinRoodPPMScheme`) | not used | The LinRood path does not consume `cfl_limit`; it relies on the binary's adaptive substep schedule plus in-kernel 0.9 × cell-mass flux clipping for positivity. |
+| Cubed-sphere (`LinRoodPPMScheme`) | not used | The LinRood path relies on the binary's adaptive substep schedule. Its in-kernel 0.9 × cell-mass clipping limits carrier outflow; it does **not** guarantee tracer positivity. |
 
 If you're running `LinRoodPPMScheme` on a flow with locally large
 Courant numbers, the recourse is to halve `dt` in the run config

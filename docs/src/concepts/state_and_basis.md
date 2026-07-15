@@ -92,6 +92,14 @@ restore `q = r_anomaly / air_mass + q0` in diagnostics. Because air mass evolves
 restoring the reference in mass space requires the current `q0 * air_mass`, not
 a fixed tracer-mass offset.
 
+Offset equivariance is not the same as linear superposition. The default
+monotone limiter chooses its branch from each transported field, so separately
+transported GPP and respiration components need not sum exactly to a run that
+transports their combined field. Use a linear scheme (`UpwindScheme` or an
+unlimited reconstruction) when exact component additivity is required, or a
+future frozen-coefficient/replay path that applies one combined-field limiter
+decision to every component.
+
 Snapshot capture computes a compensated Float64 sum of each signed storage
 field. NetCDF exposes it as `<tracer>_total_mass`; ATMSNAP keeps the same value
 in its JSON header while its large spatial payload remains Float32. Use this

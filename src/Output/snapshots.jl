@@ -15,6 +15,10 @@ computed by [`write_snapshot_netcdf`](@ref). `tracer_total_mass` stores a
 compensated Float64 sum of that conservative quantity for every tracer. It is
 kept separately so Float32 visualization payloads cannot degrade global signed
 mass diagnostics through cancellation or output conversion.
+
+Snapshot storage must be CPU-resident. Use [`capture_snapshot`](@ref) for model
+state on any backend; it strips cubed-sphere halos and copies device arrays to
+the host before constructing the frame.
 """
 struct SnapshotFrame{A}
     time_hours::Float64
@@ -22,6 +26,20 @@ struct SnapshotFrame{A}
     tracers::Dict{Symbol, A}
     mass_basis::Symbol
     tracer_total_mass::Dict{Symbol, Float64}
+end
+
+function _require_cpu_snapshot_storage(field::AbstractArray, label)
+    get_backend(field) isa CPU || throw(ArgumentError(
+        "$(label) must be CPU-resident snapshot storage; use capture_snapshot " *
+        "for model state or copy the array with Array(...)"))
+    return nothing
+end
+
+function _require_cpu_snapshot_storage(panels::NTuple{6, <:AbstractArray}, label)
+    for (panel, field) in enumerate(panels)
+        _require_cpu_snapshot_storage(field, "$(label) panel $(panel)")
+    end
+    return nothing
 end
 
 @inline function _compensated_add_f64(sum::Float64, correction::Float64, raw)
@@ -81,10 +99,12 @@ function SnapshotFrame(time_hours::Real,
                        tracers::AbstractDict{Symbol, <:Any},
                        mass_basis::Symbol;
                        tracer_total_mass=nothing) where A
+    _require_cpu_snapshot_storage(air_mass, "snapshot air_mass")
     typed_tracers = Dict{Symbol, A}()
     for (name, tracer) in tracers
         tracer isa A || throw(ArgumentError(
             "snapshot tracer $(name) has type $(typeof(tracer)); expected $(A) to match air_mass"))
+        _require_cpu_snapshot_storage(tracer, "snapshot tracer $(name)")
         typed_tracers[name] = tracer
     end
     totals = tracer_total_mass === nothing ?

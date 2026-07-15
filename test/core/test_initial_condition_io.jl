@@ -72,6 +72,27 @@ function _write_synthetic_ic_file(path::AbstractString)
     return nothing
 end
 
+function _write_synthetic_cs_native_ic_file(path::AbstractString; Nc=2, Nz=2)
+    ds = NCDataset(path, "c")
+    try
+        defDim(ds, "Xdim", Nc)
+        defDim(ds, "Ydim", Nc)
+        defDim(ds, "nf", 6)
+        defDim(ds, "lev", Nz)
+        tracer = defVar(ds, "SIGNED", Float64,
+                        ("Xdim", "Ydim", "nf", "lev"))
+        values = Array{Float64}(undef, Nc, Nc, 6, Nz)
+        for k in 1:Nz, p in 1:6, j in 1:Nc, i in 1:Nc
+            values[i, j, p, k] = (isodd(i + j + p + k) ? -1.0 : 1.0) *
+                                  (1e-6 + 1e-8 * (i + 2j + 3p + 4k))
+        end
+        tracer[:, :, :, :] = values
+    finally
+        close(ds)
+    end
+    return nothing
+end
+
 function _write_synthetic_surface_flux_file(path::AbstractString)
     ds = NCDataset(path, "c")
     try
@@ -339,6 +360,35 @@ end
         # Unsupported kind errors with a helpful message
         @test_throws ArgumentError build_initial_mixing_ratio(air_mass, grid,
                                                               Dict("kind" => "bl_enhanced"))
+    end
+
+    @testset "cs_native preserves signed values by default" begin
+        mktempdir() do dir
+            Nc, Hp, Nz = 2, 1, 2
+            path = joinpath(dir, "signed_cs_native.nc")
+            _write_synthetic_cs_native_ic_file(path; Nc, Nz)
+
+            mesh = CubedSphereMesh(; FT, Nc, Hp)
+            vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
+            grid = AtmosGrid(mesh, vertical, CPU(); FT)
+            air_mass = ntuple(_ -> fill(FT(1e10), Nc + 2Hp, Nc + 2Hp, Nz), 6)
+            base_cfg = Dict{String, Any}(
+                "kind" => "cs_native",
+                "file" => path,
+                "variable" => "SIGNED",
+                "vertical_order" => "toa_first",
+            )
+
+            signed = build_initial_mixing_ratio(air_mass, grid, base_cfg)
+            @test minimum(vcat((vec(signed[p]) for p in 1:6)...)) < 0
+            @test maximum(vcat((vec(signed[p]) for p in 1:6)...)) > 0
+
+            clamped_cfg = copy(base_cfg)
+            clamped_cfg["clamp_negative"] = true
+            clamped = build_initial_mixing_ratio(air_mass, grid, clamped_cfg)
+            @test minimum(vcat((vec(clamped[p]) for p in 1:6)...)) == 0
+            @test maximum(vcat((vec(clamped[p]) for p in 1:6)...)) > 0
+        end
     end
 
     @testset "pack_initial_tracer_mass — CubedSphereMesh (DryBasis)" begin

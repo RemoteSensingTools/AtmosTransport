@@ -14,14 +14,12 @@
 # GridFED fossil) via the generic file-based surface-flux path. The flux month
 # need not match the met month (representative December pattern).
 #
-# IMPORTANT (co2_ocean IC = 400 ppm, NOT 0): the CS vertical remap is
-# positive-definite (FV3 ppm_profile iv=0) and runs `fillz` after each remap,
-# which clips NEGATIVE mixing ratios to zero and rescales positives. An ocean
-# tracer started at 0 goes negative where the ocean is a sink, so fillz mangles
-# it every remap -> spurious upstream-propagating ("backwards") features. Riding
-# on a +400 ppm background keeps the transported field positive (fillz inert),
-# then subtract 400 in post to recover the anomaly. Fossil stays >=0 and natural
-# rides on a realistic IC, so only the ocean tracer needs this.
+# HISTORICAL NOTE (co2_ocean IC = 400 ppm): this run predates signed monotone
+# advection and used a positive reference carrier to keep the old zero-referenced
+# moment limiter inactive. The production `scheme="ppm"` path does not call the
+# dormant FV3 `fillz_panels!` vertical-remap helper. New anomaly runs may start
+# this tracer at zero and retain negative ocean uptake directly; this archived
+# configuration keeps 400 ppm only so its existing outputs remain reproducible.
 #
 # Runner:
 #   julia --project=. scripts/run_transport.jl \

@@ -90,7 +90,8 @@ specialized kernels via Julia's multiple dispatch on the grid type.
 
 Limiter parameter `L` ranges over `NoLimiter`, `MonotoneLimiter`,
 `PositivityLimiter` — declared in the same file. `PPMScheme()` defaults
-to `MonotoneLimiter()`.
+to `MonotoneLimiter()`. The default limiter is signed and constant-offset
+equivariant; only `PositivityLimiter` uses tracer zero as a bound.
 
 **TOML config** (preferred form):
 

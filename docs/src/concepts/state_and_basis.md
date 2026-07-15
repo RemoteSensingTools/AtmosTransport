@@ -71,6 +71,27 @@ end
 User-facing surface mirrors `CellState`. The halo padding is exposed in
 `halo_width`; advection sweeps and panel-edge flux rotation use it.
 
+## Signed tracer contract
+
+Air mass is the positive carrier; tracer storage is a conservative signed
+contribution:
+
+```math
+m_{air} > 0, \qquad r_t \in \mathbb{R}, \qquad q_t = r_t / m_{air} \in \mathbb{R}.
+```
+
+Negative `r_t` or `q_t` is valid. It can represent an anomaly relative to a
+reference VMR, photosynthetic uptake, an adjoint variable, or one signed
+component of a physical tracer. The runtime does not clamp tracer storage to
+zero. Air-mass positivity is instead protected by the transport-binary CFL
+contract and runtime subcycling; a non-positive carrier cell is invalid input,
+not a reason to change tracer sign.
+
+For a constant reference VMR `q0`, store `r_anomaly = r - q0 * air_mass` and
+restore `q = r_anomaly / air_mass + q0` in diagnostics. Because air mass evolves,
+restoring the reference in mass space requires the current `q0 * air_mass`, not
+a fixed tracer-mass offset.
+
 ## The dry-basis contract
 
 By default, `state.air_mass` carries **dry-air mass** and every tracer

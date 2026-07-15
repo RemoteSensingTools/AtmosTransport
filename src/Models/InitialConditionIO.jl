@@ -991,9 +991,10 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
         "cs_native: source lev=$(size(raw, 4)) != binary Nz=$Nz (no vertical " *
         "interpolation is performed; the source must share the vertical grid)"))
 
-    # Clamp tiny negative VMRs (GEOS-Chem advection can emit ~-1e-6 cells)
-    # to zero so the dry-VMR state and downstream mass packing stay physical.
-    clamp_negative = _config_bool(cfg, "clamp_negative", true, "initial-condition clamp_negative")
+    # Signed tracer contributions are part of the state contract. Preserve
+    # negative values by default; physical-species workflows may explicitly
+    # request cleanup of source-file noise with `clamp_negative = true`.
+    clamp_negative = _config_bool(cfg, "clamp_negative", false, "initial-condition clamp_negative")
 
     vmr = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), CS_PANEL_COUNT)
     for p in 1:CS_PANEL_COUNT

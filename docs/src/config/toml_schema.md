@@ -141,7 +141,7 @@ Initial-condition kinds (declared in `src/Models/InitialConditionIO.jl`):
 | `"file_field"` | yes | yes | yes | `file`, `variable` |
 | `"catrine_co2"` | yes | yes | yes | optional `file`, `variable`, `time_index` overrides for the built-in defaults |
 | `"pressure_layer"` | no | no | yes | `lowest_layer = true` or `psurf_fraction`; optional `total_molecules` |
-| `"cs_native"` | no | no | yes | `file`, `variable`; optional `time_index`, `vertical_order` |
+| `"cs_native"` | no | no | yes | `file`, `variable`; optional `time_index`, `vertical_order`, `clamp_negative` (default `false`) |
 
 Surface-flux emission is configured as a nested sub-table under each
 tracer. Each tracer that emits gets one `[tracers.<name>.surface_flux]`

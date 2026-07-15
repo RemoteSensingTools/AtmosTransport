@@ -8,10 +8,10 @@ in reconstruction order, monotonicity, and panel-edge handling.
 
 | Scheme | Smooth-flow accuracy | Monotone? | Positive? | LL | CS | RG |
 |---|---|---|---|---|---|---|
-| `UpwindScheme` | 1st order (donor cell) | yes (trivially) | yes (trivially) | yes | yes | **yes — RG's only option today** |
-| `SlopesScheme{L}` | 2nd order in smooth regions (van Leer / Russell-Lerner) | yes if `L = MonotoneLimiter` (default) | only with `L = PositivityLimiter`, and even then only weakly (see [Limiters](@ref Limiters) below) | yes | yes | no (the face-indexed Strang path restricts to `AbstractConstantScheme`) |
+| `UpwindScheme` | 1st order (donor cell) | yes (trivially) | preserves a non-negative input under its CFL contract; also supports signed tracers | yes | yes | **yes — RG's only option today** |
+| `SlopesScheme{L}` | 2nd order in smooth regions (van Leer / Russell-Lerner) | yes if `L = MonotoneLimiter` (default) | no zero clamp in the default signed path; `PositivityLimiter` is explicit opt-in | yes | yes | no (the face-indexed Strang path restricts to `AbstractConstantScheme`) |
 | `PPMScheme{L}` | 3rd order in smooth regions (Colella-Woodward 1984) | yes with `MonotoneLimiter`, may oscillate without | as `Slopes` | yes | yes — covered by `test/core/test_cubed_sphere_advection.jl` | no (same rejection) |
-| `LinRoodPPMScheme{ORD}` | piecewise-parabolic; `ORD ∈ {5, 7}` selects the boundary stencil | yes (FV3 piecewise-parabolic limiter) | yes | n/a | yes — uses FV3 cross-term advection (`fv_tp_2d_cs!`) | n/a |
+| `LinRoodPPMScheme{ORD}` | piecewise-parabolic; `ORD ∈ {5, 7}` selects the boundary stencil | yes (FV3 piecewise-parabolic limiter) | signed; no post-advection `fillz` repair | n/a | yes — uses FV3 cross-term advection (`fv_tp_2d_cs!`) | n/a |
 
 The "order" column reports the spatial accuracy of the **per-face
 reconstruction** in smooth regions; near limiters / discontinuities
@@ -51,6 +51,9 @@ formula derivation in that function's docstring.
   dropping locally to 1st order at limiter saturation).
 - Monotonic with `MonotoneLimiter` (van Leer minmod); does not
   produce new extrema across faces.
+- Valid for signed mixing ratios and equivariant under a constant VMR offset.
+  The monotone profile is limited relative to neighbouring values, never
+  relative to tracer zero.
 - Mass-conservative to floating-point via the flux-form telescoping
   argument (see [Mass conservation](@ref) for the precise statement
   and round-off bounds).
@@ -117,15 +120,17 @@ declared in `src/Operators/Advection/limiters.jl`:
 | Limiter | What it enforces | Use case |
 |---|---|---|
 | `NoLimiter()` | unlimited centered slope / parabola | smooth-flow benchmarks where you want the order-N error rate without limiter clipping |
-| `MonotoneLimiter()` (default) | van Leer minmod: `s_c = sign·min(|forward|, |backward|, 2|central|)`. TVD-monotone; never creates new extrema across faces. | production runs |
+| `MonotoneLimiter()` (default) | van Leer minmod: `s_c = sign·min(|forward|, |backward|, 2|central|)`. TVD-monotone, signed, and constant-offset equivariant. | production runs, including anomaly tracers |
 | `PositivityLimiter()` | one-sided clip that drops the slope where the reconstruction would go negative at a face. **Weaker than `MonotoneLimiter`**: positivity-only, may still create new local maxima from large gradients. | tracers that must stay non-negative (mole fractions, water vapor, aerosol concentrations) AND tolerate occasional new maxima |
 
 Limiter primitives are written branchless (`ifelse(a*b > 0, ..., 0)`)
 in `limiters.jl` so they don't trigger warp divergence on the GPU.
 
-If you need both monotonicity and positivity, use `MonotoneLimiter`
-on a non-negative initial condition under a non-negative-flux flow —
-which the GEOS / spectral preprocessors produce by construction.
+The default monotone path deliberately has no post-step tracer clamp. A
+non-negative initial field remains bounded by its local extrema when the CFL
+contract holds, while a signed field is transported without changing its
+meaning. `PositivityLimiter` is a separate, explicitly zero-referenced policy
+and must not be used for anomaly tracers.
 
 ## CFL handling and subcycling
 
@@ -241,7 +246,7 @@ between them. Performance-tuning notes live beside the implementation.
 | CFL subcycle counters (CS) | `CubedSphereStrang.jl::_cs_static_subcycle_count`, `_cs_static_palindrome_subcycle_count` |
 | CS multi-tracer fused kernels (X / Y / Z) | `src/Operators/Advection/multitracer_kernels.jl` |
 | CS panel-edge halo sync | `src/Grids/PanelConnectivity.jl` + `cs_transport_helpers.jl::_propagate_cs_outflow_to_halo!` |
-| Lin-Rood cross-term + del-2 damping + fillz | `src/Operators/Advection/LinRood.jl` |
+| Lin-Rood cross-term + del-2 damping | `src/Operators/Advection/LinRood.jl` |
 
 ## What's next
 

@@ -87,7 +87,7 @@ For cubed-sphere production runs that need the FV3 cross-term
 advection at panel edges, `LinRoodPPMScheme` (next section) is the
 preferred variant.
 
-## Lin-Rood PPM with cross-term (`LinRoodPPMScheme{ORD}`)
+## [Lin-Rood PPM with cross-term (`LinRoodPPMScheme{ORD}`)](@id Lin-Rood-PPM-with-cross-term)
 
 The cubed-sphere variant. Extends PPM with the **two-step Lin-Rood
 splitting** (`fv_tp_2d_cs!` in

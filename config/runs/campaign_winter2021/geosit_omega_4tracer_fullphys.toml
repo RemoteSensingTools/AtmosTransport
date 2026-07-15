@@ -1,11 +1,9 @@
 # ===========================================================================
-# CAMPAIGN — GEOS-IT C180 omega_consistent + full physics, 4 tracers,
-# December 2021 (winter; Jan/Feb pending emissions). The cube-native fingering cure (omega cm
-# closure) driving co2_natural + co2_fossil + sf6 + rn222 against the
-# GEOS-Chem reference. Emission inputs verified GO vs GC (all 4 species).
+# ARCHIVED FAILED CAMPAIGN — full OMEGA replacement rewrites bottom-layer
+# horizontal fluxes by 2-7× and spuriously exports surface plumes. Retained only
+# to reproduce the diagnosis; do not use for science runs.
 #
-# REQUIRES: omega_consistent binaries for December 2021 in the [input] folder
-# below (geos_cm_closure="omega_consistent" preprocessing config).
+# REQUIRES: legacy full-OMEGA binaries in the [input] folder below.
 # SCOPE: December only — lmdz uses the Dec-2021 CAMS file and fossil/Rn pin the
 # Dec monthly index (time_index=12); extending to Jan/Feb needs new emission
 # inputs (a Jan/Feb CAMS flux file + the matching monthly indices).

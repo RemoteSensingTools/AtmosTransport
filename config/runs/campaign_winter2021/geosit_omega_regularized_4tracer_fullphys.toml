@@ -1,0 +1,80 @@
+# ===========================================================================
+# December 2021 four-tracer validation of the scale- and pressure-limited
+# OMEGA correction. This is the matched successor to the archived
+# `geosit_omega_4tracer_fullphys.toml` full-replacement run: tracer physics,
+# emissions, precision, dates, and output cadence are identical. Only the
+# regularized transport-binary input and collision-free output path differ.
+#
+#   CUDA_VISIBLE_DEVICES=1 julia --project=. scripts/run_transport.jl \
+#       config/runs/campaign_winter2021/geosit_omega_regularized_4tracer_fullphys.toml
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega_regularized"
+start_date   = "2021-12-01"
+end_date     = "2021-12-31"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind            = "lmdz_co2"
+  time_varying    = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_fossil]
+  [tracers.co2_fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.co2_fossil.surface_flux]
+  kind = "gridfed_fossil_co2"
+  time_index = 12
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+  [tracers.sf6.surface_flux]
+  kind = "edgar_sf6"
+  scale = 1.0116635
+
+[tracers.rn222]
+  [tracers.rn222.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.rn222.surface_flux]
+  kind = "zhang_rn222"
+  time_index = 12
+
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = true
+
+[convection]
+kind = "cmfmc_matrix"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 0
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4
+
+[output]
+format = "binary_mmap"
+split  = "daily"
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/campaign_winter2021/geos_omega_regularized_month/geosit_omega_regularized_4tracer_{YYYYMMDD}.atmsnap"

@@ -242,17 +242,75 @@ fluxes*" (Eastham et al., GMD 15, 8731, 2022). So getting a native-cube `MFZ`
 requires a special request to GMAO (folded into
 `DRAFT_gchp_issue_utls_fingering.md`, question 3).
 
-**Buildable native fallback — `OMEGA`.** The native cube *does* carry `OMEGA`
+**Buildable native prior — `OMEGA`.** The native cube *does* carry `OMEGA`
 (`A3dyn`), the model's resolved vertical pressure velocity.
 `scripts/diagnostics/omega_vs_cm_driver_roughness.jl` (Dec-11): `OMEGA`'s SH-UTLS
 relative roughness is **0.15 vs `div_h(MFXC)`'s 0.27 — ~2× smoother (ratio
 0.43–0.54), right at MERRA-2's level**, on the native grid. So an `OMEGA`-derived
-`cm` (`MFZ ≈ ω − ∂p/∂t − v·∇p`) is the only native-resolution route we can build
-today; it won't be exact `MFZ` (the corrections pull in noisy fields), but the
-probe says ~MERRA-clean is plausible.
+`cm` prior is the only native-resolution route we can build today. It is not an
+exact `MFZ`: raw `OMEGA` includes coordinate-motion terms, and replacing the
+full convergence field with it erased resolved transport structure in matched
+tracer tests. The production experiment therefore uses OMEGA only as a
+high-pass prior within the UTLS (`:omega_regularized`), retaining the native
+endpoint-balanced field at larger scales and outside 50--350 hPa.
 
 | route | resolution | clean? | status |
 |---|---|---|---|
 | lat-lon MERRA-2/ERA5 winds → flux → pfix | ≲ C180 (regrid caps it) | ✅ ~3× closer to GEOS-Chem | **done** |
-| `OMEGA`-derived `cm` on the native cube | C180 / C720 native | ~2× better (probe 0.5×), not exact `MFZ` | **buildable** |
+| regularized `OMEGA` high-pass prior | C180 / C720 native | targets grid scale only; tracer validation pending | **experimental** |
 | archived cube `MFZ` | native, exact | ✅ ideal | **needs GMAO request** |
+
+## 12. Why full OMEGA replacement was rejected (2026-07-15)
+
+The first implementation, now exposed only as `:omega_full_replacement`, forced
+every layer's horizontal divergence to match an OMEGA-derived
+vertical-convergence target. It passed the
+binary replay gate and made the SH-UTLS roughness metric look MERRA-like, but it
+changed horizontal fluxes broadly (roughly 14--42% in the matched diagnostic)
+and suppressed local China XCO2 enhancements within the first three hours. That
+is over-smoothing, not a physically justified correction.
+
+The surface-source diagnosis is stronger than the early column-mean comparison.
+For Dec-3 window 12, full OMEGA changed the bottom-three-layer `am`/`bm` RMS by
+2.1--2.3 times globally and by 2.9--7.0 times over East China. In matched fossil
+CO2 runs the East-China plume mass was already 36% low after 24 hours, with 50%
+of the plume above σ=0.95 versus 14--24% for ERA5 and GEOS-Chem/MERRA-2. Two
+endpoint-closure GEOS controls instead matched the independent transports,
+isolating the closure rather than convection, diffusion, vertical merging, or
+substep selection. The full replacement was therefore corrupting PBL export,
+not merely smoothing an UTLS diagnostic.
+
+`:omega_regularized` instead constructs the correction on vertical interfaces:
+
+1. diagnose the endpoint-balanced native `cm`;
+2. subtract it from the OMEGA-derived interface flux;
+3. remove the conservative cubed-sphere graph low-pass component;
+4. apply the remaining high-pass discrepancy only through a smooth 50--350 hPa
+   pressure taper; and
+5. cap each level's horizontal flux-potential increment relative to the native
+   face-flux RMS; and
+6. abort if the bottom three layers change by more than 1% RMS, while reporting
+   the largest local edge increment separately.
+
+Because the blend is performed on interfaces and is zero at the taper endpoints,
+the top and surface fluxes remain native and the per-column convergence still
+telescopes exactly. This mode is intentionally labeled experimental until its
+multi-day advective tracer response is compared against the native and
+wind-derived controls.
+
+Real-data preprocessing acceptance check (Dec-3 window 12, C180/L72): maximum
+bottom-three-layer correction `2.88e-7` RMS of native flux, maximum correction
+over all levels `1.65%` RMS, continuity residual `1.24e-11` RMS of column mass,
+and surface `cm` closure `9.90e-16`. The configured bottom-layer gate is 1%
+global RMS; it is not a pointwise spatial guard.
+
+An independent spatial acceptance check formed centered effective-transport
+vectors from `am`/`bm`, excluding the calmest 10% of cells. In the bottom three
+layers, the 99th-percentile speed change was `0.0001%` globally and `0.0002%`
+over East China; the corresponding direction change was at most `0.0001°` at
+the 99th percentile. In the UTLS correction band, the global 99th-percentile
+speed and direction changes were `4.39%` and `2.72°`; over East China they were
+`0.81%` and `0.89°`. This external spatial check, rather than the global-RMS
+runtime gate alone, rules out the archived 2--7× lower-level corruption for the
+accepted window. The full December tracer movie remains the multi-day physics
+validation.

@@ -436,19 +436,46 @@ to cubed-sphere:
 
 ```toml
 [numerics]
-geos_cm_closure = "endpoint"   # default; "omega_consistent" (production cure)
+geos_cm_closure = "endpoint"   # default; "omega_regularized" is experimental
 ```
 
 - `"endpoint"` (default) — diagnose `cm` from the endpoint-`DELP` mass tendency.
   Closes the explicit-`dm` continuity gate exactly, but injects the intrinsic
   native MFXC↔DELP residual as grid-scale noise that shows up as SH-UTLS
   "fingering" in adv-only tracers.
-- `"omega_consistent"` — re-anchor `cm` to the A3dyn `OMEGA` field (cube-native),
-  keeping the native horizontal fluxes. Tracer-validated to suppress the
-  fingering to the MERRA-2 level while keeping mass balance closed; this is the
-  production closure for clean GEOS runs.
+- `"omega_regularized"` — retain endpoint-balanced transport at resolved scales
+  and use A3dyn `OMEGA` only for a pressure-local, horizontal-high-pass
+  correction. The default taper is 50--350 hPa and each level's horizontal
+  flux correction is capped at 10% RMS. This avoids the local-enhancement loss
+  seen when OMEGA replaces the full vertical-convergence field, but remains an
+  experimental native-cube pathway pending multi-day tracer validation.
+- `"omega_full_replacement"` — diagnostic all-level/all-scale OMEGA replacement. It
+  closes mass exactly and reduces the SH-UTLS roughness metric, but suppresses
+  physically resolved local XCO2 enhancements; do not use it for production.
+  The historical `"omega"` and `"omega_consistent"` aliases now resolve to the
+  safe regularized mode.
 - `:pressure_fixer`, `:moisture_filtered`, `:pfix_corrected` are diagnostic-only
   (they fail the replay gate or drift `ps`) and are warned at use.
+
+The regularized controls are explicit and recorded in the binary header:
+
+```toml
+[numerics.omega_regularization]
+pressure_taper_hpa = [50.0, 80.0, 300.0, 350.0]
+smoothing_steps = 3
+smoothing_fraction = 0.10
+max_relative_flux_correction = 0.10
+max_bottom_flux_correction = 0.01
+```
+
+The RMS cap limits broad circulation changes. The bottom-layer gate aborts
+preprocessing if any of the lowest three levels changes by more than 1% RMS;
+this protects fresh surface emissions from artificial OMEGA-driven PBL export.
+The largest local edge increment is also reported as a diagnostic, using
+`max(abs(native_face_flux), level_rms_native_flux)` as its denominator.
+OMEGA modes also require `[mass_fix].enable = true`; without global endpoint
+mass closure, a per-level horizontal Poisson solve cannot realize the global
+column tendency.
 
 ### `[mass_fix]` — global PS pinning (spectral path only)
 

@@ -232,6 +232,7 @@ struct OmegaRegularizationScratch{FT}
     lowpass::Vector{Float64}
     next::Vector{Float64}
     pressure_hpa::Vector{Float64}
+    active_levels::BitVector
 end
 
 @inline _uses_omega(closure::Symbol) =
@@ -520,6 +521,10 @@ function _regularize_omega_target!(
     nc = CS_PANEL_COUNT * Nc * Nc
     ft = grid.face_table
     omega_cm = scratch.omega_cm
+    active_levels = scratch.active_levels
+    length(active_levels) == Nz ||
+        throw(DimensionMismatch("OMEGA active-level mask has length $(length(active_levels)); expected $Nz"))
+    fill!(active_levels, false)
 
     # Telescope the OMEGA convergence into a downward-positive interface flux.
     @inbounds for p in 1:CS_PANEL_COUNT
@@ -538,24 +543,41 @@ function _regularize_omega_target!(
     fill!(scratch.pressure_hpa, 0.0)
     # Top and surface remain native (both zero). Interior interfaces receive the
     # UTLS-tapered high-pass OMEGA-minus-native increment.
+    previous_interface_active = false
     @inbounds for k_ifc in 1:(Nz + 1)
-        for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
-            c = i + (j - 1) * Nc + (p - 1) * Nc * Nc
-            scratch.delta[c] = Float64(omega_cm[p][i, j, k_ifc]) -
-                               Float64(native_cm[p][i, j, k_ifc])
+        # Pressure varies horizontally, so an interface is active when at least
+        # one cell has non-zero taper weight. Entirely inactive interfaces are
+        # copied from the native closure exactly: no graph smoother and, below,
+        # no Poisson solve on layers bounded by two inactive interfaces.
+        interface_active = any(p -> _omega_pressure_weight(
+            p, options.pressure_taper_hpa) > 0.0, scratch.pressure_hpa)
+        if interface_active
+            for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
+                c = i + (j - 1) * Nc + (p - 1) * Nc * Nc
+                scratch.delta[c] = Float64(omega_cm[p][i, j, k_ifc]) -
+                                   Float64(native_cm[p][i, j, k_ifc])
+            end
+            copyto!(scratch.lowpass, scratch.delta)
+            lowpass = _smooth_cs_graph_conservative!(
+                scratch.lowpass, scratch.next, ft, options.smoothing_steps,
+                options.smoothing_fraction)
+            for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
+                c = i + (j - 1) * Nc + (p - 1) * Nc * Nc
+                weight = _omega_pressure_weight(scratch.pressure_hpa[c],
+                                                options.pressure_taper_hpa)
+                highpass = scratch.delta[c] - lowpass[c]
+                omega_cm[p][i, j,k_ifc] =
+                    FT(Float64(native_cm[p][i, j, k_ifc]) + weight * highpass)
+            end
+        else
+            for p in 1:CS_PANEL_COUNT
+                copyto!(view(omega_cm[p], :, :, k_ifc),
+                        view(native_cm[p], :, :, k_ifc))
+            end
         end
-        copyto!(scratch.lowpass, scratch.delta)
-        lowpass = _smooth_cs_graph_conservative!(
-            scratch.lowpass, scratch.next, ft, options.smoothing_steps,
-            options.smoothing_fraction)
-        for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
-            c = i + (j - 1) * Nc + (p - 1) * Nc * Nc
-            weight = _omega_pressure_weight(scratch.pressure_hpa[c],
-                                            options.pressure_taper_hpa)
-            highpass = scratch.delta[c] - lowpass[c]
-            omega_cm[p][i, j, k_ifc] =
-                FT(Float64(native_cm[p][i, j, k_ifc]) + weight * highpass)
-        end
+        k_ifc > 1 &&
+            (active_levels[k_ifc - 1] = previous_interface_active || interface_active)
+        previous_interface_active = interface_active
         if k_ifc <= Nz
             for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
                 c = i + (j - 1) * Nc + (p - 1) * Nc * Nc
@@ -727,12 +749,16 @@ function _reconstruct_omega_target!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                         vdiv_scale::Float64;
                                         tol::Float64 = 1e-11,
                                         max_iter::Int = 8000,
-                                        max_relative_correction::Float64 = Inf) where FT
+                                        max_relative_correction::Float64 = Inf,
+                                        active_levels::Union{Nothing, AbstractVector{Bool}} = nothing) where FT
     ft = grid.face_table
     degree = grid.cell_degree
     Nc = ft.Nc
     nc = ft.nc
     Nz = size(dm[1], 3)
+    active_levels === nothing || length(active_levels) == Nz ||
+        throw(DimensionMismatch("active_levels has length $(length(active_levels)); expected $Nz"))
+    levels = active_levels === nothing ? (1:Nz) : findall(active_levels)
 
     # Each level is an independent Poisson solve; give every thread its own
     # CSPoissonScratch so the per-level div/rhs/psi/CG buffers never alias.
@@ -760,7 +786,8 @@ function _reconstruct_omega_target!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
     # am/bm/cm are bit-identical regardless of path.
     use_threads = _OMEGA_LEVEL_PARALLEL[] && Threads.maxthreadid() > 1
     if use_threads
-        Threads.@threads :static for k in 1:Nz
+        Threads.@threads :static for active_idx in eachindex(levels)
+            k = levels[active_idx]
             mi, mp, ci, rel, local_rel = _reconstruct_omega_level!(
                 k, am, bm, dm, vdiv_om, ft, degree,
                 scratches[Threads.threadid()], vdiv_scale, Nc, nc;
@@ -773,7 +800,7 @@ function _reconstruct_omega_target!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
             local_relative_by_level[k] = local_rel
         end
     else
-        for k in 1:Nz
+        for k in levels
             mi, mp, ci, rel, local_rel = _reconstruct_omega_level!(
                 k, am, bm, dm, vdiv_om, ft, degree,
                 scratches[1], vdiv_scale, Nc, nc;
@@ -789,7 +816,7 @@ function _reconstruct_omega_target!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
     max_inc = maximum(inc_by_level)
     max_post = maximum(post_by_level)
     if _OMEGA_TIMING[]
-        _OMEGA_TIMING_STATE.solves += Nz
+        _OMEGA_TIMING_STATE.solves += length(levels)
         _OMEGA_TIMING_STATE.cg_iters += sum(iter_by_level)
     end
     _sync_cs_mirrors!(am, bm, ft, Nz)
@@ -1373,7 +1400,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
         OmegaRegularizationScratch(
             ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), npanel),
             zeros(Float64, nc), zeros(Float64, nc), zeros(Float64, nc),
-            zeros(Float64, nc))
+            zeros(Float64, nc), falses(Nz))
     else
         nothing
     end
@@ -1635,7 +1662,11 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         recon = _reconstruct_omega_target!(workspace.am_v4, workspace.bm_v4,
                                                workspace.dm_v4, target,
                                                grid, target_scale;
-                                               max_relative_correction = correction_cap)
+                                               max_relative_correction = correction_cap,
+                                               active_levels =
+                                                   workspace.cm_closure === :omega_regularized ?
+                                                   workspace.omega_regularization_scratch.active_levels :
+                                                   nothing)
         bottom_max = maximum(@view recon.relative_correction_by_level[(Nz - 2):Nz])
         if workspace.cm_closure === :omega_regularized &&
            bottom_max > workspace.omega_regularization.max_bottom_flux_correction

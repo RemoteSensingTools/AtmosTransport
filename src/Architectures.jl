@@ -245,10 +245,27 @@ function array_adapter_for(reference_array)
     ref = reference_array isa Tuple ? reference_array[1] : reference_array
     # Optional-package extensions may have loaded after this caller was
     # compiled, so cross the world-age boundary at this single startup lookup.
-    return Base.invokelatest(_array_adapter_for, ref)
+    adaptor = Base.invokelatest(_array_adapter_for, ref)
+    # CLI entry points include the working-tree module directly. Package
+    # extensions then belong to a separately loaded package module and cannot
+    # extend this local module's `_array_adapter_for`. Recover the adapter from
+    # an already-loaded runtime package so host forcing windows are copied to
+    # the same backend as the model state.
+    return adaptor === Array ? _loaded_gpu_adapter(ref) : adaptor
 end
 
 _array_adapter_for(::Any) = Array
+
+function _loaded_gpu_adapter(reference_array, loaded_modules = Base.loaded_modules)
+    for (pkgid, adapter_name) in ((_RUNTIME_PACKAGE_IDS.CUDA, :CuArray),
+                                  (_RUNTIME_PACKAGE_IDS.Metal, :MtlArray))
+        runtime = get(loaded_modules, pkgid, nothing)
+        runtime === nothing && continue
+        adaptor = getproperty(runtime, adapter_name)
+        reference_array isa adaptor && return adaptor
+    end
+    return Array
+end
 
 """
     reclaim_backend_pool!(reference_array)

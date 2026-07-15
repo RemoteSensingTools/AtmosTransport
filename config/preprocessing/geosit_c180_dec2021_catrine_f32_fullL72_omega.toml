@@ -3,7 +3,7 @@
 # FULL native L72 (no top merge), OMEGA-CONSISTENT cm closure.
 #
 # Clone of `geosit_c180_dec2021_catrine_f32_fullL72.toml` with
-# `[numerics].geos_cm_closure = "omega_consistent"`: keep the native GEOS
+# `[numerics].geos_cm_closure = "omega_full_replacement"`: keep the native GEOS
 # horizontal mass fluxes (column-balanced to the analyzed DELP_dry endpoint), but
 # RE-ANCHOR the vertical mass flux cm to the A3dyn OMEGA resolved vertical motion
 # (dry-corrected by I3 QV, PCHIP 3-hourly->hourly time-interp) via a per-level
@@ -25,7 +25,7 @@ toml                 = "config/met_sources/geosit.toml"
 root_dir             = "/home/cfranken/data/AtmosTransport/met/geosit/C180/raw_catrine"
 include_surface      = true     # PBL section for runtime diffusion
 include_convection   = true     # CMFMC + DTRAIN for runtime convection
-include_vdiff_fields = true     # U/V/T/QV + A3dyn OMEGA + I3 QV (REQUIRED for omega_consistent)
+include_vdiff_fields = true     # U/V/T/QV + A3dyn OMEGA + I3 QV (required)
 
 [output]
 directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
@@ -40,7 +40,7 @@ regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
 
 [vertical]
 coefficients = "config/geos_L72_coefficients.toml"
-transform    = "identity"        # full native L72 — no top merge (required by omega_consistent)
+transform    = "identity"        # full native L72 — no top merge (required)
 
 [numerics]
 float_type     = "Float32"
@@ -54,7 +54,7 @@ substep_cfl_target         = 0.95
 min_steps_per_window       = 1
 max_steps_per_window       = 512   # headroom for the unmerged mesospheric top
 geos_balance_mode          = "column"
-geos_cm_closure            = "omega_consistent"
+geos_cm_closure            = "omega_full_replacement" # diagnostic: known to oversmooth
 
 [mass_fix]
 enable = true

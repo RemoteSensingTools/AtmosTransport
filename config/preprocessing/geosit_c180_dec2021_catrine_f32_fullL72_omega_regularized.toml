@@ -1,0 +1,58 @@
+# GEOS-IT C180 native NetCDF -> v4 CS C180 transport binaries for Dec 2021,
+# full native L72 with a scale- and pressure-limited OMEGA correction.
+#
+# The endpoint-balanced MFXC/MFYC transport remains the resolved-scale reference.
+# A3dyn OMEGA contributes only the high-pass part of its interface-flux
+# difference inside the 50--350 hPa pressure window. Each level's horizontal
+# flux-potential correction is capped at 10% RMS of the native horizontal flux.
+# This targets the UTLS grid-scale artifact without the all-level, all-scale
+# replacement responsible for suppressed local XCO2 enhancements.
+
+[source]
+toml                 = "config/met_sources/geosit.toml"
+root_dir             = "/home/cfranken/data/AtmosTransport/met/geosit/C180/raw_catrine"
+include_surface      = true
+include_convection   = true
+include_vdiff_fields = true
+
+[output]
+directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega_regularized"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+transform    = "identity"
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+chain_mass     = false
+
+positivity_cfl_limit       = 0.95
+require_substep_positivity = true
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.95
+min_steps_per_window       = 1
+max_steps_per_window       = 512
+geos_balance_mode          = "column"
+geos_cm_closure            = "omega_regularized"
+
+[numerics.omega_regularization]
+# (outer top, fully active top, fully active bottom, outer bottom), in hPa.
+pressure_taper_hpa = [50.0, 80.0, 300.0, 350.0]
+smoothing_steps = 3
+smoothing_fraction = 0.10
+max_relative_flux_correction = 0.10
+max_bottom_flux_correction = 0.01
+
+[mass_fix]
+enable = true
+mode = "target_ps_dry"
+target_ps_dry_pa = 98726.0

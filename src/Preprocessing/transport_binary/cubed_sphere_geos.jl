@@ -190,12 +190,12 @@ function _smooth_cs_columns!(field::NTuple{CS_PANEL_COUNT, Array{FT, 2}},
 end
 
 # ---------------------------------------------------------------------------
-# Env-gated timing/diagnostic accumulator for the `:omega_consistent` prepare
+# Env-gated timing/diagnostic accumulator for OMEGA-based preparation.
 # (set `ATMOS_OMEGA_TIMING=1`). Counts per-window prepares, omega Poisson solves,
 # and CG iterations so the build-cost diagnosis is measurable without touching
 # the production hot path when the env var is unset.
 const _OMEGA_TIMING = Base.RefValue(false)
-# Per-level Poisson parallelism for the `:omega_consistent` reconstruction.
+# Per-level Poisson parallelism for OMEGA target reconstruction.
 # `true` in the single-day-per-process (`--day`) path so the level solve grabs
 # the full thread pool (the validated/production usage, ~5.0× speedup). The
 # multi-day driver sets it `false` BEFORE its `Threads.@threads` day loop so the
@@ -203,11 +203,97 @@ const _OMEGA_TIMING = Base.RefValue(false)
 # pool (oversubscription / severe multi-day regression). Serial uses
 # `scratches[1]` so it is bit-identical to the parallel path.
 const _OMEGA_LEVEL_PARALLEL = Base.RefValue(true)
+
+"""
+    OmegaRegularization
+
+Controls the scale-selective OMEGA prior used by `:omega_regularized`.
+
+`pressure_taper_hpa = (outer_top, inner_top, inner_bottom, outer_bottom)`
+defines a smooth pressure window: the correction is zero outside the outer
+bounds and fully active between the inner bounds. `smoothing_steps` conservative
+graph-diffusion sweeps define the low-pass field; OMEGA contributes only the
+remaining high-pass difference from the endpoint-balanced vertical flux.
+`max_relative_flux_correction` caps the RMS X/Y face-flux increment separately
+at every level. `max_bottom_flux_correction` is a hard fidelity gate on the
+bottom three model layers, where surface-source transport must remain native.
+"""
+Base.@kwdef struct OmegaRegularization
+    pressure_taper_hpa::NTuple{4, Float64} = (50.0, 80.0, 300.0, 350.0)
+    smoothing_steps::Int = 3
+    smoothing_fraction::Float64 = 0.10
+    max_relative_flux_correction::Float64 = 0.10
+    max_bottom_flux_correction::Float64 = 0.01
+end
+
+struct OmegaRegularizationScratch{FT}
+    omega_cm::NTuple{CS_PANEL_COUNT, Array{FT, 3}}
+    delta::Vector{Float64}
+    lowpass::Vector{Float64}
+    next::Vector{Float64}
+    pressure_hpa::Vector{Float64}
+end
+
+@inline _uses_omega(closure::Symbol) =
+    closure === :omega_full_replacement || closure === :omega_regularized
+
+function _validate_omega_regularization(options::OmegaRegularization)
+    p0, p1, p2, p3 = options.pressure_taper_hpa
+    0.0 <= p0 < p1 <= p2 < p3 ||
+        throw(ArgumentError("OMEGA pressure taper must satisfy 0 ≤ outer_top < inner_top ≤ inner_bottom < outer_bottom; got $(options.pressure_taper_hpa)"))
+    options.smoothing_steps >= 1 ||
+        throw(ArgumentError("OMEGA smoothing_steps must be ≥ 1; got $(options.smoothing_steps)"))
+    # A degree-four graph has λmax ≤ 8. Keeping fraction ≤ 1/8 makes every
+    # eigenvalue of (I - fraction*L) non-negative, so the derived high-pass
+    # cannot amplify a checkerboard through an odd-step sign reversal.
+    0.0 < options.smoothing_fraction <= 0.125 ||
+        throw(ArgumentError("OMEGA smoothing_fraction must lie in (0, 0.125]; got $(options.smoothing_fraction)"))
+    0.0 < options.max_relative_flux_correction <= 1.0 ||
+        throw(ArgumentError("OMEGA max_relative_flux_correction must lie in (0, 1]; got $(options.max_relative_flux_correction)"))
+    0.0 < options.max_bottom_flux_correction <= 1.0 ||
+        throw(ArgumentError("OMEGA max_bottom_flux_correction must lie in (0, 1]; got $(options.max_bottom_flux_correction)"))
+    return options
+end
+
+@inline function _omega_pressure_weight(p_hpa::Float64,
+                                        bounds::NTuple{4, Float64})
+    p0, p1, p2, p3 = bounds
+    if p_hpa <= p0 || p_hpa >= p3
+        return 0.0
+    elseif p_hpa < p1
+        x = (p_hpa - p0) / (p1 - p0)
+        return 0.5 - 0.5 * cospi(x)
+    elseif p_hpa <= p2
+        return 1.0
+    else
+        x = (p_hpa - p2) / (p3 - p2)
+        return 0.5 + 0.5 * cospi(x)
+    end
+end
+
+function _smooth_cs_graph_conservative!(lowpass::Vector{Float64},
+                                        next::Vector{Float64},
+                                        ft::CSGlobalFaceTable,
+                                        steps::Int,
+                                        fraction::Float64)
+    for _ in 1:steps
+        copyto!(next, lowpass)
+        @inbounds for f in 1:ft.nf
+            left = Int(ft.face_left[f])
+            right = Int(ft.face_right[f])
+            exchange = fraction * (lowpass[right] - lowpass[left])
+            next[left] += exchange
+            next[right] -= exchange
+        end
+        lowpass, next = next, lowpass
+    end
+    return lowpass
+end
 mutable struct _OmegaTimingState
     prepares::Int          # `_geos_prepare_window_for_steps!` calls (omega path)
     solves::Int            # per-level Poisson solves issued
     cg_iters::Int          # total CG iterations across all solves
-    recon_time::Float64    # wall seconds inside `_reconstruct_omega_consistent!`
+    recon_time::Float64    # wall seconds inside `_reconstruct_omega_target!`
 end
 const _OMEGA_TIMING_STATE = _OmegaTimingState(0, 0, 0, 0.0)
 function _reset_omega_timing!()
@@ -217,7 +303,7 @@ function _reset_omega_timing!()
 end
 
 # ---------------------------------------------------------------------------
-# OMEGA-consistent cm closure (geos_cm_closure="omega_consistent").
+# OMEGA target reconstruction shared by the regularized and diagnostic modes.
 #
 # The diagnosed cm[k+1]=cm[k]+div_h[k]-dm[k] forces the grid-noisy MFXC↔DELP
 # residual M into cm, so the per-layer vertical convergence vdiv=cm[k]-cm[k+1]
@@ -326,9 +412,9 @@ function _read_geos_omega_qv_pchip!(omega::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                     handles::GEOSDayHandles, win::Int,
                                     Nc::Int, Nz::Int) where FT
     handles.a3dyn === nothing &&
-        error("geos_cm_closure=:omega_consistent needs A3dyn OMEGA; set include_vdiff_fields=true")
+        error("OMEGA-based cm closure needs A3dyn OMEGA; set include_vdiff_fields=true")
     handles.i3 === nothing &&
-        error("geos_cm_closure=:omega_consistent needs I3 QV; set include_vdiff_fields=true")
+        error("OMEGA-based cm closure needs I3 QV; set include_vdiff_fields=true")
     or = handles.orientation
     n3_a3 = handles.a3dyn.dim["time"]
     n3_i3 = handles.i3.dim["time"]
@@ -407,7 +493,88 @@ function _omega_vdiv_target!(vdiv_om::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
 end
 
 """
-    _reconstruct_omega_consistent!(am, bm, dm, vdiv_om, grid, vdiv_scale; tol, max_iter)
+    _regularize_omega_target!(target, native_cm, omega_vdiv, m_cur, m_next, grid, g,
+                              vdiv_scale, options, scratch)
+
+Build a conservative, scale-selective OMEGA vertical-convergence target.
+
+The endpoint-balanced `native_cm` remains the large-scale reference. OMEGA
+contributes only the horizontal high-pass part of its interface-flux difference
+from `native_cm`, and only inside the configured pressure taper. Constructing
+the blend on interfaces (rather than independently on layers) preserves zero
+top/surface flux and therefore `sum(target; dims=level) == 0` per column.
+"""
+function _regularize_omega_target!(
+        target::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        native_cm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        omega_vdiv::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        m_cur::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        m_next::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        grid::CubedSphereTargetGeometry,
+        g::FT,
+        vdiv_scale::Float64,
+        options::OmegaRegularization,
+        scratch::OmegaRegularizationScratch{FT}) where FT
+    Nc = grid.Nc
+    Nz = size(target[1], 3)
+    nc = CS_PANEL_COUNT * Nc * Nc
+    ft = grid.face_table
+    omega_cm = scratch.omega_cm
+
+    # Telescope the OMEGA convergence into a downward-positive interface flux.
+    @inbounds for p in 1:CS_PANEL_COUNT
+        oc = omega_cm[p]
+        vo = omega_vdiv[p]
+        fill!(view(oc, :, :, 1), zero(FT))
+        for j in 1:Nc, i in 1:Nc
+            accum = 0.0
+            for k in 1:Nz
+                accum -= vdiv_scale * Float64(vo[i, j, k])
+                oc[i, j, k + 1] = FT(accum)
+            end
+        end
+    end
+
+    fill!(scratch.pressure_hpa, 0.0)
+    # Top and surface remain native (both zero). Interior interfaces receive the
+    # UTLS-tapered high-pass OMEGA-minus-native increment.
+    @inbounds for k_ifc in 1:(Nz + 1)
+        for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
+            c = i + (j - 1) * Nc + (p - 1) * Nc * Nc
+            scratch.delta[c] = Float64(omega_cm[p][i, j, k_ifc]) -
+                               Float64(native_cm[p][i, j, k_ifc])
+        end
+        copyto!(scratch.lowpass, scratch.delta)
+        lowpass = _smooth_cs_graph_conservative!(
+            scratch.lowpass, scratch.next, ft, options.smoothing_steps,
+            options.smoothing_fraction)
+        for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
+            c = i + (j - 1) * Nc + (p - 1) * Nc * Nc
+            weight = _omega_pressure_weight(scratch.pressure_hpa[c],
+                                            options.pressure_taper_hpa)
+            highpass = scratch.delta[c] - lowpass[c]
+            omega_cm[p][i, j, k_ifc] =
+                FT(Float64(native_cm[p][i, j, k_ifc]) + weight * highpass)
+        end
+        if k_ifc <= Nz
+            for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
+                c = i + (j - 1) * Nc + (p - 1) * Nc * Nc
+                scratch.pressure_hpa[c] +=
+                    0.5 * (Float64(m_cur[p][i, j, k_ifc]) +
+                           Float64(m_next[p][i, j, k_ifc])) * Float64(g) /
+                    Float64(grid.mesh.cell_areas[i, j]) / 100.0
+            end
+        end
+    end
+
+    @inbounds for p in 1:CS_PANEL_COUNT, k in 1:Nz, j in 1:Nc, i in 1:Nc
+        target[p][i, j, k] = omega_cm[p][i, j, k] - omega_cm[p][i, j, k + 1]
+    end
+    return target
+end
+
+"""
+    _reconstruct_omega_target!(am, bm, dm, vdiv_om, grid, vdiv_scale; tol, max_iter)
 
 After the column balance (so div_h closes the column: Σ_k div_h = Σ_k dm), apply
 a per-level Poisson flux-potential correction so the NEW horizontal convergence
@@ -421,12 +588,16 @@ telescoped cm then has vdiv[k] = dm[k] − div_h_new[k] = +vdiv_scale·vdiv_om[k
 UP TO a per-level global constant (the unrealizable mean removed before the
 solve; zero grid-scale signature so r_vdiv is unchanged, global-mean part
 reconciled by the dry-mass pin). Continuity holds per column to roundoff. Returns
-(max_increment, max_post_residual) over interior cells for the gate log.
+the maximum increment and post-solve residual, the maximum global and local
+relative corrections, and the global RMS relative correction for every level.
+The local relative correction is diagnostic only; the per-level RMS values feed
+the hard lower-layer fidelity gate.
 """
 # Single-level OMEGA-consistent flux-potential correction. Independent per level
 # (touches only `am[:,:,k]`/`bm[:,:,k]` and the supplied per-thread `scratch`),
 # so the Nz levels can be solved concurrently. Returns the per-level correction
-# magnitude, post-residual, and CG iteration count for the gate/timing reduction.
+# magnitude, post-residual, CG iteration count, and global/local relative
+# corrections for the gate and timing reductions.
 @inline function _reconstruct_omega_level!(k::Int,
                                            am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                            bm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
@@ -437,7 +608,8 @@ reconciled by the dry-mass pin). Continuity holds per column to roundoff. Return
                                            scratch::CSPoissonScratch,
                                            vdiv_scale::Float64,
                                            Nc::Int, nc::Int;
-                                           tol::Float64, max_iter::Int) where FT
+                                           tol::Float64, max_iter::Int,
+                                           max_relative_correction::Float64) where FT
     div = scratch.div
     rhs = scratch.rhs
     psi = scratch.psi
@@ -479,13 +651,52 @@ reconciled by the dry-mass pin). Continuity holds per column to roundoff. Return
         end
         _, cg_iter = solve_cs_poisson_pcg!(psi, rhs, ft, degree, cg_scratch;
                               tol = tol, max_iter = max_iter, project_every = 50)
-        apply_cs_flux_correction!(am, bm, psi, ft, k)
-        # Track the correction magnitude + post residual for the gate log.
-        max_inc = 0.0
+        correction2 = 0.0
+        base2 = 0.0
         for f in 1:ft.nf
-            d = abs(psi[Int(ft.face_right[f])] - psi[Int(ft.face_left[f])])
-            d > max_inc && (max_inc = d)
+            left = Int(ft.face_left[f]); right = Int(ft.face_right[f])
+            d = psi[right] - psi[left]
+            panel = Int(ft.face_panel[f]); dir = Int(ft.face_dir[f])
+            i = Int(ft.face_idx_i[f]); j = Int(ft.face_idx_j[f])
+            base = dir == 1 ? Float64(am[panel][i, j, k]) : Float64(bm[panel][i, j, k])
+            correction2 += d * d
+            base2 += base * base
         end
+        requested_relative = if correction2 == 0.0
+            0.0
+        elseif base2 > 0.0
+            sqrt(correction2 / base2)
+        else
+            Inf
+        end
+        applied_scale = requested_relative > max_relative_correction ?
+            max_relative_correction / requested_relative : 1.0
+        if applied_scale < 1.0
+            @simd for c in 1:nc
+                psi[c] *= applied_scale
+            end
+        end
+        # Report the largest local change against a non-singular characteristic
+        # flux. This is diagnostic only: clipping individual levels independently
+        # would destroy the vertically integrated face-flux closure.
+        base_rms = sqrt(base2 / ft.nf)
+        applied2 = 0.0
+        max_inc = 0.0
+        max_local_relative = 0.0
+        for f in 1:ft.nf
+            left = Int(ft.face_left[f]); right = Int(ft.face_right[f])
+            delta = psi[right] - psi[left]
+            panel = Int(ft.face_panel[f]); dir = Int(ft.face_dir[f])
+            i = Int(ft.face_idx_i[f]); j = Int(ft.face_idx_j[f])
+            base = dir == 1 ? Float64(am[panel][i, j, k]) : Float64(bm[panel][i, j, k])
+            characteristic = max(abs(base), base_rms)
+            magnitude = abs(delta)
+            max_inc = max(max_inc, magnitude)
+            applied2 += delta * delta
+            local_relative = characteristic > 0.0 ? magnitude / characteristic : 0.0
+            max_local_relative = max(max_local_relative, local_relative)
+        end
+        apply_cs_flux_correction!(am, bm, psi, ft, k)
         fill!(div, 0.0)
         for f in 1:ft.nf
             panel = Int(ft.face_panel[f]); dir = Int(ft.face_dir[f])
@@ -504,17 +715,19 @@ reconciled by the dry-mass pin). Continuity holds per column to roundoff. Return
             r > max_post && (max_post = r)
         end
     end
-    return (max_inc, max_post, cg_iter)
+    applied_relative = base2 > 0.0 ? sqrt(applied2 / base2) : 0.0
+    return (max_inc, max_post, cg_iter, applied_relative, max_local_relative)
 end
 
-function _reconstruct_omega_consistent!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+function _reconstruct_omega_target!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                         bm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                         dm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                         vdiv_om::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                         grid::CubedSphereTargetGeometry,
                                         vdiv_scale::Float64;
                                         tol::Float64 = 1e-11,
-                                        max_iter::Int = 8000) where FT
+                                        max_iter::Int = 8000,
+                                        max_relative_correction::Float64 = Inf) where FT
     ft = grid.face_table
     degree = grid.cell_degree
     Nc = ft.Nc
@@ -537,6 +750,8 @@ function _reconstruct_omega_consistent!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}}
 
     inc_by_level = zeros(Float64, Nz)
     post_by_level = zeros(Float64, Nz)
+    relative_by_level = zeros(Float64, Nz)
+    local_relative_by_level = zeros(Float64, Nz)
     iter_by_level = zeros(Int, Nz)
     # Per-level parallelism only when the level solve owns the pool. The
     # multi-day driver clears `_OMEGA_LEVEL_PARALLEL` before its day `@threads`
@@ -546,23 +761,29 @@ function _reconstruct_omega_consistent!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     use_threads = _OMEGA_LEVEL_PARALLEL[] && Threads.maxthreadid() > 1
     if use_threads
         Threads.@threads :static for k in 1:Nz
-            mi, mp, ci = _reconstruct_omega_level!(
+            mi, mp, ci, rel, local_rel = _reconstruct_omega_level!(
                 k, am, bm, dm, vdiv_om, ft, degree,
                 scratches[Threads.threadid()], vdiv_scale, Nc, nc;
-                tol = tol, max_iter = max_iter)
+                tol = tol, max_iter = max_iter,
+                max_relative_correction = max_relative_correction)
             inc_by_level[k] = mi
             post_by_level[k] = mp
             iter_by_level[k] = ci
+            relative_by_level[k] = rel
+            local_relative_by_level[k] = local_rel
         end
     else
         for k in 1:Nz
-            mi, mp, ci = _reconstruct_omega_level!(
+            mi, mp, ci, rel, local_rel = _reconstruct_omega_level!(
                 k, am, bm, dm, vdiv_om, ft, degree,
                 scratches[1], vdiv_scale, Nc, nc;
-                tol = tol, max_iter = max_iter)
+                tol = tol, max_iter = max_iter,
+                max_relative_correction = max_relative_correction)
             inc_by_level[k] = mi
             post_by_level[k] = mp
             iter_by_level[k] = ci
+            relative_by_level[k] = rel
+            local_relative_by_level[k] = local_rel
         end
     end
     max_inc = maximum(inc_by_level)
@@ -572,7 +793,10 @@ function _reconstruct_omega_consistent!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}}
         _OMEGA_TIMING_STATE.cg_iters += sum(iter_by_level)
     end
     _sync_cs_mirrors!(am, bm, ft, Nz)
-    return (max_increment = max_inc, max_post_residual = max_post)
+    return (max_increment = max_inc, max_post_residual = max_post,
+            max_relative_correction = maximum(relative_by_level),
+            max_local_relative_correction = maximum(local_relative_by_level),
+            relative_correction_by_level = relative_by_level)
 end
 
 function _cs_total_air_mass(panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArray})
@@ -960,7 +1184,7 @@ function _geos_vdiff_payload!(workspace)
     return workspace.vdiff_v4
 end
 
-mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, VD, VO} <:
+mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, VD, VO, OR} <:
                AbstractWindowWorkspace{CubedSphereTargetGeometry, FT}
     strategy    :: ST
     strategy_ws :: SW
@@ -1014,12 +1238,15 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     # `:moisture_filtered` closure (0 ⇒ equivalent to `:endpoint_balanced`, up to
     # the dm = (m_next−m_cur)/(2·steps) round-trip in F32).
     smooth_iters :: Int
-    # `:omega_consistent` closure scratch (else `nothing`): OMEGA/QV PCHIP read
+    # OMEGA closure scratch (else `nothing`): OMEGA/QV PCHIP read
     # buffers + the smooth OMEGA-derived per-layer vertical-convergence target
     # vdiv_om (downward-positive, Σ_k=0). Populated per window in `ingest_window!`.
     omega_buf :: VO
     qv_buf    :: VO
     vdiv_om   :: VO
+    vdiv_target :: VO
+    omega_regularization :: OmegaRegularization
+    omega_regularization_scratch :: OR
 end
 
 const _GEOS_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
@@ -1040,7 +1267,8 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                    global_mass_target_kg::Real = NaN,
                                    balance_mode::Symbol = :column,
                                    cm_closure::Symbol = :endpoint_balanced,
-                                   smooth_iters::Integer = 8) where FT
+                                   smooth_iters::Integer = 8,
+                                   omega_regularization::OmegaRegularization = OmegaRegularization()) where FT
     Nc = grid.Nc
     Nz = vertical.Nz
     Nz_native = vertical.Nz_native
@@ -1077,23 +1305,29 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     balance_mode in (:column, :per_layer) ||
         error("GEOS-CS balance_mode must be :column or :per_layer; got $(balance_mode)")
     cm_closure in (:endpoint_balanced, :pressure_fixer, :moisture_filtered,
-                   :pfix_corrected, :omega_consistent) ||
+                   :pfix_corrected, :omega_full_replacement, :omega_regularized) ||
         error("GEOS-CS cm_closure must be :endpoint_balanced, :pressure_fixer, " *
-              ":moisture_filtered, :pfix_corrected, or :omega_consistent; got $(cm_closure)")
-    if cm_closure === :omega_consistent
+              ":moisture_filtered, :pfix_corrected, :omega_full_replacement, " *
+              "or :omega_regularized; got $(cm_closure)")
+    if _uses_omega(cm_closure)
+        global_mass_pin ||
+            error("GEOS-CS OMEGA-based cm closure requires global_mass_pin=true " *
+                  "to remove the unrealizable global column-mass mode")
         settings.include_vdiff_fields ||
-            error("GEOS-CS cm_closure=:omega_consistent needs A3dyn OMEGA + I3 QV; " *
+            error("GEOS-CS OMEGA-based cm closure needs A3dyn OMEGA + I3 QV; " *
                   "set [source].include_vdiff_fields=true")
         grid.Nc == settings.Nc ||
-            error("GEOS-CS cm_closure=:omega_consistent is wired for the native " *
+            error("GEOS-CS OMEGA-based cm closure requires the native " *
                   "passthrough (target Nc == source Nc) only; got target Nc=$(grid.Nc), " *
                   "source Nc=$(settings.Nc).")
         Nz == Nz_native ||
-            error("GEOS-CS cm_closure=:omega_consistent is wired for the identity " *
+            error("GEOS-CS OMEGA-based cm closure requires the identity " *
                   "vertical transform (Nz == Nz_native) only; got Nz=$(Nz), " *
                   "Nz_native=$(Nz_native). Use [vertical].transform=\"identity\" " *
                   "(the validated full-L72 build).")
     end
+    cm_closure === :omega_regularized &&
+        _validate_omega_regularization(omega_regularization)
     # ΔB[k] = B_interface[k+1] − B_interface[k] (TOA-first; Σ ΔB = 1 by hybrid
     # sigma-pressure construction). The merged_vc is the target coordinate (same
     # source the identity plan above is built from). Used by :pressure_fixer cm.
@@ -1126,18 +1360,29 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     # OMEGA-consistent closure scratch: OMEGA/QV read buffers + the smooth
     # vertical-convergence target. Identity passthrough (Nc==settings.Nc,
     # Nz==Nz_native) is enforced above, so all three are target-shaped.
-    omega_buf = cm_closure === :omega_consistent ?
+    omega_buf = _uses_omega(cm_closure) ?
         ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
-    qv_buf = cm_closure === :omega_consistent ?
+    qv_buf = _uses_omega(cm_closure) ?
         ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
-    vdiv_om = cm_closure === :omega_consistent ?
+    vdiv_om = _uses_omega(cm_closure) ?
         ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
+    vdiv_target = _uses_omega(cm_closure) ?
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
+    omega_regularization_scratch = if cm_closure === :omega_regularized
+        nc = npanel * Nc * Nc
+        OmegaRegularizationScratch(
+            ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), npanel),
+            zeros(Float64, nc), zeros(Float64, nc), zeros(Float64, nc),
+            zeros(Float64, nc))
+    else
+        nothing
+    end
     raw = allocate_raw_window(settings; FT = FT, Nz = Nz_native)
 
     return GEOSCubedSphereWindowWorkspace{
         FT, typeof(strategy), typeof(strategy_ws), typeof(raw), typeof(cell_areas),
         typeof(plan), typeof(cmfmc_v4), typeof(dtrain_v4), typeof(vdiff_v4),
-        typeof(vdiv_om)}(
+        typeof(vdiv_om), typeof(omega_regularization_scratch)}(
             strategy, strategy_ws, raw, plan,
             am_native_v4, bm_native_v4, m_native_kg,
             am_v4, bm_v4, cm_v4, dm_v4,
@@ -1148,7 +1393,8 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             target, min_steps, max_steps, chain_mass,
             Bool(global_mass_pin), Float64(global_mass_target_kg),
             balance_mode, cm_closure, ΔB, m_next_delp, Int(smooth_iters),
-            omega_buf, qv_buf, vdiv_om)
+            omega_buf, qv_buf, vdiv_om, vdiv_target,
+            omega_regularization, omega_regularization_scratch)
 end
 
 function _geos_pin_global_mass_if_needed!(workspace::GEOSCubedSphereWindowWorkspace{FT},
@@ -1341,21 +1587,27 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         return bal_diag
     end
 
-    if workspace.cm_closure === :omega_consistent
-        # OMEGA-consistent cm closure (alpha=1, pure OMEGA). (1) Column-balance the
-        # native horizontal fluxes to the raw GEOS DELP_dry endpoint so the column
-        # closes (Σ_k div_h = Σ_k dm_dry). (2) Apply a per-level flux-potential
-        # correction so div_h_new[k] = dm[k] − vdiv_om[k] (vdiv_om from A3dyn OMEGA,
-        # built at base flux scaling in ingest, rescaled here to the chosen steps).
-        # (3) Diagnose cm: the telescoped cm then has vdiv[k]=cm[k]−cm[k+1]=+vdiv_om
-        # (smooth, anti-fingering); continuity is exact by construction (the
-        # correction lives in continuity's null space and Σ_k vdiv_om=0 ⇒ cm[Nz+1]=0).
+    if _uses_omega(workspace.cm_closure)
+        # Both OMEGA modes first column-balance the native horizontal fluxes to
+        # the analyzed dry endpoint. `:omega_full_replacement` then replaces the full
+        # per-layer convergence target. `:omega_regularized` keeps that diagnosed
+        # native target at resolved scales and outside the UTLS, adding only the
+        # pressure-tapered high-pass OMEGA discrepancy with a per-level flux cap.
+        # The final cm is always diagnosed from the realized horizontal fluxes,
+        # so continuity remains exact even when the regularized target is capped.
         bal_diag = balance_cs_column_mass_fluxes!(
             workspace.am_v4, workspace.bm_v4, workspace.m_cur,
             workspace.m_next_target, grid.face_table, grid.cell_degree, steps,
             grid.poisson_scratch)
         fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
                                       workspace.m_next_target, steps)
+        global_dm = sum(sum(Float64, panel) for panel in workspace.dm_v4)
+        global_mass = sum(sum(Float64, panel) for panel in workspace.m_cur)
+        global_tendency_rel = abs(2 * steps * global_dm) / global_mass
+        global_tendency_rel <= replay_tolerance(FT) ||
+            error("OMEGA reconstruction requires a globally closed endpoint mass " *
+                  "tendency; relative residual $(global_tendency_rel) exceeds " *
+                  "replay tolerance $(replay_tolerance(FT))")
         # vdiv_om was built at base tau=mass_flux_dt/2 (i.e. steps=source_steps_per_met).
         # Pass the per-substep scale (= source_steps_per_met/steps, same as the flux
         # rescale) so dm and vdiv share units, WITHOUT mutating the stored array
@@ -1363,15 +1615,45 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         vdiv_scale = workspace.source_steps_per_met / steps
         _OMEGA_TIMING[] && (_OMEGA_TIMING_STATE.prepares += 1)
         _t_recon = _OMEGA_TIMING[] ? time() : 0.0
-        recon = _reconstruct_omega_consistent!(workspace.am_v4, workspace.bm_v4,
-                                               workspace.dm_v4, workspace.vdiv_om,
-                                               grid, Float64(vdiv_scale))
+        target = if workspace.cm_closure === :omega_regularized
+            # Preserve endpoint-balanced transport as the resolved-scale reference.
+            # OMEGA only supplies a capped, UTLS-local grid-scale correction.
+            diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
+                            workspace.dm_v4, workspace.m_cur, Nc, Nz)
+            _regularize_omega_target!(
+                workspace.vdiv_target, workspace.cm_v4, workspace.vdiv_om,
+                workspace.m_cur, workspace.m_next_target, grid, workspace.g,
+                Float64(vdiv_scale),
+                workspace.omega_regularization,
+                workspace.omega_regularization_scratch)
+        else
+            workspace.vdiv_om
+        end
+        target_scale = workspace.cm_closure === :omega_regularized ? 1.0 : Float64(vdiv_scale)
+        correction_cap = workspace.cm_closure === :omega_regularized ?
+            workspace.omega_regularization.max_relative_flux_correction : Inf
+        recon = _reconstruct_omega_target!(workspace.am_v4, workspace.bm_v4,
+                                               workspace.dm_v4, target,
+                                               grid, target_scale;
+                                               max_relative_correction = correction_cap)
+        bottom_max = maximum(@view recon.relative_correction_by_level[(Nz - 2):Nz])
+        if workspace.cm_closure === :omega_regularized &&
+           bottom_max > workspace.omega_regularization.max_bottom_flux_correction
+            error("OMEGA regularization altered a bottom-three-layer horizontal " *
+                  "flux by $(bottom_max) RMS, exceeding the configured fidelity " *
+                  "gate $(workspace.omega_regularization.max_bottom_flux_correction)")
+        end
         _OMEGA_TIMING[] && (_OMEGA_TIMING_STATE.recon_time += time() - _t_recon)
         diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
                         workspace.dm_v4, workspace.m_cur, Nc, Nz)
         return (bal_diag..., omega_max_increment = recon.max_increment,
                 omega_max_post_residual = recon.max_post_residual,
-                mode = :omega_consistent)
+                omega_max_relative_correction = recon.max_relative_correction,
+                omega_max_local_relative_correction =
+                    recon.max_local_relative_correction,
+                omega_max_bottom_relative_correction = bottom_max,
+                omega_global_mass_tendency_rel = global_tendency_rel,
+                mode = workspace.cm_closure)
     end
 
     bal_diag = if workspace.balance_mode === :per_layer
@@ -1427,7 +1709,7 @@ function _geos_select_steps_for_window!(workspace::GEOSCubedSphereWindowWorkspac
         throw(ArgumentError("GEOS steps_schedule length $(length(workspace.steps_schedule)) " *
                             "cannot record window $(win)."))
     workspace.steps_schedule[win] = steps
-    if _OMEGA_TIMING[] && workspace.cm_closure === :omega_consistent
+    if _OMEGA_TIMING[] && _uses_omega(workspace.cm_closure)
         s = _OMEGA_TIMING_STATE
         @info @sprintf("  [OMEGA_TIMING] win %2d steps=%-4d prepares=%d solves=%d cg_iters=%d recon=%.3fs (%.4fs/window)",
                        win, steps, s.prepares, s.solves, s.cg_iters, s.recon_time, s.recon_time)
@@ -1499,11 +1781,11 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     for p in 1:CS_PANEL_COUNT
         copyto!(workspace.m_next_delp[p], workspace.m_next_target[p])
     end
-    # `:omega_consistent`: read A3dyn OMEGA + I3 QV (PCHIP time-interp to this
+    # OMEGA-based closures read A3dyn OMEGA + I3 QV (PCHIP time-interp to this
     # window's valid time) and build the smooth vdiv_om target at the BASE flux
     # scaling (tau = mass_flux_dt/2). `_geos_prepare_window_for_steps!` rescales
     # it by source_steps_per_met/steps to match the per-substep flux scaling.
-    if workspace.cm_closure === :omega_consistent
+    if _uses_omega(workspace.cm_closure)
         _read_geos_omega_qv_pchip!(workspace.omega_buf, workspace.qv_buf,
                                    reader.handles, win, Nc, Nz)
         tau_base = FT(settings.mass_flux_dt / 2)
@@ -1698,7 +1980,8 @@ function _process_day_geos_cs_unified(date::Date,
                                       global_mass_target_kg::Real,
                                       balance_mode::Symbol,
                                       cm_closure::Symbol = :endpoint_balanced,
-                                      smooth_iters::Integer = 8)
+                                      smooth_iters::Integer = 8,
+                                      omega_regularization::OmegaRegularization = OmegaRegularization())
     _OMEGA_TIMING[] = get(ENV, "ATMOS_OMEGA_TIMING", "0") in ("1", "true", "yes")
     Nc     = grid.Nc
     npanel = CS_PANEL_COUNT
@@ -1713,10 +1996,10 @@ function _process_day_geos_cs_unified(date::Date,
                          seed = reader_seed,
                          chain_mass = chain_mass,
                          next_day_handle = true,
-                         # Only the OMEGA-consistent closure reads the prev/next-day
+                         # Only OMEGA-based closures read the prev/next-day
                          # A3dyn+I3 handles (cross-midnight PCHIP); every other
                          # closure leaves them `nothing` (no extra opens).
-                         adjacent_omega = cm_closure === :omega_consistent)
+                         adjacent_omega = _uses_omega(cm_closure))
     driver_started = false
     inner_writer = nothing
     tmp_path = out_path * ".tmp"
@@ -1735,7 +2018,8 @@ function _process_day_geos_cs_unified(date::Date,
                                                global_mass_target_kg = global_mass_target_kg,
                                                balance_mode = balance_mode,
                                                cm_closure = cm_closure,
-                                               smooth_iters = smooth_iters)
+                                               smooth_iters = smooth_iters,
+                                               omega_regularization = omega_regularization)
 
         @info "GEOS → CS: $(date), source=$(settings) → $(out_path) [unified]"
         @info "  source_C=$(settings.Nc) target_C=$Nc  strategy=$(_geos_cs_strategy_name(workspace.strategy))"
@@ -1792,6 +2076,10 @@ function _process_day_geos_cs_unified(date::Date,
                         "fv3_pressure_fixer_native_horizontal_plus_zerosum_spatial_lowpass_drift_correction" :
                     workspace.cm_closure === :moisture_filtered ?
                         "diagnosed_from_balanced_horizontal_and_filtered_endpoint_moisture_residual_smoothed" :
+                    workspace.cm_closure === :omega_full_replacement ?
+                        "omega_full_replacement_with_per_level_horizontal_potential" :
+                    workspace.cm_closure === :omega_regularized ?
+                        "omega_utls_highpass_regularized_with_per_level_correction_cap" :
                         "diagnosed_from_balanced_horizontal_and_endpoint",
                 "geos_global_mass_pin_enabled" => global_mass_pin,
                 "geos_global_mass_pin_target_kg" => isfinite(workspace.global_mass_target_kg) ?
@@ -1816,6 +2104,18 @@ function _process_day_geos_cs_unified(date::Date,
                 # production `:endpoint_balanced` headers stay byte-for-byte identical.
                 (workspace.cm_closure in (:moisture_filtered, :pfix_corrected) ?
                     ("geos_moisture_filter_smooth_iters" => workspace.smooth_iters,) :
+                    ())...,
+                (workspace.cm_closure === :omega_regularized ?
+                    ("geos_omega_pressure_taper_hpa" =>
+                         collect(workspace.omega_regularization.pressure_taper_hpa),
+                     "geos_omega_smoothing_steps" =>
+                         workspace.omega_regularization.smoothing_steps,
+                     "geos_omega_smoothing_fraction" =>
+                         workspace.omega_regularization.smoothing_fraction,
+                     "geos_omega_max_relative_flux_correction" =>
+                         workspace.omega_regularization.max_relative_flux_correction,
+                     "geos_omega_max_bottom_flux_correction" =>
+                         workspace.omega_regularization.max_bottom_flux_correction) :
                     ())...,
             ),
         )
@@ -1935,6 +2235,7 @@ function process_day(date::Date,
                      balance_mode::Symbol = :column,
                      cm_closure::Symbol = :endpoint_balanced,
                      smooth_iters::Integer = 8,
+                     omega_regularization::OmegaRegularization = OmegaRegularization(),
                      next_day_hour0 = nothing)
     # Reject configurations the path cannot honor:
     mass_basis === :dry ||
@@ -1961,5 +2262,6 @@ function process_day(date::Date,
         balance_mode = balance_mode,
         cm_closure = cm_closure,
         smooth_iters = smooth_iters,
+        omega_regularization = omega_regularization,
     )
 end

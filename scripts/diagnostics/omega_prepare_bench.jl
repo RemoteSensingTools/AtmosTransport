@@ -1,5 +1,5 @@
 # ===========================================================================
-# Micro-benchmark + bit-identity harness for the `:omega_consistent` window
+# Micro-benchmark + bit-identity harness for OMEGA-based window
 # prepare (the per-level Poisson reconstruct that dominates GEOS-CS build time).
 #
 # Builds the real reader + workspace from a preprocessing config (single day),
@@ -41,15 +41,28 @@ function build_day_context(cfg_path::String, date::Date)
     numerics = get(cfg, "numerics", Dict{String, Any}())
     mass_fix = get(cfg, "mass_fix", Dict{String, Any}())
     target_kg = P._native_mass_fix_target_kg(cfg, grid)
-    return (cfg, FT, grid, settings, vertical, numerics, mass_fix, target_kg)
+    omega_cfg = get(numerics, "omega_regularization", Dict{String, Any}())
+    taper = get(omega_cfg, "pressure_taper_hpa", [50.0, 80.0, 300.0, 350.0])
+    omega_regularization = P.OmegaRegularization(
+        pressure_taper_hpa = ntuple(i -> Float64(taper[i]), 4),
+        smoothing_steps = Int(get(omega_cfg, "smoothing_steps", 3)),
+        smoothing_fraction = Float64(get(omega_cfg, "smoothing_fraction", 0.10)),
+        max_relative_flux_correction = Float64(
+            get(omega_cfg, "max_relative_flux_correction", 0.10)),
+        max_bottom_flux_correction = Float64(
+            get(omega_cfg, "max_bottom_flux_correction", 0.01)),
+    )
+    return (cfg, FT, grid, settings, vertical, numerics, mass_fix, target_kg,
+            omega_regularization)
 end
 
 function main()
     cfg_path = abspath(ARGS[1]); date = Date(ARGS[2])
     win = parse(Int, ARGS[3]); steps = parse(Int, ARGS[4])
     out = ARGS[5]
-    closure = length(ARGS) >= 6 ? Symbol(ARGS[6]) : :omega_consistent
-    (cfg, FT, grid, settings, vertical, numerics, mass_fix, target_kg) =
+    closure = length(ARGS) >= 6 ? Symbol(ARGS[6]) : :omega_regularized
+    (cfg, FT, grid, settings, vertical, numerics, mass_fix, target_kg,
+     omega_regularization) =
         build_day_context(cfg_path, date)
     dt_met = Float64(get(numerics, "dt_met_seconds", 3600.0))
     reader = P.open_reader(settings, date, FT; seed = nothing,
@@ -62,7 +75,8 @@ function main()
             windows_per_day = nw,
             global_mass_pin = Bool(get(mass_fix, "enable", false)),
             global_mass_target_kg = target_kg,
-            balance_mode = :column, cm_closure = closure, smooth_iters = 8)
+            balance_mode = :column, cm_closure = closure, smooth_iters = 8,
+            omega_regularization = omega_regularization)
     P._OMEGA_TIMING[] = true
 
     @printf("nthreads=%d  win=%d steps=%d\n", Threads.nthreads(), win, steps)
@@ -76,11 +90,21 @@ function main()
 
     # Timed fixed-steps prepare (the apples-to-apples reconstruct cost).
     t0 = time()
-    P._geos_prepare_window_for_steps!(ws, grid, steps)
+    diagnostics = P._geos_prepare_window_for_steps!(ws, grid, steps)
     elapsed = time() - t0
     s = P._OMEGA_TIMING_STATE
     @printf("PREPARE win=%d steps=%d  wall=%.3fs  recon=%.3fs  solves=%d cg_iters=%d\n",
             win, steps, elapsed, s.recon_time, s.solves, s.cg_iters)
+    if P._uses_omega(closure)
+        @printf("OMEGA correction max relative RMS=%.4f  max increment=%.3e  target residual=%.3e\n",
+                diagnostics.omega_max_relative_correction,
+                diagnostics.omega_max_increment,
+                diagnostics.omega_max_post_residual)
+        @printf("OMEGA correction max local characteristic ratio=%.4f\n",
+                diagnostics.omega_max_local_relative_correction)
+        @printf("OMEGA correction max bottom-three-layer RMS ratio=%.3e\n",
+                diagnostics.omega_max_bottom_relative_correction)
+    end
 
     # Per-column continuity residual + cm[Nz+1] closure, exactly as the binary
     # mass-balance audit (omega_consistent_mass_balance.jl 5a) does it. dm here is

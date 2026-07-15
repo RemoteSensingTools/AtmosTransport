@@ -804,6 +804,79 @@ end
     end
 end
 
+@testset "CS monotone advection preserves signed tracer offsets" begin
+    FT = Float64
+    Nc, Nz = 8, 2
+    q0 = FT(400e-6)
+    schemes = (
+        SlopesScheme(MonotoneLimiter()),
+        PPMScheme(MonotoneLimiter()),
+        LinRoodPPMScheme(5),
+    )
+
+    function advance_signed(scheme, mesh, panels_m, panels_rm,
+                            panels_am, panels_bm, panels_cm)
+        if scheme isa LinRoodPPMScheme
+            vertical = HybridSigmaPressure(FT[0, 100, 500], FT[0, 0.2, 1])
+            grid = AtmosGrid(mesh, vertical, CPU(); FT)
+            state = CubedSphereState(DryBasis, mesh, panels_m; tracer=panels_rm)
+            fluxes = CubedSphereFaceFluxState{DryBasis}(
+                panels_am, panels_bm, panels_cm)
+            ws = AtmosTransport.Operators.CSLinRoodAdvectionWorkspace(
+                mesh, state.air_mass[1])
+            strang_split!(state, fluxes, grid, scheme; workspace=ws)
+            return state.air_mass, state.tracers.tracer
+        end
+
+        ws = CSAdvectionWorkspace(mesh, Nz; FT)
+        strang_split_cs!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+                         mesh, scheme, ws; subcycle_count=1)
+        return panels_m, panels_rm
+    end
+
+    for scheme in schemes
+        @testset "$(nameof(typeof(scheme)))" begin
+            Hp = required_halo_width(scheme)
+            mesh, m_initial, rm_absolute =
+                make_structured_cs_state(; FT, Nc, Hp, Nz)
+            am, bm, cm = make_mirrored_cs_horizontal_fluxes(mesh, Nz)
+
+            rm_anomaly = ntuple(p -> rm_absolute[p] .- q0 .* m_initial[p], 6)
+            rm_negative = ntuple(p -> -q0 .* m_initial[p], 6)
+
+            m_abs, rm_abs_out = advance_signed(
+                scheme, mesh, map(copy, m_initial), map(copy, rm_absolute),
+                map(copy, am), map(copy, bm), map(copy, cm))
+            m_anom, rm_anom_out = advance_signed(
+                scheme, mesh, map(copy, m_initial), map(copy, rm_anomaly),
+                map(copy, am), map(copy, bm), map(copy, cm))
+            m_neg, rm_neg_out = advance_signed(
+                scheme, mesh, map(copy, m_initial), map(copy, rm_negative),
+                map(copy, am), map(copy, bm), map(copy, cm))
+
+            @test max_interior_absdiff(m_abs, m_anom, Nc, Hp, Nz) == 0
+            @test max_interior_absdiff(m_abs, m_neg, Nc, Hp, Nz) == 0
+
+            offset_error = 0.0
+            negative_vmr_error = 0.0
+            absolute_scale = 0.0
+            for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
+                ii, jj = Hp + i, Hp + j
+                reconstructed = rm_anom_out[p][ii, jj, k] +
+                                q0 * m_anom[p][ii, jj, k]
+                offset_error = max(offset_error,
+                                   abs(reconstructed - rm_abs_out[p][ii, jj, k]))
+                negative_vmr_error = max(negative_vmr_error,
+                    abs(rm_neg_out[p][ii, jj, k] / m_neg[p][ii, jj, k] + q0))
+                absolute_scale = max(absolute_scale,
+                                     abs(rm_abs_out[p][ii, jj, k]))
+            end
+            @test offset_error <= 512eps(absolute_scale)
+            @test negative_vmr_error <= 128eps(q0)
+        end
+    end
+end
+
 @testset "CS source mass closure — PPMScheme" begin
     @testset "Surface source stays equal to integrated source through transport" begin
         FT = Float64

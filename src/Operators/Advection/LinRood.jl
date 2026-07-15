@@ -619,105 +619,6 @@ end
 end
 
 # ---------------------------------------------------------------------------
-# Post-advection positivity fixer (GCHP fillz, fv_fill.F90:51-156)
-#
-# Three-pass column fixer for q-space transport:
-#   Pass 1: top→bottom — borrow from level below
-#   Pass 2: bottom→top — borrow from level above
-#   Pass 3: non-local column rescaling if any q still negative
-# One thread per (i,j) column; sequential over k (inherent to algorithm).
-# ---------------------------------------------------------------------------
-
-@kernel function _fillz_q_kernel!(q, @Const(m), Hp, Nz)
-    i, j = @index(Global, NTuple)
-    @inbounds begin
-        ii = Hp + i; jj = Hp + j
-        FT = eltype(q)
-
-        # Pass 1: sweep top to bottom, borrow from k+1
-        for k in 1:Nz-1
-            if q[ii, jj, k] < zero(FT)
-                deficit = -q[ii, jj, k] * m[ii, jj, k]
-                avail = max(q[ii, jj, k+1] * m[ii, jj, k+1], zero(FT))
-                transfer = min(deficit, avail)
-
-                mk  = m[ii, jj, k]
-                mkp = m[ii, jj, k+1]
-                q[ii, jj, k]   += mk  > eps(FT) ? transfer / mk  : zero(FT)
-                q[ii, jj, k+1] -= mkp > eps(FT) ? transfer / mkp : zero(FT)
-            end
-        end
-
-        # Pass 2: sweep bottom to top, borrow from k-1
-        for k in Nz:-1:2
-            if q[ii, jj, k] < zero(FT)
-                deficit = -q[ii, jj, k] * m[ii, jj, k]
-                avail = max(q[ii, jj, k-1] * m[ii, jj, k-1], zero(FT))
-                transfer = min(deficit, avail)
-
-                mk  = m[ii, jj, k]
-                mkm = m[ii, jj, k-1]
-                q[ii, jj, k]   += mk  > eps(FT) ? transfer / mk  : zero(FT)
-                q[ii, jj, k-1] -= mkm > eps(FT) ? transfer / mkm : zero(FT)
-            end
-        end
-
-        # Pass 3: non-local column rescaling if any q still negative
-        total_pos = zero(FT)
-        total_neg = zero(FT)
-        for k in 1:Nz
-            rm_k = q[ii, jj, k] * m[ii, jj, k]
-            if rm_k > zero(FT)
-                total_pos += rm_k
-            else
-                total_neg += rm_k
-            end
-        end
-
-        if total_neg < zero(FT) && total_pos > eps(FT)
-            scl = max((total_pos + total_neg) / total_pos, zero(FT))
-            for k in 1:Nz
-                if q[ii, jj, k] > zero(FT)
-                    q[ii, jj, k] *= scl
-                else
-                    q[ii, jj, k] = zero(FT)
-                end
-            end
-        elseif total_neg < zero(FT)
-            for k in 1:Nz
-                q[ii, jj, k] = zero(FT)
-            end
-        end
-    end
-end
-
-"""
-    fillz_q!(q_panels, m_panels, mesh)
-
-Post-advection positivity fixer for q-space transport.
-Fixes negative mixing ratios by borrowing mass from neighboring levels,
-then non-local column rescaling if needed. Port of GCHP's `fillz`
-(fv_fill.F90:51-156).
-"""
-function fillz_q!(q_panels::NTuple{6}, m_panels::NTuple{6}, mesh::CubedSphereMesh)
-    Nc = mesh.Nc; Hp = mesh.Hp; Nz = size(q_panels[1], 3)
-    backend = get_backend(q_panels[1])
-    k! = _fillz_q_kernel!(backend, 256)
-    for p in 1:6
-        k!(q_panels[p], m_panels[p], Hp, Nz; ndrange=(Nc, Nc))
-    end
-    synchronize(backend)
-end
-
-function _fillz_rm_panels!(rm_panels::NTuple{6}, m_panels::NTuple{6},
-                           mesh::CubedSphereMesh)
-    rm_to_q_panels!(rm_panels, m_panels, mesh)
-    fillz_q!(rm_panels, m_panels, mesh)
-    q_to_rm_panels!(rm_panels, m_panels, mesh)
-    return nothing
-end
-
-# ---------------------------------------------------------------------------
 # Main Lin-Rood Horizontal Advection
 # ---------------------------------------------------------------------------
 
@@ -926,9 +827,6 @@ function fv_tp_2d_cs_q!(q_panels, m_panels, am_panels, bm_panels,
         _copy_interior!(m_panels[p], ws_lr.dp_out[p], Nc, Hp, Nz)
     end
 
-    # Post-advection positivity fix (GCHP fillz)
-    fillz_q!(q_panels, m_panels, mesh)
-
     return nothing
 end
 
@@ -947,14 +845,10 @@ function strang_split_linrood_ppm!(rm_panels, m_panels, am_panels, bm_panels, cm
                                     cfl_limit=0.95, damp_coeff=0.0) where ORD
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                   mesh, Val(ORD), ws, ws_lr; damp_coeff)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                   mesh, Val(ORD), ws, ws_lr; damp_coeff=0.0)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     return nothing
 end
 
@@ -966,21 +860,17 @@ function _strang_split_linrood_ppm_cs!(rm_panels, m_panels, am_panels, bm_panels
     _ = cfl_limit
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                  mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws.cs)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     midpoint! === nothing || midpoint!()
     _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws.cs)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                  mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff = 0.0)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     return nothing
 end
 
 export LinRoodWorkspace, fv_tp_2d_cs!, fv_tp_2d_cs_q!, strang_split_linrood_ppm!
 export CSLinRoodAdvectionWorkspace
-export fillz_q!, apply_divergence_damping_cs!
+export apply_divergence_damping_cs!
 # Adjoint kernels. The forward kernels above are paired with
 # reverse-mode kernels defined in `linrood_adjoint_kernels.jl`, included
 # alongside this file from `Advection.jl`. Re-export below for `Adjoints`.

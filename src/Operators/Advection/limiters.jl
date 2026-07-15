@@ -165,34 +165,24 @@ end
 # ---- Moment limiters (operating on tracer mass) --------------------------
 #
 # After computing the slope in mixing-ratio space, we convert to the edge-offset
-# moment sx = m · slope / 2. This moment must also be limited to prevent the
-# Courant-fraction flux formula from producing negative tracer mass in the donor
-# cell.
-#
-# The moment limiter clamps:  -rm ≤ sx ≤ rm
-#
-# This ensures that even when α → 1 (full Courant), the outgoing tracer
-# flux F_q = α(rm + (1-α)·sx) cannot exceed rm (the cell's tracer mass).
+# moment sx = m · slope / 2. Monotonicity is already enforced relative to
+# neighbouring values. A second bound relative to tracer zero breaks signed
+# tracers and constant-offset invariance, so only the explicit
+# `PositivityLimiter` applies a zero-referenced moment clamp.
 
 """
     _limited_moment(sx, rm_cell, ::MonotoneLimiter)
 
-Clamp the first moment ``s_x`` to the interval ``[-r_m, r_m]``:
+Return the moment produced by the monotone mixing-ratio reconstruction.
 
-```math
-s_x^{\\text{lim}} = \\max\\bigl(\\min(s_x,\\; r_m),\\; -r_m\\bigr)
-```
-
-where ``r_m`` is the cell's tracer mass.  This guarantees that the
-reconstructed profile integrated over any Courant fraction ``\\alpha \\in [0,1]``
-yields a non-negative, bounded tracer flux.
-
-This is the TM5 moment limiter applied in `advectx__slopes` after the
-slope computation (Russell & Lerner 1981, eq. 12).
+The slope/profile limiter has already bounded reconstructed values by local
+neighbouring mixing ratios. Applying an additional ``[-r_m, r_m]`` clamp would
+anchor the result to zero: it reverses its bounds when ``r_m < 0`` and makes
+transporting ``q-q_0`` differ from transporting ``q``. Keeping the moment
+unchanged makes the default monotone scheme valid for signed tracers and
+equivariant under a constant VMR offset.
 """
-@inline function _limited_moment(sx, rm_cell, ::MonotoneLimiter)
-    return max(min(sx, rm_cell), -rm_cell)
-end
+@inline _limited_moment(sx, _rm_cell, ::MonotoneLimiter) = sx
 
 """
     _limited_moment(sx, rm_cell, ::NoLimiter)
@@ -204,7 +194,7 @@ No moment limiting — returns ``s_x`` unchanged.
 """
     _limited_moment(sx, rm_cell, ::PositivityLimiter)
 
-Same clamp as `MonotoneLimiter`: ``s_x \\in [-r_m, r_m]``.
-Ensures non-negative face values.
+Clamp ``s_x`` to ``[-r_m, r_m]``. This limiter requires a non-negative
+tracer field and is intentionally incompatible with signed tracers.
 """
 @inline _limited_moment(sx, rm_cell, ::PositivityLimiter) = max(min(sx, rm_cell), -rm_cell)

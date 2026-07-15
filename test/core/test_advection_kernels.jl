@@ -24,7 +24,7 @@ using .AtmosTransport
 using .AtmosTransport: Operators, Grids
 using .AtmosTransport.Grids: cell_areas_by_latitude
 using .AtmosTransport.Operators: MonotoneLimiter, strang_split!, strang_split_mt!
-using .AtmosTransport.Operators.Advection: _xface_tracer_flux
+using .AtmosTransport.Operators.Advection: _limited_moment, _xface_tracer_flux
 using .AtmosTransport.MetDrivers: diagnose_cm_from_continuity!
 using .AtmosTransport.State: StructuredFaceFluxState
 
@@ -141,6 +141,44 @@ end
 # =========================================================================
 # Test suite
 # =========================================================================
+
+@testset "default monotone moment is signed and offset-neutral" begin
+    limiter = MonotoneLimiter()
+    @test _limited_moment(0.0, -1.0, limiter) == 0.0
+    @test _limited_moment(-0.25, -1.0, limiter) == -0.25
+    @test _limited_moment(2.0, 1.0, limiter) == 2.0
+end
+
+@testset "structured monotone advection supports signed VMR" begin
+    FT = Float64
+    grid, m, _, rm_absolute, am, bm, cm = build_test_problem(FT)
+    q0 = FT(400e-6)
+
+    for scheme in (SlopesScheme(MonotoneLimiter()),
+                   PPMScheme(MonotoneLimiter()))
+        @testset "$(nameof(typeof(scheme)))" begin
+            # A uniform negative VMR is a valid signed contribution and must
+            # remain uniform while the carrier mass evolves.
+            rm_negative = -q0 .* m
+            m_negative, rm_negative_out =
+                run_strang!(m, rm_negative, am, bm, cm, grid, scheme)
+            q_negative_out = rm_negative_out ./ m_negative
+            @test q_negative_out ≈ fill(-q0, size(q_negative_out)) rtol=2e-13 atol=0
+
+            # Carrier-aware affine contract:
+            # A(r + q0*m_old) = A(r) + q0*m_new.
+            rm_anomaly = rm_absolute .- q0 .* m
+            m_abs, rm_abs_out =
+                run_strang!(m, rm_absolute, am, bm, cm, grid, scheme; n_steps=2)
+            m_anom, rm_anom_out =
+                run_strang!(m, rm_anomaly, am, bm, cm, grid, scheme; n_steps=2)
+            @test m_anom == m_abs
+            reconstructed = rm_anom_out .+ q0 .* m_anom
+            scale = maximum(abs, rm_abs_out)
+            @test maximum(abs, reconstructed .- rm_abs_out) <= 256eps(scale)
+        end
+    end
+end
 
 @testset "SlopesScheme face flux uses half-slope moment" begin
     m0 = 10.0

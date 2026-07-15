@@ -136,16 +136,7 @@ end
     return q_L_new, dq_L_new, q_R, dq_R
 end
 
-@inline function _limited_moment_monotone_ad(sx, dsx, rm_cell, drm_cell)
-    limited_min = min(sx, rm_cell)
-    if limited_min < -rm_cell
-        return -rm_cell, _d6_scale(drm_cell, -one(typeof(rm_cell)))
-    elseif sx > rm_cell
-        return rm_cell, drm_cell
-    else
-        return sx, dsx
-    end
-end
+@inline _limited_moment_monotone_ad(sx, dsx, _rm_cell, _drm_cell) = (sx, dsx)
 
 @inline function _ppm_monotone_face_coeffs(F,
                                            m_3, m_2, m_1, m_0, m_p, m_pp,

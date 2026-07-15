@@ -95,6 +95,6 @@ export fill_panel_halos!, copy_corners!, strang_split_cs!, strang_split_cs_mt!,
 # Lin-Rood cross-term advection (FV3 fv_tp_2d)
 export LinRoodWorkspace, CSLinRoodAdvectionWorkspace
 export fv_tp_2d_cs!, fv_tp_2d_cs_q!, strang_split_linrood_ppm!
-export fillz_q!, apply_divergence_damping_cs!
+export apply_divergence_damping_cs!
 
 end # module Operators

@@ -9,7 +9,7 @@
 # preprocessing-side (interpolated 0.25° → N320).
 #
 # The ONE field ARCO lacks is the convective mass flux (forecast params
-# 235009-012) — download those separately from CDS in ~6-day chunks via
+# 235009-012) — download those separately as daily CDS requests via
 # config/downloads/era5_convection_only.toml.
 #
 #   julia --project=. scripts/downloads/download_data.jl \

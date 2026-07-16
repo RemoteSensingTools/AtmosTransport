@@ -120,8 +120,30 @@ end
 
 function open_era5_surface_reader(surface_dir::AbstractString, date::Date,
                                   Nx::Int, Ny::Int)
+    # ARCO layout: one netCDF per variable under
+    # `<surface_dir>/arco/YYYYMMDD/<variable>.nc` (blh, zust, sshf, slhf, t2m, …).
+    # The var-binding below already searches across a Vector of datasets, so we
+    # just open them all. tmp_dir stays `nothing` — these are the real download,
+    # not an extracted temp, so they must NOT be deleted on close.
+    arco_dir = joinpath(expand_data_path(surface_dir), "arco",
+                        Dates.format(date, "yyyymmdd"))
+    if isdir(arco_dir)
+        arco_ncs = sort!(filter(f -> endswith(lowercase(f), ".nc"),
+                                readdir(arco_dir; join = true)))
+        isempty(arco_ncs) ||
+            return _open_era5_surface_reader_from(arco_ncs, nothing, arco_dir,
+                                                  date, Nx, Ny)
+    end
+
     path = _resolve_era5_surface_path(surface_dir, date)
     nc_paths, tmp_dir = _surface_nc_paths(path)
+    return _open_era5_surface_reader_from(nc_paths, tmp_dir, path, date, Nx, Ny)
+end
+
+function _open_era5_surface_reader_from(nc_paths::Vector{String},
+                                        tmp_dir::Union{Nothing, String},
+                                        path::AbstractString, date::Date,
+                                        Nx::Int, Ny::Int)
     datasets = NCDataset[]
     try
         for nc_path in nc_paths
@@ -135,7 +157,7 @@ function open_era5_surface_reader(surface_dir::AbstractString, date::Date,
         rethrow()
     end
     time_len = isempty(datasets) ? 0 : maximum(_surface_time_len, datasets)
-    return ERA5SurfaceReader(datasets, path, tmp_dir, date, Nx, Ny, time_len)
+    return ERA5SurfaceReader(datasets, String(path), tmp_dir, date, Nx, Ny, time_len)
 end
 
 function close_era5_surface_reader(reader::ERA5SurfaceReader)

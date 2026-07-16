@@ -18,7 +18,7 @@ the maintained data-layout guidance.
 | Recipe | Source | Chunk | Description |
 |--------|--------|-------|-------------|
 | `era5_arco.toml` | ERA5-ARCO | Daily | **Default ERA5 core+surface.** Native spectral GRIB + single_level netCDF from Google ARCO-ERA5 (GCS, no MARS queue, ~78 MB/s) |
-| `era5_convection_only.toml` | ERA5 (CDS) | ≤6-day | Convective mass flux (235009-012) — the one field ARCO lacks; ≤6-day chunks stay under MARS's 150 GB limit |
+| `era5_convection_only.toml` | ERA5 (CDS) | Daily | Convective mass flux (235009-012) — the one field ARCO lacks; daily requests retain normal CDS priority |
 | `era5_native_monthly.toml` | ERA5 (CDS) | Monthly | Legacy all-fields CDS path (core/convection/surface); MARS-queue-bound |
 | `geosfp_c720.toml` | GEOS-FP | Per-file | C720 cubed-sphere CTM mass fluxes from WashU |
 | `geosit_c180.toml` | GEOS-IT | Per-file | C180 cubed-sphere from AWS S3 |

@@ -1,0 +1,39 @@
+# ===========================================================================
+# ERA5 N320 (ARCO) → C90 — full-physics production configuration.
+#
+# Core dynamics, moisture, surface pressure and PBL inputs come from ARCO.
+# Daily convective diagnostics come from CDS and are converted on the target
+# grid; TM5 boundary-layer diffusion is diagnosed from the target-column state.
+#
+# One process per day:
+#   julia -t 16 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+#       config/preprocessing/era5_n320_arco_full_to_c90.toml --day 2023-01-02
+# ===========================================================================
+
+[source]
+toml     = "config/met_sources/era5_n320_arco_full.toml"
+root_dir = "/home/cfranken/data/AtmosTransport/met/era5/N320/hourly/raw"
+
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+
+[output]
+directory  = "/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_full_l137_f32"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 90
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+chain_mass     = false
+
+[mass_fix]
+enable = true
+mode = "target_ps_dry"
+target_ps_dry_pa = 98726.0

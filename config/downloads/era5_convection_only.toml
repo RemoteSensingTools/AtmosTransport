@@ -1,20 +1,23 @@
 # ===========================================================================
-# ERA5 convective mass-flux download ONLY (params 235009-012, forecast).
+# ERA5 convective mass-flux download ONLY (params 235009-012, forecast) — DAILY.
 #
 # Companion to the ARCO-ERA5 core path: core dynamics/moisture come from the
-# queue-free Google ARCO GRIB mirror; the convective fields are the one thing
-# ARCO lacks, so we still pull them from CDS — but ONLY these fields, in
-# ~6-day chunks. The MARS 150 GB/request limit counts UNCOMPRESSED field data:
-# convection is ~21 GB/day uncompressed (4 params x 137 lev x 24 fc-steps;
-# ~7.4 GB/day compressed on disk), so ~6 days ~126 GB is safely under 150 GB —
-# 15 days (~316 GB) would FAIL like the April monthly attempts.
+# queue-free Google ARCO GRIB mirror; convection — the one field ARCO lacks —
+# comes from CDS (dataset reanalysis-era5-complete, MARS-C3S backed).
 #
-# chunk = "monthly" groups a <=6-day --start/--end range into ONE request.
-# Files are named by chunk-start date; split to per-day with eccodes grib_copy
-# (by dataDate) before preprocessing, which expects era5_convection_YYYYMMDD.grib.
+# ONE REQUEST PER DAY (chunk = "daily"), NOT multi-day chunks. Rationale:
+#   * CDS gives "very large requests very low priority" — a daily request is
+#     ~21 GB (well under the 150 GB limit) and gets NORMAL priority, whereas a
+#     6-day chunk (~126 GB) is deprioritized and sits in the queue. Empirically,
+#     daily requests completed while 6-day chunks stalled.
+#   * Daily produces era5_convection_YYYYMMDD.grib directly — the exact per-day
+#     file the preprocessor reads — so NO grib_copy split step is needed.
+# The MARS-C3S archive caps concurrent RUNNING requests at 65 GLOBALLY (all
+# users), so the driver holds many daily requests queued at once (up to the
+# per-user limit) rather than drip-feeding.
 #
 #   julia --project=. scripts/downloads/download_data.jl \
-#       config/downloads/era5_convection_only.toml --start 2022-11-16 --end 2022-11-30
+#       config/downloads/era5_convection_only.toml --start 2023-01-02 --end 2023-01-02
 # ===========================================================================
 
 [source]
@@ -41,12 +44,12 @@ grid_name = "N320"
 cadence = "hourly"
 payload_type = "raw"
 subdirectory_by_request = true                    # -> ml_fc_convection/
-filename_template = "era5_convection_{date}.grib" # {date} = chunk-start; split to per-day later
+filename_template = "era5_convection_{date}.grib" # per-day, read directly by the preprocessor
 
 [schedule]
 start_date = "2022-11-16"
-end_date = "2022-11-21"
-chunk = "monthly"                                 # <=6-day range -> one request
+end_date = "2023-12-31"
+chunk = "daily"                                   # one request per day (~21 GB, normal priority)
 
 [options]
 max_retries = 8

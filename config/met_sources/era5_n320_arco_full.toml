@@ -1,0 +1,37 @@
+# ===========================================================================
+# ERA5 N320 (ARCO-assembled) — FULL PHYSICS Met Data Source Configuration
+#
+# Production ARCO variant with the full catrine physics enabled: surface PBL
+# fields + TM5 boundary-layer diffusion (:kz) + TM5 four-field convection.
+#
+# Inputs on disk (see config/downloads/era5_arco.toml + era5_convection_only.toml):
+#   ml_an_native_core/era5_core_YYYYMMDD.grib          (ARCO dve+tw+o3q concat)
+#   sfc_an_native/arco/YYYYMMDD/<var>.nc               (ARCO single_level: blh,
+#                                                       zust, sshf, slhf, t2m, sp, …)
+#   ml_fc_convection/era5_convection_YYYYMMDD.grib     (CDS 235009-012, PER-DAY —
+#                                                       no post-download split)
+#
+# PS comes from the ARCO single_level `sp` (arco_surface_pressure); the surface
+# reader auto-detects the per-variable ARCO layout under sfc_an_native/arco/.
+# ===========================================================================
+
+[source]
+name        = "ERA5-N320"
+description = "ECMWF ERA5 — native N320 GRIB (ARCO) + CDS convection, full physics"
+institution = "ECMWF (data) / Google Research (ARCO mirror)"
+reference   = "https://github.com/google-research/arco-era5"
+
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+
+[preprocessing]
+level_orientation = "top_down"
+
+# ARCO core carries no spectral lnsp → source PS from ARCO single_level sp.
+arco_surface_pressure = true
+
+# Full physics: surface PBL + TM5 bldiff diffusion (:kz) + TM5 convection.
+include_surface       = true
+include_convection    = true
+include_vdiff_fields  = false   # VDIFF payload reader not implemented (flag ignored)
+include_tm5_diffusion = true

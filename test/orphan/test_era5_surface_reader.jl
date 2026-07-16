@@ -123,6 +123,48 @@ end
     end
 end
 
+@testset "ERA5 surface reader opens ARCO per-variable layout" begin
+    mktempdir() do dir
+        date = Date(2021, 12, 1)
+        arco_dir = joinpath(dir, "arco", "20211201")
+        mkpath(arco_dir)
+        fields = (
+            "boundary_layer_height" => ("blh", 1000.0, "m"),
+            "friction_velocity" => ("zust", 0.25, "m s**-1"),
+            "surface_sensible_heat_flux" => ("sshf", -360.0, "J m**-2"),
+            "surface_latent_heat_flux" => ("slhf", -720.0, "J m**-2"),
+            "2m_temperature" => ("t2m", 290.0, "K"),
+        )
+        for (filename, (variable, value, units)) in fields
+            NCDataset(joinpath(arco_dir, "$filename.nc"), "c") do ds
+                ds.dim["longitude"] = 4
+                ds.dim["latitude"] = 3
+                ds.dim["time"] = 24
+                defVar(ds, "longitude", [0.0, 90.0, 180.0, 270.0], ("longitude",))
+                defVar(ds, "latitude", [90.0, 0.0, -90.0], ("latitude",))
+                defVar(ds, "time", collect(0:23), ("time",))
+                defVar(ds, variable, fill(value, 4, 3, 24),
+                       ("longitude", "latitude", "time"); attrib = ["units" => units])
+            end
+        end
+
+        reader = AtmosTransport.Preprocessing.open_era5_surface_reader(
+            dir, date, 4, 3)
+        try
+            surface = AtmosTransport.Preprocessing.load_era5_surface_window(
+                reader, 1, Float64; with_latent = true)
+            @test all(surface.pblh .== 1000.0)
+            @test all(surface.ustar .== 0.25)
+            @test all(surface.hflux .== 0.1)
+            @test all(surface.lhflux .== 0.2)
+            @test all(surface.t2m .== 290.0)
+        finally
+            AtmosTransport.Preprocessing.close_era5_surface_reader(reader)
+        end
+        @test isdir(arco_dir)
+    end
+end
+
 @testset "ERA5 surface reader opens split CDS ZIP payloads" begin
     mktempdir() do dir
         inst_path = joinpath(dir, "data_stream-oper_stepType-instant.nc")

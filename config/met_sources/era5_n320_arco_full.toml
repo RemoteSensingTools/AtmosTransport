@@ -33,5 +33,4 @@ arco_surface_pressure = true
 # Full physics: surface PBL + TM5 bldiff diffusion (:kz) + TM5 convection.
 include_surface       = true
 include_convection    = true
-include_vdiff_fields  = false   # VDIFF payload reader not implemented (flag ignored)
 include_tm5_diffusion = true

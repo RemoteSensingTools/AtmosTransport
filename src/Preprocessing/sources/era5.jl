@@ -180,11 +180,20 @@ function open_era5_day(settings::AbstractERA5GRIBSettings, date::Date;
 
     surface_path = nothing
     if settings.include_surface
-        candidate = era5_grib_path(settings, date, :surface)
-        isfile(candidate) ||
-            error("ERA5 surface GRIB not found: $candidate " *
-                  "(include_surface=true)")
-        surface_path = candidate
+        if settings.arco_surface_pressure
+            candidate = joinpath(settings.root_dir, "sfc_an_native", "arco",
+                                 Dates.format(date, "yyyymmdd"))
+            isdir(candidate) ||
+                error("ERA5 ARCO surface directory not found: $candidate " *
+                      "(include_surface=true, arco_surface_pressure=true)")
+            surface_path = candidate
+        else
+            candidate = era5_grib_path(settings, date, :surface)
+            isfile(candidate) ||
+                error("ERA5 surface GRIB not found: $candidate " *
+                      "(include_surface=true)")
+            surface_path = candidate
+        end
     end
 
     next_core_path = nothing

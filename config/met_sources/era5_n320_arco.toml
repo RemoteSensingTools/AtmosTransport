@@ -34,5 +34,4 @@ arco_surface_pressure = true
 # Optional GRIB streams — OFF for the core+PS advection binary (see header).
 include_surface       = false
 include_convection    = false
-include_vdiff_fields  = false
 include_tm5_diffusion = false

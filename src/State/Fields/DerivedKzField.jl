@@ -31,6 +31,9 @@ Base.@kwdef struct PBLPhysicsParameters{FT <: AbstractFloat}
     rho_ref  :: FT = FT(1.225)
 end
 
+@inline _pbl_cbrt(x::Float64) = cbrt(x)
+@inline _pbl_cbrt(x::FT) where FT <: AbstractFloat = x^(one(FT) / FT(3))
+
 # =========================================================================
 # Pure helper functions — line-for-line port from the legacy PBL
 # diffusion module. Git archaeology: commit ec2d2c0 contains
@@ -67,10 +70,10 @@ Pure: no side effects, no allocation — safe to call inside a kernel.
         # Unstable BL
         if z_eff < FT(0.1) * h_pbl
             # Surface layer (TM5 sffrac = 0.1)
-            Kz = ustar * κ * z_eff * zzh2 * cbrt(FT(1) - p.β_h * z_eff / L_ob)
+            Kz = ustar * κ * z_eff * zzh2 * _pbl_cbrt(FT(1) - p.β_h * z_eff / L_ob)
         else
             # Mixed layer
-            w_m = ustar * cbrt(FT(1) - FT(0.1) * p.β_h * h_pbl / L_ob)
+            w_m = ustar * _pbl_cbrt(FT(1) - FT(0.1) * p.β_h * h_pbl / L_ob)
             Kz = w_m * κ * z_eff * zzh2
         end
         # Convective Prandtl correction (Kh ≥ Km)
@@ -126,8 +129,8 @@ commit ec2d2c0, path `src_legacy/Diffusion/pbl_diffusion.jl:198-210`).
                                   p::PBLPhysicsParameters{FT}) where FT
     if L_ob < zero(FT) && H_kin > zero(FT) && h_pbl > FT(10)
         fL     = max(FT(1) - FT(0.5) * h_pbl / L_ob, FT(1))
-        x_h    = cbrt(fL)
-        w_star = cbrt(H_kin * p.gravity * h_pbl / t2m)
+        x_h    = _pbl_cbrt(fL)
+        w_star = _pbl_cbrt(H_kin * p.gravity * h_pbl / t2m)
         Pr_inv = x_h / sqrt(fL) + FT(7.2) * w_star / (ustar * x_h)
         return max(Pr_inv, one(FT))
     end

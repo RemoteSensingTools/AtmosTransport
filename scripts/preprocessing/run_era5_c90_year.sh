@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate one year of ERA5 N320 → C90 v4 binaries as independent day jobs.
+# Generate one year of ERA5 N320 → C90 L66 v4 binaries as independent day jobs.
 # The driver waits for each ARCO day plus its next-day endpoint, so it can run
 # concurrently with a chronological raw-data download. Successful days receive
 # a `.validated` sentinel after both the runtime-reader and continuity checks.
@@ -14,7 +14,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CONFIG="config/preprocessing/era5_n320_arco_diffusion_to_c90.toml"
 DATA_ROOT="${ATMOS_DATA_ROOT:-$HOME/data/AtmosTransport}"
 RAW="$DATA_ROOT/met/era5/N320/hourly/raw"
-OUTPUT="$DATA_ROOT/met/era5/n320_to_c90/transport_binary_v4_l137_f32_no_convection"
+OUTPUT="$DATA_ROOT/met/era5/n320_to_c90/transport_binary_v4_l66_f32_no_convection"
 LOGS="$OUTPUT/_logs"
 SURFACE_VARS=(surface_pressure boundary_layer_height friction_velocity \
               surface_sensible_heat_flux surface_latent_heat_flux 2m_temperature)

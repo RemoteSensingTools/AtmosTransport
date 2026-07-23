@@ -121,6 +121,7 @@ nlat = 37
 [vertical]
 transform   = "merge_above_pressure"   # "identity" | "merge_above_pressure" |
                                        #   "merge_layers_thinner_than" |
+                                       #   "level_selection" |
                                        #   "pressure_overlap"
 threshold_pa = 25.0                    # merge anything above 0.25 hPa into one layer
 coefficients = "config/era5_L137_coefficients.toml"
@@ -141,6 +142,19 @@ enable                = true
 target_ps_dry_pa      = 98726.0
 qv_global_climatology = 0.00247
 ```
+
+Native ERA5 can reuse the named L137 interface-selection presets:
+
+```toml
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+transform = "level_selection"
+preset = "ml137_66L"
+```
+
+The N320 reader still synthesizes all 137 native levels. The transform is
+applied on the target grid: layer mass and horizontal mass fluxes are summed
+over each group, while thermodynamic fields are pressure-mass weighted.
 
 For GEOS-native preprocessing the `[input]` block is replaced by a
 `[source]` block (e.g. `name = "GEOS-IT"`) and the vertical transform

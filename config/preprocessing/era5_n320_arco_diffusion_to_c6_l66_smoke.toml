@@ -1,8 +1,4 @@
-# ===========================================================================
-# ERA5 N320 (ARCO) → C90, L66, FP32, exact TM5 diffusion, no convection.
-# Convection can later be supplied as a date-matched sidecar without
-# recomputing winds, mass closure, or diffusion.
-# ===========================================================================
+# End-to-end L137 -> L66 integration smoke for the ERA5 native pipeline.
 
 [source]
 toml     = "config/met_sources/era5_n320_arco_diffusion.toml"
@@ -14,12 +10,12 @@ transform = "level_selection"
 preset = "ml137_66L"
 
 [output]
-directory  = "/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_no_convection"
+directory  = "/tmp/atmos-era5-c6-l66-smoke"
 mass_basis = "dry"
 
 [grid]
 type                = "cubed_sphere"
-Nc                  = 90
+Nc                  = 6
 panel_convention    = "geos_native"
 definition          = "gmao_equal_distance"
 regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"

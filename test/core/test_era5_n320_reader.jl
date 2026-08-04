@@ -144,9 +144,33 @@ end
             s_conv = ERA5N320Settings(; root_dir = root, include_convection = true)
             @test_throws "ERA5 convection GRIB not found" open_era5_day(s_conv, Date(2021, 12, 1))
 
-            # Surface requested but missing.
+            # Surface requested but missing in BOTH layouts (GRIB and ARCO).
             s_surf = ERA5N320Settings(; root_dir = root, include_surface = true)
-            @test_throws "ERA5 surface GRIB not found" open_era5_day(s_surf, Date(2021, 12, 1))
+            @test_throws "ERA5 surface data not found" open_era5_day(s_surf, Date(2021, 12, 1))
+            @test_throws "era5_surface_20211201.grib" open_era5_day(s_surf, Date(2021, 12, 1))
+            @test_throws "arco" open_era5_day(s_surf, Date(2021, 12, 1))
+
+            # An ARCO directory with no netCDFs does not satisfy the gate.
+            arco_dir = joinpath(root, "sfc_an_native", "arco", "20211201")
+            mkpath(arco_dir)
+            @test_throws "ERA5 surface data not found" open_era5_day(s_surf, Date(2021, 12, 1))
+        end
+    end
+
+    @testset "open_era5_day — ARCO per-variable surface layout satisfies include_surface" begin
+        mktempdir() do root
+            _materialise_placeholders(root, [Date(2021, 12, 1)], [:core])
+            arco_dir = joinpath(root, "sfc_an_native", "arco", "20211201")
+            _placeholder!(joinpath(arco_dir, "boundary_layer_height.nc"))
+
+            s_surf = ERA5N320Settings(; root_dir = root, include_surface = true)
+            h = open_era5_day(s_surf, Date(2021, 12, 1))
+            @test h.surface_path == arco_dir
+
+            # A surface GRIB, when present, still wins over the ARCO layout.
+            _materialise_placeholders(root, [Date(2021, 12, 1)], [:surface])
+            h2 = open_era5_day(s_surf, Date(2021, 12, 1))
+            @test endswith(h2.surface_path, "era5_surface_20211201.grib")
         end
     end
 

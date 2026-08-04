@@ -2,8 +2,10 @@
 # ERA5 N320 (ARCO) → C90 — full-physics production configuration.
 #
 # Core dynamics, moisture, surface pressure and PBL inputs come from ARCO.
-# Daily convective diagnostics come from CDS and are converted on the target
-# grid; TM5 boundary-layer diffusion is diagnosed from the target-column state.
+# Daily convective diagnostics come from CDS: the raw UDMF/DDMF/UDRF/DDRF
+# fields are conservatively regridded to the target grid first, then the
+# nonlinear TM5 conversion runs per target column; TM5 boundary-layer
+# diffusion is likewise diagnosed from the target-column state.
 #
 # One process per day:
 #   julia -t 16 --project=. scripts/preprocessing/preprocess_transport_binary.jl \

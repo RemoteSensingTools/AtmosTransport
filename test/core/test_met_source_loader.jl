@@ -96,6 +96,23 @@ const REPO_ROOT = joinpath(@__DIR__, "..", "..")
         @test_throws ArgumentError load_met_settings(bad; root_dir = "/tmp/merra2_test")
     end
 
+    @testset "arco_surface_pressure is ERA5-N320-only" begin
+        for (name, why) in (("MERRA-2", "MERRA-2"), ("GEOS-IT", "GEOS"))
+            bad = tempname() * ".toml"
+            open(bad, "w") do io
+                print(io, """
+                    [source]
+                    name = "$name"
+                    [grid]
+                    Nc = 180
+                    [preprocessing]
+                    arco_surface_pressure = true
+                    """)
+            end
+            @test_throws ArgumentError load_met_settings(bad; root_dir = "/tmp/$why")
+        end
+    end
+
     @testset "unsupported source name errors loudly" begin
         # Synthesize a tiny TOML with an unknown source name.
         path = tempname() * ".toml"

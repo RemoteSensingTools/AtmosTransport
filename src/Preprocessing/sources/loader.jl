@@ -70,6 +70,8 @@ function _build_met_settings(ctor::Type{<:GEOSSettings}, cfg::AbstractDict,
     include_surface      = _config_bool(pre_cfg, "include_surface", false, "[preprocessing].include_surface")
     include_convection   = _config_bool(pre_cfg, "include_convection", false, "[preprocessing].include_convection")
     include_vdiff_fields = _config_bool(pre_cfg, "include_vdiff_fields", false, "[preprocessing].include_vdiff_fields")
+    haskey(pre_cfg, "arco_surface_pressure") && throw(ArgumentError(
+        "GEOS sources do not implement [preprocessing].arco_surface_pressure; remove the setting"))
     physics_dir          = String(get(pre_cfg, "physics_dir", ""))
     physics_layout       = Symbol(get(pre_cfg, "physics_layout", "auto"))
 
@@ -130,7 +132,7 @@ function _build_met_settings(ctor::Type{MERRA2Settings}, cfg::AbstractDict,
                        "config/geos_L72_coefficients.toml"))
     winds_collection      = Symbol(get(pre_cfg, "winds_collection", "tavg3"))
     for key in ("include_surface", "include_convection", "include_vdiff_fields",
-                "include_tm5_diffusion")
+                "include_tm5_diffusion", "arco_surface_pressure")
         haskey(pre_cfg, key) && throw(ArgumentError(
             "MERRA-2 does not implement [preprocessing].$(key); remove the setting"))
     end

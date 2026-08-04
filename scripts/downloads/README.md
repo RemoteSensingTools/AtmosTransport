@@ -29,9 +29,9 @@ the maintained data-layout guidance.
 `config/met_sources/era5_n320_arco.toml` (`arco_surface_pressure=true` — PS comes
 from the single_level `sp` netCDF, not spectral `lnsp`). The CDS
 `era5_native_*` recipes remain for fallback but are gated by the MARS queue.
-For a full multi-year bulk pull, the standalone
-`met/era5/N320/hourly/raw/_jobs/run_arco_core_download.sh` driver parallelizes
-days and skips the per-file SHA-256 manifest that `download_data.jl` writes.
+For a full multi-year bulk pull, run several `download_data.jl` invocations in
+parallel with disjoint `[time]` ranges — the per-file download manifest keeps
+concurrent processes from colliding.
 
 ### Examples
 

@@ -181,10 +181,23 @@ function open_era5_day(settings::AbstractERA5GRIBSettings, date::Date;
     surface_path = nothing
     if settings.include_surface
         candidate = era5_grib_path(settings, date, :surface)
-        isfile(candidate) ||
-            error("ERA5 surface GRIB not found: $candidate " *
-                  "(include_surface=true)")
-        surface_path = candidate
+        if isfile(candidate)
+            surface_path = candidate
+        else
+            # The ARCO downloader stores surface fields as per-variable
+            # netCDFs under `<subdir>/arco/YYYYMMDD/` instead of one GRIB;
+            # `open_era5_surface_reader` auto-detects that layout, so it
+            # satisfies `include_surface` here too.
+            arco_dir = joinpath(dirname(candidate), "arco",
+                                Dates.format(date, "yyyymmdd"))
+            has_arco_nc = isdir(arco_dir) &&
+                any(f -> endswith(lowercase(f), ".nc"), readdir(arco_dir))
+            has_arco_nc ||
+                error("ERA5 surface data not found: neither GRIB $candidate " *
+                      "nor ARCO netCDF directory $arco_dir " *
+                      "(include_surface=true)")
+            surface_path = arco_dir
+        end
     end
 
     next_core_path = nothing
@@ -535,7 +548,9 @@ every message whose `(dataDate, dataTime)` matches into the workspace's
 level-indexed spectral cubes (for `gridType=sh`) or directly into the
 output `qv` array (for `gridType=reduced_gg`). After the pass the function
 synthesizes spectral T per level, applies `vod2uv!` per level and synthesizes
-U/V, and synthesizes LNSP → PS. Errors loudly if any required level/field is
+U/V. PS comes from LNSP synthesis, or — when `settings.arco_surface_pressure`
+is set — from bilinear interpolation of the ARCO single_level `sp` netCDF
+(`_fill_ps_from_arco_sp!`). Errors loudly if any required level/field is
 absent so a partial download is immediately visible.
 
 The function does not allocate beyond `read_buf` resizing inside
@@ -669,7 +684,7 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
         # the N320 cell centers. The global-mean dry-mass pin downstream
         # (era5_n320_regrid.jl) absorbs any residual mean bias.
         _fill_ps_from_arco_sp!(fields.ps, workspace.source_grid,
-                                handles.arco_sp_path::String, Int(hour))
+                                handles.arco_sp_path::String, date, Int(hour))
     else
         _synthesize_into_column!(workspace.lnsp_grid, workspace.lnsp_spec, T,
                                   grid, caches[1], workspace.lnsp_grid)
@@ -690,17 +705,24 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    _fill_ps_from_arco_sp!(ps, source_grid, nc_path, hour) -> ps
+    _fill_ps_from_arco_sp!(ps, source_grid, nc_path, date, hour) -> ps
 
 Populate `ps` (Pa; N320 cell order south→north) from the ARCO single_level
 surface-pressure netCDF at `nc_path` (`sp[longitude, latitude, time]`, 0.25°
 regular lat-lon, longitude ascending 0→359.75, latitude descending 90→-90),
 by bilinear interpolation to the reduced-Gaussian cell centers of `source_grid`.
-Used when the ARCO `core` GRIB omits spectral `lnsp`.
+Used when the ARCO `core` GRIB omits spectral `lnsp`. The slice's decoded
+time coordinate must equal `DateTime(date) + Hour(hour)` — a shifted or
+mis-assembled time axis fails loudly instead of silently offsetting PS.
 """
 function _fill_ps_from_arco_sp!(ps::AbstractVector, source_grid,
-                                 nc_path::AbstractString, hour::Int)
+                                 nc_path::AbstractString, date::Date, hour::Int)
     lon, lat, sp = NCDataset(nc_path, "r") do ds
+        slice_time = ds["time"][hour + 1]
+        expected = DateTime(date) + Hour(hour)
+        slice_time == expected ||
+            error("ARCO sp time axis mismatch in $nc_path: slot $(hour + 1) " *
+                  "decodes to $slice_time, expected $expected")
         (Array{Float64}(ds["longitude"][:]),
          Array{Float64}(ds["latitude"][:]),
          Array{Float64}(ds["sp"][:, :, hour + 1]))   # (nlon, nlat)

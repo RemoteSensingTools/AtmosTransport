@@ -158,6 +158,29 @@ function run_driven_simulation(cfg::AbstractDict)
     # Enabled here so every section accumulator covers the whole driven
     # loop including snapshot capture / write.
     timers_on = SectionTimer.maybe_enable_from_env!()
+    result = try
+        _run_driven_simulation_inputs(cfg, input_cfg, binary_paths)
+    finally
+        # Include header inspection and resource construction in the lifetime:
+        # either can fail before the stepping loop owns any resources.
+        timers_on && SectionTimer.disable!()
+    end
+    if timers_on
+        SectionTimer.report(stderr)
+        output_cfg = get(cfg, "output", Dict{String, Any}())
+        snapshot_file = expand_data_path(String(get(output_cfg, "path",
+                                                    get(output_cfg, "snapshot_file",
+                                                        get(output_cfg, "filename", "")))))
+        if !isempty(snapshot_file)
+            csv_path = replace(snapshot_file, r"\.nc$" => "") * ".timings.csv"
+            written = SectionTimer.write_csv(csv_path)
+            written !== nothing && @info "Section timings → $(written)"
+        end
+    end
+    return result
+end
+
+function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths)
     # Dispatch on the first binary's grid_type — the ownership boundary
     # (binary header owns topology, TOML owns physics kinds). The
     # capability probe also runs the load-time
@@ -177,7 +200,7 @@ function run_driven_simulation(cfg::AbstractDict)
     stager = InputStager(binary_paths, get(input_cfg, "staging", Dict{String, Any}()))
     input_resources = RunInputResources()
     output_resources = RunSnapshotOutput()
-    result = try
+    return try
         _with_run_resource(output_resources) do
             _with_run_resource(input_resources) do
                 _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg,
@@ -187,20 +210,6 @@ function run_driven_simulation(cfg::AbstractDict)
     finally
         cleanup_staging!(stager)
     end
-    if timers_on
-        SectionTimer.disable!()
-        SectionTimer.report(stderr)
-        output_cfg = get(cfg, "output", Dict{String, Any}())
-        snapshot_file = expand_data_path(String(get(output_cfg, "path",
-                                                    get(output_cfg, "snapshot_file",
-                                                        get(output_cfg, "filename", "")))))
-        if !isempty(snapshot_file)
-            csv_path = replace(snapshot_file, r"\.nc$" => "") * ".timings.csv"
-            written = SectionTimer.write_csv(csv_path)
-            written !== nothing && @info "Section timings → $(written)"
-        end
-    end
-    return result
 end
 
 _run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput, input_resources::RunInputResources) =

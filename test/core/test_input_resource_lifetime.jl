@@ -166,3 +166,50 @@ end
         @test all(model.state.air_mass .== 1)
     end
 end
+
+@testset "Runner disables its instrumentation after failure" begin
+    ST = AtmosTransport.SectionTimer
+    mktempdir() do dir
+        path = joinpath(dir,"transport.bin")
+        input_lifetime_fixture(path)
+        cfg = Dict{String,Any}("input"=>Dict("binary_paths"=>[path]),
+            "tracers"=>Dict("co2"=>Dict("init"=>Dict("kind"=>"uniform","background"=>400e-6))))
+        broken = joinpath(dir,"broken.bin")
+        write(broken,"invalid transport header")
+        failures = (merge(cfg,Dict("input"=>Dict("binary_paths"=>[broken]))),
+                    merge(cfg,Dict("convection"=>Dict("kind"=>"tm5"))))
+        try
+            for (timing,nvtx) in (("1","0"),("0","1"))
+                withenv("ATMOSTR_TIMERS"=>timing,"ATMOSTR_NVTX"=>nvtx,
+                        "ATMOSTR_ALLOC_TIMERS"=>"1") do
+                    for bad_cfg in failures
+                        failure = try
+                            M.run_driven_simulation(bad_cfg)
+                        catch err
+                            err
+                        end
+                        @test failure isa Exception
+                        @test !(failure isa CompositeException)
+                        @test !ST.is_enabled()
+                        @test !ST._ALLOC_ENABLED[]
+                        @test !ST._NVTX_ENABLED[]
+                        @test ST._timer_snapshot().wall_total > 0
+                    end
+                end
+            end
+            before = ST._timer_snapshot()
+            withenv("ATMOSTR_TIMERS"=>"0","ATMOSTR_NVTX"=>"0") do
+                model = M.run_driven_simulation(cfg)
+                @test all(model.state.tracers_raw .≈ 400e-6)
+            end
+            @test ST._timer_snapshot().timings == before.timings
+            withenv("ATMOSTR_TIMERS"=>"1","ATMOSTR_NVTX"=>"0") do
+                M.run_driven_simulation(cfg)
+            end
+            @test !ST.is_enabled()
+            @test !isempty(ST._timer_snapshot().timings)
+        finally
+            ST.disable!()
+        end
+    end
+end

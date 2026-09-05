@@ -182,3 +182,14 @@ only.
 - [`../src/Operators/TOPOLOGY_SUPPORT.md`](../src/Operators/TOPOLOGY_SUPPORT.md) — Per-operator dispatch matrix
 - [`../src/Operators/TOPOLOGY_SUPPORT.md`](../src/Operators/TOPOLOGY_SUPPORT.md) — Per-operator dispatch matrix
 - [`reference/ARCHITECTURE.md`](reference/ARCHITECTURE.md) — Architecture overview
+
+## Optional run instrumentation
+
+`ATMOSTR_TIMERS=1` enables host section timings; `ATMOSTR_ALLOC_TIMERS=1`
+adds host allocation counts when timing is enabled. `ATMOSTR_NVTX=1` enables
+GPU profiling ranges independently when the NVTX extension is loaded.
+Instrumentation enabled by the runner stops on every exit, including input
+inspection, setup, stepping, and cleanup failures. Completed samples remain
+available through `AtmosTransport.SectionTimer.report()` after an error.
+Successful runs print the report and write a `.timings.csv` beside configured
+snapshot output. Failed runs propagate the error without writing a timing CSV.

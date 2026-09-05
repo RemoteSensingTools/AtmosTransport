@@ -1,33 +1,15 @@
 #!/usr/bin/env julia
-# CPU-only investigation; does not change the production solver or launch GPU work.
+# CPU-only comparison of the production dense and structured factorizations.
 # CUDA_VISIBLE_DEVICES='' julia --project=. scripts/benchmarks/probe_matrix_convection_cpu.jl [results.toml]
 using AtmosTransport
 using KernelAbstractions: CPU, synchronize
 using Random, Test, LinearAlgebra, Statistics, TOML
 const C = AtmosTransport.Operators.Convection
 
-"""Partial-pivot LU specialized to an upper-Hessenberg active block (prototype)."""
-function hessenberg_lu!(A::AbstractMatrix{FT}, pivots, n; icltop_eff=1) where FT
-    lo = max(icltop_eff, 1)
-    @inbounds for k in lo:n
-        p = k < n && abs(A[k+1, k]) > abs(A[k, k]) ? k+1 : k
-        pivots[k] = p
-        if p != k
-            # Retain previous L multipliers, including fill from earlier swaps.
-            for j in lo:n
-                A[k, j], A[p, j] = A[p, j], A[k, j]
-            end
-        end
-        d = A[k, k]
-        (iszero(d) || k == n) && continue
-        A[k+1, k] *= one(FT) / d
-        l = A[k+1, k]
-        for j in (k+1):n
-            A[k+1, j] -= l * A[k, j]
-        end
-    end
-    nothing
-end
+# Exercise the production structured factorization, retaining the dense
+# default as an independent reference in the checks and timings below.
+hessenberg_lu!(A, pivots, n; icltop_eff=1) =
+    C._tm5_hessenberg_lu!(A, pivots, n; icltop_eff)
 
 function tiled_solve!(rhs, lu, pivots, width; lo=1)
     n, nt = size(rhs)
@@ -173,9 +155,16 @@ function benchmark()
                 tiled_solve!(q, work, piv, 6; lo)
             end)
         end
+        cloud_dims = zeros(Int, 3)
+        selected_time = median_us() do
+            copyto!(q, rhs)
+            C._tm5_solve_column!(q, f.m, f.entu, f.detu, f.zero, f.zero,
+                work, piv, cloud_dims, f.dt; f_buf=work, amu_buf=amu, amd_buf=amd)
+        end
         push!(results, Dict("levels"=>n, "tracers"=>nt,
             "dense_factor_us"=>factor_times[1], "hessenberg_factor_us"=>factor_times[2],
             "dense_column_us"=>full_times[1], "hessenberg_column_us"=>full_times[2],
+            "automatic_column_us"=>selected_time,
             "factor_speedup"=>factor_times[1]/factor_times[2],
             "column_speedup"=>full_times[1]/full_times[2]))
     end

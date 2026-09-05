@@ -424,10 +424,13 @@ end
     # ---- 5. Factor the matrix once for all tracers ------------
     if !no_conv
         for k in k_lo:LMAX_CONV
+            # No downdraft: the trailing matrix is upper-Hessenberg. This
+            # bound is workgroup-uniform and retains adjacent row pivoting.
+            last_row = icllfs > LMAX_CONV ? min(k + 1, LMAX_CONV) : LMAX_CONV
             if t == 1
                 piv = k
                 pivmag = abs(A_loc[k, k])
-                @inbounds for r in (k + 1):LMAX_CONV
+                @inbounds for r in (k + 1):last_row
                     m_ = abs(A_loc[r, k])
                     if m_ > pivmag
                         piv = r
@@ -449,14 +452,14 @@ end
             @synchronize
 
             diag_val = A_loc[k, k]
-            @inbounds for r in (k + t):_TM5_COLLAB_WG_SIZE:LMAX_CONV
+            @inbounds for r in (k + t):_TM5_COLLAB_WG_SIZE:last_row
                 A_loc[r, k] /= diag_val
             end
             @synchronize
 
             @inbounds for cc in (k + t):_TM5_COLLAB_WG_SIZE:LMAX_CONV
                 akc = A_loc[k, cc]
-                for r in (k + 1):LMAX_CONV
+                for r in (k + 1):last_row
                     A_loc[r, cc] -= A_loc[r, k] * akc
                 end
             end
@@ -649,10 +652,13 @@ end
 
     if !no_conv
         for k in k_lo:LMAX_CONV
+            # No downdraft: the trailing matrix is upper-Hessenberg. This
+            # bound is workgroup-uniform and retains adjacent row pivoting.
+            last_row = icllfs > LMAX_CONV ? min(k + 1, LMAX_CONV) : LMAX_CONV
             if t == 1
                 piv = k
                 pivmag = abs(A_loc[k, k])
-                @inbounds for r in (k + 1):LMAX_CONV
+                @inbounds for r in (k + 1):last_row
                     m_ = abs(A_loc[r, k])
                     if m_ > pivmag
                         piv = r
@@ -674,14 +680,14 @@ end
             @synchronize
 
             diag_val = A_loc[k, k]
-            @inbounds for r in (k + t):_TM5_COLLAB_WG_SIZE:LMAX_CONV
+            @inbounds for r in (k + t):_TM5_COLLAB_WG_SIZE:last_row
                 A_loc[r, k] /= diag_val
             end
             @synchronize
 
             @inbounds for cc in (k + t):_TM5_COLLAB_WG_SIZE:LMAX_CONV
                 akc = A_loc[k, cc]
-                for r in (k + 1):LMAX_CONV
+                for r in (k + 1):last_row
                     A_loc[r, cc] -= A_loc[r, k] * akc
                 end
             end
@@ -876,10 +882,13 @@ end
 
     if !no_conv
         for k in k_lo:LMAX_CONV
+            # No downdraft: the trailing matrix is upper-Hessenberg. This
+            # bound is workgroup-uniform and retains adjacent row pivoting.
+            last_row = icllfs > LMAX_CONV ? min(k + 1, LMAX_CONV) : LMAX_CONV
             if t == 1
                 piv = k
                 pivmag = abs(A_loc[k, k])
-                @inbounds for r in (k + 1):LMAX_CONV
+                @inbounds for r in (k + 1):last_row
                     m_ = abs(A_loc[r, k])
                     if m_ > pivmag
                         piv = r
@@ -901,14 +910,14 @@ end
             @synchronize
 
             diag_val = A_loc[k, k]
-            @inbounds for r in (k + t):_TM5_COLLAB_WG_SIZE:LMAX_CONV
+            @inbounds for r in (k + t):_TM5_COLLAB_WG_SIZE:last_row
                 A_loc[r, k] /= diag_val
             end
             @synchronize
 
             @inbounds for cc in (k + t):_TM5_COLLAB_WG_SIZE:LMAX_CONV
                 akc = A_loc[k, cc]
-                for r in (k + 1):LMAX_CONV
+                for r in (k + 1):last_row
                     A_loc[r, cc] -= A_loc[r, k] * akc
                 end
             end

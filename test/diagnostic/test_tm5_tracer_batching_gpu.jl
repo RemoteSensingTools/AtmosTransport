@@ -18,9 +18,12 @@ function batch_fixture(nz, depth, nt, downdrafts)
         top = shift + (c == 2 ? 1 : c)
         entu[c, nz-1] = 0.04f0
         detu[c, top] = 0.04f0
-        if downdrafts
-            entd[c, top+1] = 0.01f0
-            detd[c, nz] = 0.01f0
+        if downdrafts && c != 2
+            # Mix column structures within one launch, including a tiny
+            # positive downdraft that must still use the general LU bound.
+            flux = c == 4 ? eps(Float32)^2 : 0.01f0
+            entd[c, top+1] = flux
+            detd[c, nz] = flux
         end
     end
     (; m, q, rates=(entu, detu, entd, detd), nz, depth, nt)
@@ -29,11 +32,17 @@ end
 function batch_reference(f)
     result = copy(f.q)
     for c in axes(result, 1)
-        A = zeros(Float32, f.nz, f.nz)
-        C._tm5_solve_column!(@view(result[c, :, :]), @view(f.m[c, :]),
-            (view(r, c, :) for r in f.rates)...,
-            A, zeros(Int, f.nz), zeros(Int, 3), 1800f0;
-            f_buf=A, amu_buf=zeros(Float32, f.nz+1), amd_buf=zeros(Float32, f.nz+1))
+        rates = map(r -> view(r,c,:), f.rates)
+        top, _, lfs = C._tm5_diagnose_cloud_dims(rates[2],rates[3],f.nz)
+        top > f.nz && continue
+        lo = min(lfs,max(top,2)-1)
+        A = zeros(Float32,f.nz,f.nz)
+        pivots = zeros(Int,f.nz)
+        C._tm5_build_conv1!(A, rates..., view(f.m,c,:), top, lfs, 1800f0, f.nz;
+            f=A, amu=zeros(Float32,f.nz+1), amd=zeros(Float32,f.nz+1))
+        # Explicitly dense reference, independent of automatic structure selection.
+        C._tm5_lu!(A, pivots, f.nz; icltop_eff=lo)
+        C._tm5_solve!(view(result,c,:,:), A, pivots, f.nz, f.nt; icltop_eff=lo)
     end
     result
 end

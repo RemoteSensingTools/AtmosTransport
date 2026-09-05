@@ -1,0 +1,97 @@
+julia_threads = 16
+julia_version = "1.12.6"
+pivot_stress_swaps = 1958
+cpu = "Intel(R) Xeon(R) Platinum 8462Y+"
+scope = "Synthetic CPU columns; timings include buffer copies; no GPU speed claim"
+gpu_used = false
+
+[[benchmark]]
+levels = 60
+tracers = 6
+dense_column_us = 45.46596666666667
+dense_factor_us = 27.892566666666667
+automatic_column_us = 17.12316666666667
+factor_speedup = 31.828718143780907
+hessenberg_factor_us = 0.8763333333333333
+hessenberg_column_us = 17.319533333333332
+column_speedup = 2.625126543055433
+[[benchmark]]
+levels = 60
+tracers = 32
+dense_column_us = 101.2537
+dense_factor_us = 27.932366666666667
+automatic_column_us = 69.77013333333335
+factor_speedup = 31.88383684651092
+hessenberg_factor_us = 0.8760666666666667
+hessenberg_column_us = 70.30836666666666
+column_speedup = 1.4401372809589756
+[[benchmark]]
+levels = 60
+tracers = 65
+dense_column_us = 172.71873333333332
+dense_factor_us = 27.910566666666668
+automatic_column_us = 136.54710000000003
+factor_speedup = 31.868653421633553
+hessenberg_factor_us = 0.8758
+hessenberg_column_us = 137.44876666666667
+column_speedup = 1.256604460862144
+[[benchmark]]
+levels = 85
+tracers = 6
+dense_column_us = 107.26129999999999
+dense_factor_us = 74.35416666666667
+automatic_column_us = 33.292633333333335
+factor_speedup = 35.244509401169225
+hessenberg_factor_us = 2.1096666666666666
+hessenberg_column_us = 33.59556666666666
+column_speedup = 3.1927218571498024
+[[benchmark]]
+levels = 85
+tracers = 32
+dense_column_us = 216.60776666666666
+dense_factor_us = 74.0182
+automatic_column_us = 134.60286666666667
+factor_speedup = 37.517461604744284
+hessenberg_factor_us = 1.9728999999999999
+hessenberg_column_us = 135.1375
+column_speedup = 1.6028694231184288
+[[benchmark]]
+levels = 85
+tracers = 65
+dense_column_us = 349.8137666666666
+dense_factor_us = 74.1392
+automatic_column_us = 264.7692
+factor_speedup = 35.112654710785556
+hessenberg_factor_us = 2.1114666666666664
+hessenberg_column_us = 298.74943333333334
+column_speedup = 1.170926962985592
+[[benchmark]]
+levels = 137
+tracers = 6
+dense_column_us = 383.55789999999996
+dense_factor_us = 299.9986666666666
+automatic_column_us = 84.31983333333332
+factor_speedup = 53.380545670225374
+hessenberg_factor_us = 5.62
+hessenberg_column_us = 84.65103333333333
+column_speedup = 4.531048055723675
+[[benchmark]]
+levels = 137
+tracers = 32
+dense_column_us = 695.9649333333333
+dense_factor_us = 304.7300333333333
+automatic_column_us = 368.9748666666666
+factor_speedup = 44.61335487082386
+hessenberg_factor_us = 6.830466666666666
+hessenberg_column_us = 369.7389333333333
+column_speedup = 1.8823144402428813
+[[benchmark]]
+levels = 137
+tracers = 65
+dense_column_us = 1004.7568333333332
+dense_factor_us = 299.8736666666666
+automatic_column_us = 668.8498666666667
+factor_speedup = 52.35468364448996
+hessenberg_factor_us = 5.727733333333333
+hessenberg_column_us = 672.1063333333334
+column_speedup = 1.494937309026994

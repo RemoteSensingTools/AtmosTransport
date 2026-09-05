@@ -78,8 +78,7 @@ are genuine fast-path implementations, not generic wrappers.
 - [`CMFMCConvection.jl`](CMFMCConvection.jl) — concrete CMFMC operator,
   forcing validation, topology restrictions, state-level `apply!`
 - [`TM5Convection.jl`](TM5Convection.jl) — `TM5Convection` struct +
-  dispatch stubs (plan 23 Commit 1). Real kernels land in plan 23
-  Commit 4.
+  topology dispatch, convection-depth validation, and workspace budget
 - [`CMFMCMatrixConvection.jl`](CMFMCMatrixConvection.jl) — conservation-
   by-construction CMFMC variant; derives TM5 (entu/detu/entd/detd)
   from GEOS (cmfmc/dtrain) per column, then reuses the TM5 LU
@@ -89,17 +88,29 @@ are genuine fast-path implementations, not generic wrappers.
   inline column closure so the boundary residual is absorbed at
   allocation time.
 - [`tm5_column_solve.jl`](tm5_column_solve.jl) — backend-agnostic
-  column solver `_tm5_solve_column!` (plan 23 Commit 2): builds
-  `conv1 = I - dt·D`, partial-pivot LU factorization, back-
-  substitutes each tracer. Per-column entry point the Commit 4
-  KA kernels call per thread.
+  column solver `_tm5_solve_column!`: builds `conv1 = I - dt·D`,
+  selects dense or upper-Hessenberg partial-pivot LU, and solves each tracer
 - [`tm5_kernels.jl`](tm5_kernels.jl) — `@kernel` wrappers around
-  `_tm5_solve_column!` for all three topologies
-  (`_tm5_column_kernel!` LL 4D, `_tm5_faceindexed_column_kernel!`
-  RG 3D, `_tm5_cs_panel_column_kernel!` CS per-panel); plan 23
-  Commit 4.
+  `_tm5_solve_column!` and collaborative shared-memory LU for all three
+  topologies: lat-lon, reduced Gaussian, and cubed-sphere panels
 
 ## Common Tasks
+
+### Factorization without downdrafts
+
+CMFMC matrix convection derives updraft rates and has no downdraft pass.
+Its transport matrix has zeros below the first subdiagonal (an
+upper-Hessenberg matrix). Factorization therefore needs quadratic rather
+than cubic work in the active level count. TM5 columns with no diagnosed
+downdraft use the same optimization. Any positive diagnosed downdraft,
+however small, keeps the general dense factorization.
+
+Both routes retain partial pivoting and the same factor representation.
+The general forward and transpose triangular solves remain in place because
+row swaps can move earlier L entries below the first subdiagonal. No forcing
+threshold, timestep change, vertical aggregation, or additional approximation
+is introduced. CPU forward/adjoint checks exercise both routes. Collaborative
+GPU kernels use the corresponding row bound, pending A100 validation.
 
 ### Multiple tracers with collaborative LU
 
@@ -119,7 +130,7 @@ tile budget on the collaborative path.
 
 The effective matrix depth still must fit 1..85 levels. Tracer batching does
 not require vertical truncation or aggregation. CPU and Float64 requests use
-the legacy solver with a warning. The batching change has CPU arithmetic
+the legacy solver with a warning. The collaborative changes have CPU arithmetic
 coverage; device compilation, synchronization, and speed still require the
 opt-in A100 regression in
 [`test_tm5_tracer_batching_gpu.jl`](../../../test/diagnostic/test_tm5_tracer_batching_gpu.jl).

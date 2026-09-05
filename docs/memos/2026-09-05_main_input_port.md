@@ -44,3 +44,9 @@ the focused suites above and the separate V100 checks recorded below.
 On tofu GPU 0 (V100, CUDA runtime 12.6), all 223 checks pass: 140 startup and
 buffer independence checks, 8 failed-prefetch cleanup checks, and 75 split-file
 physics / CPU-reference checks. See [raw results and reproduction notes](../../scripts/benchmarks/results/main_input_v100_20260905/README.md).
+
+The real ERA5 C90 L66 case remains exactly equal across all 196 output arrays
+(280 checks). The startup change removes about 203 MB of cumulative host
+allocation per run. With 32 tracers, the warm median changes from 15.524 to
+15.148 s and allocated bytes from 8.052 to 7.848 GB. This single-file case does
+not measure the additional benefit of reusing workspaces across files.

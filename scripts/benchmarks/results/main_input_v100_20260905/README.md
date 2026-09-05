@@ -17,3 +17,26 @@ Reproduce the GPU checks with `test/diagnostic/test_window_prefetch_gpu.jl`,
 headers list the opt-in variables. Select the authorized device with
 `CUDA_VISIBLE_DEVICES` and set both expected-device variables to `V100`.
 Do not use CUDA runtime 13 for this Volta GPU.
+
+## Real ERA5 C90 L66 measurements
+
+The single-file workload is the same experimental archived forcing used by
+[the output checkpoint](../main_output_v100_20260905/README.md), with PPM,
+TM5 convection, exact Dkg diffusion, and column snapshots at 0 and 2 hours.
+This comparison isolates the input port after `36c23f8a`; it does not exercise
+workspace reuse across files. See `profile.jl`, warm sample 0, and measured
+samples 1 and 2. All 196 before/after arrays are exactly equal, including signed
+Float64 totals; 280 comparison/conservation checks pass.
+
+| Tracers | Measure | Output checkpoint | Input port |
+|---|---|---:|---:|
+| 6 | Median whole-run time | 3.865 s | 3.595 s |
+| 6 | Cumulative host allocation | 2.326 GB | 2.123 GB |
+| 32 | Median whole-run time | 15.524 s | 15.148 s |
+| 32 | Cumulative host allocation | 8.052 GB | 7.848 GB |
+
+These are medians of two warm repetitions, not cold-NAS timings or confidence
+intervals. Host allocation is cumulative, not peak resident memory. Startup
+avoids about 203 MB of redundant host forcing allocation in this workload.
+The archived convection fields have the experimental cadence described in the
+baseline README; these runs test runtime performance and equivalence.

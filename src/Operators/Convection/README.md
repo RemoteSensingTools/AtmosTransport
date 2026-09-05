@@ -99,6 +99,10 @@ not require vertical truncation or aggregation. CPU and Float64 requests use
 the legacy solver with a warning. The collaborative changes have CPU arithmetic
 coverage and V100 device validation through 65 tracers. See the
 [V100 timings and remaining bottlenecks](../../../docs/memos/2026-09-05_matrix_convection_v100.md).
+The subsequent [parallel matrix assembly](../../../docs/memos/2026-09-05_matrix_convection_parallel_assembly.md)
+distributes independent matrix columns across the workgroup while preserving
+the top-to-bottom dependency within each column. It further improves V100
+throughput without additional shared storage.
 The opt-in CUDA regression defaults to an A100; set
 `ATMOSTR_MATRIX_GPU_NAME=V100` when explicitly testing a V100:
 [`test_tm5_tracer_batching_gpu.jl`](../../../test/diagnostic/test_tm5_tracer_batching_gpu.jl).

@@ -1,0 +1,82 @@
+using Test
+if get(ENV, "ATMOSTR_RUN_SNAPSHOT_GPU_TESTS", "0") == "1"
+    using CUDA, AtmosTransport, NCDatasets
+    using AtmosTransport.Output
+    const O = AtmosTransport.Output
+    expected = get(ENV, "ATMOSTR_SNAPSHOT_GPU_NAME", "A100")
+    isempty(expected) && error("Select the authorized GPU by name")
+    CUDA.functional() && occursin(expected, CUDA.name(CUDA.device())) ||
+        error("This test requires the selected $expected GPU")
+    CUDA.allowscalar(false)
+
+    @testset "Compensated device totals retain signed residuals" begin
+        for FT in (Float32,Float64), n in (3,257,2049,1048577)
+            values = zeros(FT,n)
+            lanes = min(4096,cld(n,256))
+            for indices in ((1,2,3),(1,1+lanes,1+2lanes))
+                maximum(indices) <= n || continue
+                fill!(values,0)
+                values[indices[1]]=FT(1e30)
+                values[indices[2]]=FT(1)
+                values[indices[3]]=FT(-1e30)
+                exact = Float64(sum(BigFloat.(values)))
+                device = CuArray(values)
+                @test O._backend_tracer_total(device) == exact == 1.0
+                @test O._backend_tracer_total((device,device,device,device,device,device)) == 6exact
+            end
+        end
+        @test_throws ArgumentError O._backend_tracer_total(CuArray([Inf,1.0]))
+    end
+
+    @testset "Selected GPU capture and streaming preserve signed output" begin
+        for FT in (Float32,Float64), topology in (:ll,:rg,:cs)
+            Nz=4
+            mesh = topology === :ll ? LatLonMesh(;Nx=4,Ny=2,FT) :
+                   topology === :rg ? ReducedGaussianMesh(FT[-45,45],[4,8];FT) :
+                   CubedSphereMesh(;Nc=4,Hp=3,FT)
+            grid = AtmosGrid(mesh,HybridSigmaPressure(zeros(FT,Nz+1),FT.(0:1/Nz:1)),CPU();FT)
+            shape = topology === :ll ? (4,2,Nz) : topology === :rg ? (12,Nz) : (10,10,Nz)
+            air = ones(FT,shape)
+            rm = zeros(FT,shape)
+            if topology === :cs
+                rm[4,4,1]=FT(1e30);rm[5,4,1]=1;rm[6,4,1]=FT(-1e30)
+                air = ntuple(_->CuArray(air),6);rm=ntuple(_->CuArray(rm),6)
+                state = CubedSphereState(DryBasis,air; signed=rm,halo_width=3)
+            else
+                rm[1]=FT(1e30);rm[2]=1;rm[3]=FT(-1e30)
+                state = CellState(DryBasis,CuArray(air);signed=CuArray(rm))
+            end
+            model=(;state,grid)
+            halo_width=topology===:cs ? 3 : 0
+            full=capture_snapshot(model;halo_width)
+            for mode in ("none","selected","full")
+                fields=output_field_spec(Dict("layers"=>mode,"levels"=>[1,3]))
+                frame=capture_snapshot(model;halo_width,fields)
+                @test frame.tracer_total_mass == full.tracer_total_mass
+                @test frame.tracer_total_mass[:signed] == (topology===:cs ? 6.0 : 1.0)
+                mktempdir() do dir
+                    options=SnapshotWriteOptions(;float_type=FT)
+                    ref=write_snapshot_netcdf(joinpath(dir,"full.nc"),[full],grid;fields,options)
+                    stream=O.NetCDFSnapshotStream(joinpath(dir,"stream.nc"),grid;fields,options)
+                    try
+                        O.append_snapshot!(stream,frame)
+                    finally
+                        close(stream)
+                    end
+                    NCDataset(ref) do x
+                        NCDataset(stream.path) do y
+                            @test Set(keys(x))==Set(keys(y))
+                            for name in keys(x)
+                                @test isequal(x[name][:],y[name][:])
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+else
+    @testset "GPU snapshot reductions (opt-in)" begin
+        @test_skip "Set ATMOSTR_RUN_SNAPSHOT_GPU_TESTS=1 and select the authorized GPU"
+    end
+end

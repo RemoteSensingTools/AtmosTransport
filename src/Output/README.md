@@ -3,7 +3,7 @@
 `Output` owns the runtime snapshot contract and NetCDF file schema.
 
 Runners should only decide when to sample state. They should call
-`capture_snapshot(model; time_hours, halo_width)` and
+`capture_snapshot(model; time_hours, halo_width, fields)` and
 `write_snapshot_netcdf(path, frames, grid; mass_basis, options)` instead of
 writing topology-specific NetCDF files directly.
 
@@ -11,6 +11,11 @@ writing topology-specific NetCDF files directly.
 
 - `snapshots.jl` defines `SnapshotFrame`, `SnapshotWriteOptions`, model-state
   capture, and compensated Float64 signed tracer totals.
+- `selected_snapshots.jl` captures requested layers and backend column reductions.
+- `snapshot_totals.jl` computes compensated signed totals without retaining full
+  host tracer volumes on CUDA; Metal copies bounded slabs for CPU Float64 sums.
+- `netcdf_stream.jl` appends single-file runtime output and records completed
+  snapshots. Its owner must close the stream on every exit.
 - `diagnostics.jl` derives VMR, column means, and mass-per-area fields.
 - `netcdf_schema.jl` defines topology-specific dimensions, coordinates, and metadata.
 - `netcdf_writer.jl` writes topology-specific payload variables through one public API.
@@ -29,3 +34,9 @@ Float32 spatial payload does not erase small signed residuals.
 
 To add a topology, implement schema and payload methods for the new mesh type.
 Do not special-case the runner.
+
+Single-file NetCDF runs retain only the current frame, file handle, and schema
+metadata. Daily output permits one owned background write. `capture_snapshot`
+without `fields` still returns full native storage for existing callers and
+ATMSNAP output. All selected tracers keep their independent Float64 totals,
+even when no layer or column diagnostic is requested.

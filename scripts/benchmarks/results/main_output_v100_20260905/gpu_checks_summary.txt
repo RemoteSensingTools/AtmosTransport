@@ -1,0 +1,4 @@
+Test Summary:                                     | Pass  Total   Time
+Compensated device totals retain signed residuals |   33     33  24.0s
+Test Summary:                                             | Pass  Total     Time
+Selected GPU capture and streaming preserve signed output |  342    342  1m12.5s

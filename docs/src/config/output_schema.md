@@ -2,8 +2,16 @@
 
 The default runtime output is a **NetCDF4** snapshot file declared by
 `[output] path`. `split = "single"` writes one file per run; `split = "daily"`
-writes one file per daily binary. This page documents the exact NetCDF
-variables, dimensions, units, and per-topology conventions.
+writes one file per daily binary. Single-file NetCDF runs append and flush one
+snapshot at a time along an unlimited `time` dimension. They retain no history
+of snapshot frames in memory. Daily output retains the current day's selected
+frames and allows one background write; the runner waits for it on success or
+failure. This page documents the NetCDF variables, dimensions, units, and
+per-topology conventions.
+
+Streaming files record `completed_snapshots`, the number of fully flushed
+records. A write failure can leave an incomplete trailing record beyond that
+count. Reopening a stream to resume a run is not supported.
 
 For long runs, `format = "binary_mmap"` writes ATMSNAP files with a Float32
 spatial payload and compensated Float64 tracer totals; convert them to this
@@ -19,6 +27,10 @@ below is written. Setting `layers = "none"` suppresses per-level tracer VMR
 variables; setting `layers = "selected"` writes the same variable names on the
 `lev_selected` dimension. `tracers = [...]` restricts all tracer diagnostics to
 that subset, with optional `[output.fields.per_tracer.<name>]` overrides.
+The runtime captures the union of requested layers for the selected tracers,
+plus the required column reductions, for NetCDF;
+column-only output avoids copying and retaining complete tracer volumes on the
+host. ATMSNAP continues to capture full native state.
 
 Every selected tracer also has a topology-independent
 `<tracer>_total_mass(time)` variable. It is the compensated Float64 global sum
@@ -26,7 +38,12 @@ of the conservative `mixing_ratio × carrier_air_mass` storage captured from the
 model state. Negative values are valid, and `kg` refers to the carrier-mass
 storage unit rather than physical kilograms of tracer species. This is the
 authoritative snapshot conservation series; do not reconstruct it by summing a
-Float32 spatial payload when signed components can cancel.
+Float32 spatial payload when signed components can cancel. CUDA selected capture
+uses compensated Float64 device partial sums and a compensated host reduction;
+sum and correction remain separate until the final reduction. Metal, which
+cannot execute Float64 arithmetic, uses bounded host slabs for these totals.
+Different reduction orders need not be bitwise identical, but output precision
+does not erase small signed residuals.
 
 ## Global attributes
 

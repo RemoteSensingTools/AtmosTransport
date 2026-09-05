@@ -72,8 +72,10 @@ read.
   assertion (`feedback_verify_gpu_runs_on_gpu`), per-window loop,
   and snapshot NetCDF output
 - [`runner/`](runner/) — the runner's progress timer, configuration validation,
-  runtime summary, output helpers, and model setup. These files are included
+  runtime summary, owned output resources, and model setup. These files are included
   inside `DrivenRunner`; the top-level file retains the transport loops.
+  Single-file NetCDF appends selected snapshots without retaining past frames;
+  daily output owns and drains at most one background write.
 - [`initial_conditions/`](initial_conditions/) — cubed-sphere initialization,
   surface-inventory loading and storage-unit conversion, and conservative
   surface-flux remapping, included inside `InitialConditionIO`.

@@ -63,10 +63,18 @@ against main's unchanged 144-report allowance. The run includes signed
 advection, signed native initialization, surface-inventory conversions, model
 construction, and the extracted runner's CLI workflow.
 
+## Output integration
+
+Selected capture, single-file streaming, and background output ownership are
+ported, retaining main's signed-total and ATMSNAP contracts. The
+[output integration report](2026-09-05_main_output_port.md) records validation
+and the real-input before/after measurements. Remaining whole-run allocation
+is predominantly outside snapshot capture.
+
 ## Remaining integration work
 
-- Port selected/streaming output, run resource ownership, staging, and cache
-  handoff improvements onto the current reader/model APIs.
+- Finish input-resource ownership, staging, startup loading, and cache handoff
+  improvements on the current reader/model APIs.
 - Retain current signed-tracer conservation and output-total contracts.
 - Reconcile scientific documentation and package-loading improvements.
 - Repeat CPU and GPU runtime validation after the remaining I/O ports. Compare

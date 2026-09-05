@@ -98,7 +98,7 @@ using ..InitialConditionIO: build_initial_mixing_ratio,
                              build_surface_flux_sources
 using ..BinaryPathExpander: expand_binary_paths
 using ..InputStaging: InputStager, staged_path_for!, cleanup_staging!
-using ..Output: SnapshotFrame,
+using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, SnapshotFrame,
                 AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
                 RuntimeOutputSpec, runtime_output_spec, snapshot_hours,
                 output_enabled, output_path, output_path_for_day,
@@ -120,6 +120,7 @@ export run_driven_simulation, validate_config, TransportTracerSpec
 include("runner/progress.jl")
 include("runner/configuration.jl")
 include("runner/summary.jl")
+include("runner/resources.jl")
 include("runner/output.jl")
 include("runner/model_setup.jl")
 
@@ -217,8 +218,11 @@ function _run_driven_simulation(cfg::AbstractDict, arch::AbstractArchitecture)
     # here and torn down in `finally` so staged multi-GB files are always
     # cleaned up, even if the run throws partway through.
     stager = InputStager(binary_paths, get(input_cfg, "staging", Dict{String, Any}()))
+    output_resources = RunSnapshotOutput()
     result = try
-        _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg, stager, arch)
+        _with_run_resource(output_resources) do
+            _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg, stager, arch, output_resources)
+        end
     finally
         cleanup_staging!(stager)
     end
@@ -239,16 +243,16 @@ function _run_driven_simulation(cfg::AbstractDict, arch::AbstractArchitecture)
 end
 
 _run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg,
-                           stager::InputStager, arch::AbstractArchitecture) =
-    _run_driven_simulation_structured(binary_paths, cfg, stager, arch)
+                           stager::InputStager, arch::AbstractArchitecture, output_resources::RunSnapshotOutput) =
+    _run_driven_simulation_structured(binary_paths, cfg, stager, arch, output_resources)
 _run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg,
-                           stager::InputStager, arch::AbstractArchitecture) =
-    _run_driven_simulation_structured(binary_paths, cfg, stager, arch)
+                           stager::InputStager, arch::AbstractArchitecture, output_resources::RunSnapshotOutput) =
+    _run_driven_simulation_structured(binary_paths, cfg, stager, arch, output_resources)
 _run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg,
-                           stager::InputStager, arch::AbstractArchitecture) =
-    _run_driven_simulation_cs(binary_paths, cfg, stager, arch)
+                           stager::InputStager, arch::AbstractArchitecture, output_resources::RunSnapshotOutput) =
+    _run_driven_simulation_cs(binary_paths, cfg, stager, arch, output_resources)
 function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String},
-                                    _cfg, _stager::InputStager, _arch) where grid_type
+                                    _cfg, _stager::InputStager, _arch, _output_resources::RunSnapshotOutput) where grid_type
     throw(ArgumentError("Unsupported transport-binary grid_type=$(grid_type)."))
 end
 
@@ -278,7 +282,8 @@ end
 
 function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                            stager::InputStager,
-                                           arch::AbstractArchitecture)
+                                           arch::AbstractArchitecture,
+                                   output_resources::RunSnapshotOutput)
     FT = _cfg_float_type(cfg)
     assert_float_type!(arch, FT)
     run_cfg = get(cfg, "run", Dict{String, Any}())
@@ -347,14 +352,13 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                        _surface_source_total_rate(source))
     end
 
-    snapshots = SnapshotFrame[]
-    day_snapshots = SnapshotFrame[]
+    stream = _single_netcdf_stream(output_resources, output_spec, model.grid;
+                                    mass_basis=air_mass_basis(first_driver))
+    snapshots = AbstractSnapshotFrame[]
+    day_snapshots = AbstractSnapshotFrame[]
     snapshot_count = Ref(0)
     snap_idx = 1
     total_elapsed_hours = 0.0
-    # In-flight async daily write (one at a time); kept off the GPU loop so the
-    # disk write overlaps the next day's transport. `nothing` until first flush.
-    pending_write = nothing
 
     # Estimate total windows for the progress bar. Each daily binary has
     # the same window count for a homogeneous run; multiplying gives a
@@ -366,8 +370,9 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
 
     function capture_structured!(hour_total)
         timed_io_write!(timer, () -> begin
-            frame = capture_snapshot(model; time_hours = hour_total)
-            _push_snapshot_frame!(output_spec.partition, snapshots,
+            frame = capture_snapshot(model; time_hours = hour_total,
+                                     fields=output_spec.format === :netcdf ? output_spec.fields : nothing)
+            _record_snapshot!(stream, output_spec.partition, snapshots,
                                   day_snapshots, frame)
         end)
         snapshot_count[] += 1
@@ -484,22 +489,12 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                              redraw = true)
         if do_snapshots && output_spec.partition isa DailyOutputFiles &&
            output_enabled(output_spec) && !isempty(day_snapshots)
-            # Async daily flush: hand the host-side frames to a background task
-            # so the next day's GPU transport overlaps the disk write. Bound to
-            # ONE in-flight write (wait the previous before spawning the next),
-            # which caps extra host memory at ~one day of frames. The shallow
-            # `copy` + `empty!` lets `capture_structured!` keep pushing into the
-            # same `day_snapshots` binding (no closure rebox) while the spawned
-            # task owns the previous day's frames.
-            pending_write !== nothing && wait(pending_write)
-            frames_to_write = copy(day_snapshots)
-            empty!(day_snapshots)
             out_path = _output_path_for_partition(output_spec, output_spec.partition,
                                                    _binary_date_label(path), idx)
             grid_ref = driver_grid(first_driver)
             mb = air_mass_basis(first_driver)
-            pending_write = Threads.@spawn _write_frames_to_disk(output_spec, out_path,
-                                                                 frames_to_write, grid_ref, mb)
+            _start_daily_output!(output_resources, output_spec, out_path,
+                                  day_snapshots, grid_ref, mb)
             set_progress_status!(timer;
                                  detail = @sprintf("async write %s", basename(out_path)),
                                  redraw = true)
@@ -509,7 +504,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
 
     # Drain the last in-flight async daily write before the final flush / mass
     # accounting, so the run never returns with a write still pending.
-    pending_write !== nothing && wait(pending_write)
+    _wait_pending_output!(output_resources)
 
     if do_snapshots
         # `air_mass_basis(driver)` already returns the Symbol and has been
@@ -547,7 +542,8 @@ end
 
 function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                    stager::InputStager,
-                                   arch::AbstractArchitecture)
+                                   arch::AbstractArchitecture,
+                                   output_resources::RunSnapshotOutput)
     FT   = _cfg_float_type(cfg)
     assert_float_type!(arch, FT)
 
@@ -678,10 +674,12 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                          binary_count = length(binary_paths),
                          snapshot_file = _output_display_path(output_spec))
 
-    # Snapshot storage is full-state and topology-native; Output handles halo
-    # stripping and NetCDF diagnostics.
-    snapshots = SnapshotFrame[]
-    day_snapshots = SnapshotFrame[]
+    # NetCDF captures selected fields; ATMSNAP retains full native state.
+    # The run owns the stream and any background daily write.
+    stream = _single_netcdf_stream(output_resources, output_spec, model.grid;
+                                    mass_basis=air_mass_basis(driver1))
+    snapshots = AbstractSnapshotFrame[]
+    day_snapshots = AbstractSnapshotFrame[]
     snapshot_count = Ref(0)
 
     # Progress + IO/Transport timer. Estimate total windows from the
@@ -694,8 +692,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     function capture_cs!(hour_total)
         timed_io_write!(timer, () -> begin
             frame = capture_snapshot(model; time_hours = hour_total,
-                                     halo_width = Hp)
-            _push_snapshot_frame!(output_spec.partition, snapshots,
+                                     halo_width = Hp,
+                                     fields=output_spec.format === :netcdf ? output_spec.fields : nothing)
+            _record_snapshot!(stream, output_spec.partition, snapshots,
                                   day_snapshots, frame)
         end)
         snapshot_count[] += 1
@@ -715,9 +714,6 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     end
 
     t0 = time()
-    # In-flight async daily write (one at a time); kept off the GPU loop so the
-    # disk write overlaps the next day's transport. `nothing` until first flush.
-    pending_write = nothing
     for (driver_idx, path) in enumerate(binary_paths)
         # `path` (NAS) kept for labels/logging; driver opens the staged local
         # copy when staging is enabled (driver_idx==1 already staged above).
@@ -814,21 +810,12 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                              redraw = true)
         if do_snapshots && output_spec.partition isa DailyOutputFiles &&
            output_enabled(output_spec) && !isempty(day_snapshots)
-            # Async daily flush: hand the host-side frames to a background task so
-            # the next day's GPU transport overlaps the disk write. One in-flight
-            # write at a time (wait the previous before spawning the next), which
-            # caps extra host memory at ~one day of frames. The shallow `copy` +
-            # `empty!` lets `capture_structured!` keep pushing into the same
-            # `day_snapshots` binding while the spawned task owns the prior frames.
-            pending_write !== nothing && wait(pending_write)
-            frames_to_write = copy(day_snapshots)
-            empty!(day_snapshots)
             out_path = _output_path_for_partition(output_spec, output_spec.partition,
                                                    _binary_date_label(path), driver_idx)
             grid_ref = grid
             mb = BasisT === DryBasis ? :dry : :moist
-            pending_write = Threads.@spawn _write_frames_to_disk(output_spec, out_path,
-                                                                 frames_to_write, grid_ref, mb)
+            _start_daily_output!(output_resources, output_spec, out_path,
+                                  day_snapshots, grid_ref, mb)
             set_progress_status!(timer;
                                  detail = @sprintf("async write %s", basename(out_path)),
                                  redraw = true)
@@ -843,7 +830,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
 
     # Drain the last in-flight async daily write before the final mass accounting,
     # so the run never returns with a write still pending.
-    pending_write !== nothing && wait(pending_write)
+    _wait_pending_output!(output_resources)
 
     @info @sprintf("Done: %.1fs  (%d snapshots, final t=%.1fh)",
                    time() - t0, snapshot_count[], total_hour)

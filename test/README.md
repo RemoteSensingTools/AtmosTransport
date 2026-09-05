@@ -31,11 +31,10 @@ julia --project=test test/runtests.jl --tiers=core,orphan # only listed tiers
    doesn't need external data and is part of a production code path.
 2. Drop the file into the matching folder. The orchestrator picks up
    anything matching `test_*.jl` automatically — no manual roster edit.
-3. Test files are included into anonymous modules, so they can `using
-   .AtmosTransport` freely without polluting each other.
-4. Use `joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl")` (note
-   the **two** `..`) when including `AtmosTransport.jl` directly — the
-   extra hop accounts for the tier subfolder.
+3. Import the cached package with `using AtmosTransport` or
+   `import AtmosTransport`. Each test file runs in its own module to isolate
+   helpers and constants without creating new copies of package types.
+4. Include shared test fixtures with paths relative to `@__DIR__`.
 
 ## Promotion / retirement workflow
 
@@ -52,3 +51,10 @@ or `import AtmosTransport`. The runner isolates each file's test helpers in its
 own module while reusing Julia's package cache. Avoid including the package
 source separately in each core test: that repeats compilation and gives each
 copy distinct type identities.
+
+The snapshot contract suite was promoted from `orphan/` to
+`core/test_output_snapshots.jl` during the current-main output port. It retains
+main's signed-total and ATMSNAP-header checks alongside the new selected-capture,
+streaming, and asynchronous write-lifetime suites. The opt-in
+`diagnostic/test_snapshot_totals_gpu.jl` checks signed cancellation on the
+explicitly selected CUDA device (including V100 with CUDA runtime 12.6).

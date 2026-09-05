@@ -1,3 +1,11 @@
+"""
+    _assert_gpu_residency!(state, arch)
+
+See `feedback_verify_gpu_runs_on_gpu`. When a GPU backend is
+selected, assert that `state.air_mass` lives on that backend. A silent CPU
+fallback aborts with a precise error. Called once after model construction,
+before the run loop.
+"""
 function _assert_gpu_residency!(state, arch)
     is_gpu(arch) || return nothing
     backing = assert_residency!(state.air_mass, arch; label = "state.air_mass")

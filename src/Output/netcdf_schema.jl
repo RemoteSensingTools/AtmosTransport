@@ -38,7 +38,7 @@ end
 
 function _git_commit_sha()
     try
-        return strip(read(_git_command(["rev-parse", "HEAD"]), String))
+        return strip(read(pipeline(_git_command(["rev-parse", "HEAD"]); stderr=devnull), String))
     catch
         return "unknown"
     end
@@ -46,7 +46,7 @@ end
 
 function _git_dirty_flag()
     try
-        out = strip(read(_git_command(["status", "--porcelain"]), String))
+        out = strip(read(pipeline(_git_command(["status", "--porcelain"]); stderr=devnull), String))
         return isempty(out) ? "clean" : "dirty"
     catch
         return "unknown"
@@ -130,6 +130,15 @@ function _define_time!(ds, times)
                              "comment" => "hours since the configured simulation start"))
     v[:] = Float64.(times)
     return v
+end
+
+# Streaming files grow along time; batch output keeps its fixed dimension.
+function _define_time!(ds, ::Nothing)
+    defDim(ds, "time", Inf)
+    return defVar(ds, "time", Float64, ("time",),
+                  attrib = Dict("units" => "hours",
+                                "long_name" => "elapsed simulation time",
+                                "comment" => "hours since the configured simulation start"))
 end
 
 function _define_lev!(ds, Nz::Integer)

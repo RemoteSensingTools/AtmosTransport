@@ -1,6 +1,7 @@
 # Explicit opt-in; normal test discovery must not initialize a GPU.
-# On the authorized A100:
+# On the selected GPU (A100 by default):
 # ATMOSTR_RUN_MATRIX_BATCH_GPU_TESTS=1 julia --project=. test/diagnostic/test_tm5_tracer_batching_gpu.jl
+# For the authorized V100 run, also set ATMOSTR_MATRIX_GPU_NAME=V100.
 using Test, Random, Adapt
 using AtmosTransport
 import KernelAbstractions as KA
@@ -115,10 +116,13 @@ end
 
 if get(ENV, "ATMOSTR_RUN_MATRIX_BATCH_GPU_TESTS", "0") == "1"
     using CUDA
-    CUDA.functional() || error("This opt-in test requires the authorized A100")
-    occursin("A100", CUDA.name(CUDA.device())) || error("Select the authorized A100 before running this test")
+    expected_device = get(ENV, "ATMOSTR_MATRIX_GPU_NAME", "A100")
+    isempty(expected_device) && error("ATMOSTR_MATRIX_GPU_NAME must name the selected GPU")
+    CUDA.functional() || error("This opt-in test requires a functional CUDA GPU")
+    occursin(expected_device, CUDA.name(CUDA.device())) ||
+        error("Select the requested $expected_device before running this test")
     CUDA.allowscalar(false)
-    @testset "Deferred scratch adaptation on A100" begin
+    @testset "Deferred scratch adaptation on $expected_device" begin
         cpu_ws = C.TM5Workspace(zeros(Float32,2,2,8); tile_columns=4,
                                 cell_metrics=ones(Float32,2), defer_scratch=true)
         # Simulate a CPU fallback before adapting the model to the GPU.
@@ -133,7 +137,7 @@ if get(ENV, "ATMOSTR_RUN_MATRIX_BATCH_GPU_TESTS", "0") == "1"
         @test gpu_ws.f_scratch === gpu_ws.conv1
         @test isempty(Adapt.adapt(Array, gpu_ws).conv1)
     end
-    @testset "Collaborative tracer batching on A100" begin
+    @testset "Collaborative tracer batching on $expected_device" begin
         for topology in (:ll, :rg, :cs), (nz, depth) in ((8,8), (91,85)),
             nt in (1,6,7,12,32,65), downdrafts in (false,true)
             @testset "$topology Nz=$nz Nt=$nt downdrafts=$downdrafts" begin
@@ -142,7 +146,7 @@ if get(ENV, "ATMOSTR_RUN_MATRIX_BATCH_GPU_TESTS", "0") == "1"
         end
     end
 else
-    @testset "Collaborative tracer batching on A100 (opt-in)" begin
-        @test_skip "Set ATMOSTR_RUN_MATRIX_BATCH_GPU_TESTS=1 on the authorized A100"
+    @testset "Collaborative tracer batching on CUDA (opt-in)" begin
+        @test_skip "Set ATMOSTR_RUN_MATRIX_BATCH_GPU_TESTS=1 and select the requested GPU"
     end
 end

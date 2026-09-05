@@ -75,7 +75,7 @@ the general triangular solves: swaps can move earlier L entries below the
 first subdiagonal. No forcing threshold, timestep change, vertical aggregation,
 or additional approximation is introduced. CPU forward/adjoint checks exercise
 both routes. Collaborative GPU kernels use the same selection once per column
-for all tracer batches, pending A100 validation. See the
+for all tracer batches. V100 device checks pass; A100 validation remains pending. See the
 [CPU measurements and validation](../../../docs/memos/2026-09-05_matrix_convection_rhs.md).
 
 ### Multiple tracers with collaborative LU
@@ -97,8 +97,10 @@ tile budget on the collaborative path.
 The effective matrix depth still must fit 1..85 levels. Tracer batching does
 not require vertical truncation or aggregation. CPU and Float64 requests use
 the legacy solver with a warning. The collaborative changes have CPU arithmetic
-coverage; device compilation, synchronization, and speed still require the
-opt-in A100 regression in
+coverage and V100 device validation through 65 tracers. See the
+[V100 timings and remaining bottlenecks](../../../docs/memos/2026-09-05_matrix_convection_v100.md).
+The opt-in CUDA regression defaults to an A100; set
+`ATMOSTR_MATRIX_GPU_NAME=V100` when explicitly testing a V100:
 [`test_tm5_tracer_batching_gpu.jl`](../../../test/diagnostic/test_tm5_tracer_batching_gpu.jl).
 
 ### Finding the implementation

@@ -142,3 +142,27 @@ end
         end
     end
 end
+
+@testset "Multi-file partial ranges reject skipped forcing" begin
+    mktempdir() do dir
+        path = joinpath(dir,"transport.bin")
+        input_lifetime_fixture(path)
+        cfg = Dict{String,Any}("input"=>Dict("binary_paths"=>[path,path]),
+            "tracers"=>Dict("co2"=>Dict("init"=>Dict("kind"=>"uniform","background"=>400e-6))))
+        for bounds in (Dict("start_window"=>2),Dict("stop_window"=>1))
+            failure = try
+                M.run_driven_simulation(merge(cfg,Dict("run"=>bounds)))
+            catch err
+                err
+            end
+            @test failure isa ArgumentError
+            @test occursin("skip forcing",sprint(showerror,failure))
+        end
+        # Exercise the public runner's supported single-file partial path.
+        partial_cfg = merge(cfg,Dict("input"=>Dict("binary_paths"=>[path]),
+                                     "run"=>Dict("start_window"=>2,"stop_window"=>2)))
+        model = M.run_driven_simulation(partial_cfg)
+        @test all(model.state.tracers_raw .≈ 400e-6)
+        @test all(model.state.air_mass .== 1)
+    end
+end

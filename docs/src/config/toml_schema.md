@@ -120,8 +120,12 @@ stop_window  = 24             # default: nothing — uses the binary's full rang
 air_mass_reset_mode = "preserve_tracer_mass"
 ```
 
+`start_window` selects the first window for LL/RG runs. The cubed-sphere
+runner currently requires `start_window = 1`; other values are rejected.
 `stop_window` is the inclusive last window; setting it lets you
-run a partial day for smoke tests. `air_mass_reset_mode` is one of
+run a partial day for smoke tests. Partial window ranges require one input
+file; a run spanning multiple files must consume every file's full window
+range so it cannot carry state across a gap in the forcing. `air_mass_reset_mode` is one of
 `"none"`, `"preserve_vmr"`, or `"preserve_tracer_mass"`. Advection belongs
 in `[advection]`; the legacy `[run].scheme` spelling is accepted only when an
 `[advection]` table is absent.

@@ -263,6 +263,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
     first_driver = input_resources.driver = TransportBinaryDriver(staged_path_for!(stager, 1);
                                           FT = FT,
                                           arch = CPU())
+    _check_multifile_window_range(first_driver, start_window, stop_window_override,
+                                  length(binary_paths))
     output_cfg = get(cfg, "output", Dict{String, Any}())
     output_spec = runtime_output_spec(output_cfg, FT;
                                       default_cap_hours = _output_default_cap_hours(
@@ -355,6 +357,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
                                                  FT = FT, arch = CPU()))
         input_resources.driver = driver
         validate_runtime_physics_recipe(recipe, driver)
+        _check_multifile_window_range(driver, start_window, stop_window_override,
+                                      length(binary_paths))
         stop_window = stop_window_override === nothing ?
                       total_windows(driver) : Int(stop_window_override)
         initialize_air_mass = idx == 1
@@ -519,6 +523,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
     arch = _cfg_architecture(cfg)
 
     run_cfg = get(cfg, "run", Dict{String, Any}())
+    Int(get(run_cfg, "start_window", 1)) == 1 || throw(ArgumentError(
+        "Cubed-sphere driven runs currently require [run] start_window=1."))
     advection = build_cs_advection(cfg)
     Hp = configured_halo_width(cfg, advection)
     stop_window_override = get(run_cfg, "stop_window", nothing)
@@ -693,6 +699,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
                                                        FT = FT, arch = arch, Hp = Hp))
         input_resources.driver = driver
         validate_runtime_physics_recipe(recipe, driver; halo_width = Hp)
+        _check_multifile_window_range(driver, 1, stop_window_override,
+                                      length(binary_paths))
         stop_window = stop_window_override === nothing ?
                       total_windows(driver) :
                       min(Int(stop_window_override), total_windows(driver))

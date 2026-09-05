@@ -55,12 +55,12 @@ function script_provenance(; caller_file::Union{String, Nothing}=nothing)
     script_path = caller_file !== nothing ? abspath(caller_file) : preprocess_src_dir
     script_mtime = isfile(script_path) ? mtime(script_path) : 0.0
     git_commit = try
-        readchomp(`git -C $(preprocess_src_dir) rev-parse HEAD`)
+        readchomp(pipeline(`git -C $(preprocess_src_dir) rev-parse HEAD`; stderr=devnull))
     catch
         "unknown"
     end
     git_dirty = try
-        !isempty(readchomp(`git -C $(preprocess_src_dir) status --porcelain`))
+        !isempty(readchomp(pipeline(`git -C $(preprocess_src_dir) status --porcelain`; stderr=devnull)))
     catch
         false
     end

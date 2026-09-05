@@ -36,8 +36,7 @@ using JSON3
 using NCDatasets
 using Mmap
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Preprocessing: resolve_tm5_convection_settings,
                                        convert_era5_physics_nc_to_bin,
                                        open_era5_physics_binary,

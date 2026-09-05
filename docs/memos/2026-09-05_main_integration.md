@@ -23,17 +23,52 @@ cache remains intact and receives its existing adaptation checks.
 
 Focused CPU tests on the main-based package pass 3,154 checks, covering host
 batch selection, partial/pivoted batches, forward/adjoint structure selection,
-and deferred workspace adaptation. Historical V100 results remain labeled by
-the original measured commits; main-based GPU and runtime validation is tracked
-separately as integration progresses.
+and deferred workspace adaptation. The main-based package also passes 727 checks on tofu GPU 0 (V100, CUDA
+runtime 12.6): 7 workspace adaptation checks, 480 positive-tracer checks, and
+240 signed-tracer checks. These compare against dense CPU LU, verify
+conservation and untouched halos/cloud-free regions, and compare each batch
+against independent launches. Historical timing results remain labeled by the
+original measured commits; full runtime timings are separate from kernel tests.
+
+## Readability and test loading
+
+The runner helpers and initial-condition/surface-inventory helpers are extracted
+from main verbatim. Reassembling the extracted files reproduces the original
+source exactly. In particular, main's signed native initialization, physical
+inventory-to-storage conversion, and time-varying sources remain intact. Core
+tests share the cached package while isolating their test helpers per module.
+
+The large original revamp commit was not cherry-picked wholesale: it combined
+these changes with older workspace and backend APIs. Integration uses smaller
+changes appropriate to current main.
+
+## Real-input baseline
+
+The current reader now runs the existing C90 L66 ERA5 format-4 archive directly.
+On tofu's V100, two measured repetitions after warmup take a median 4.149 s
+with six tracers and 16.396 s with 32 tracers for two model hours. The 32-tracer
+convection section is 0.306 s, while cumulative host allocation is 8.855 GB.
+This is a warm-cache baseline with experimental archived forcing, not a
+cold-I/O measurement or a before/after speedup claim. All 462 output checks
+pass; maximum relative total-storage drift is 2.572e-6. See the complete
+[method and artifacts](../../scripts/benchmarks/results/main_real_input_v100_20260905/README.md).
+
+## Main-based validation
+
+The complete Julia 1.12.6 CPU baseline (`--startup-file=no --project=test
+ test/runtests.jl`, four Julia threads, GPUs hidden) passes 80,136 checks across
+108 core files plus the regridding runner. There are 22 existing skips or
+expected-broken checks and no failures. Aqua passes; JET reports 142 findings
+against main's unchanged 144-report allowance. The run includes signed
+advection, signed native initialization, surface-inventory conversions, model
+construction, and the extracted runner's CLI workflow.
 
 ## Remaining integration work
 
-- Validate matrix kernels on the main-based V100 package.
 - Port selected/streaming output, run resource ownership, staging, and cache
   handoff improvements onto the current reader/model APIs.
 - Retain current signed-tracer conservation and output-total contracts.
 - Reconcile scientific documentation and package-loading improvements.
-- Run the full main-based CPU suite and focused GPU runtime checks before
-  treating integration as complete, then resume real-input profiling and
-  adaptive batching measurements.
+- Repeat CPU and GPU runtime validation after the remaining I/O ports. Compare
+  against the real-input baseline above before promoting an adaptive tracer
+  batch size. The broader revamp is not yet fully integrated.

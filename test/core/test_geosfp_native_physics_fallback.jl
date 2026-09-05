@@ -4,7 +4,7 @@ using Test
 using Dates
 using NCDatasets
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 using .AtmosTransport.Preprocessing: GEOSFPSettings, open_day, close_day!,
                                       read_window!, allocate_raw_window,
                                       process_day, build_target_geometry,

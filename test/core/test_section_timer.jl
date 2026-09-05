@@ -2,7 +2,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 
 const ST = AtmosTransport.SectionTimer
 

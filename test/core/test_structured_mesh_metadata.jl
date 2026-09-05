@@ -2,8 +2,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Grids:
     GnomonicPanelConvention, GEOSNativePanelConvention,
     panel_count, panel_convention, cs_definition, cs_definition_tag,

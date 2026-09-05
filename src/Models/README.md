@@ -71,6 +71,12 @@ read.
   `pack_initial_tracer_mass`, surface-source wiring, GPU-residency
   assertion (`feedback_verify_gpu_runs_on_gpu`), per-window loop,
   and snapshot NetCDF output
+- [`runner/`](runner/) — the runner's progress timer, configuration validation,
+  runtime summary, output helpers, and model setup. These files are included
+  inside `DrivenRunner`; the top-level file retains the transport loops.
+- [`initial_conditions/`](initial_conditions/) — cubed-sphere initialization,
+  surface-inventory loading and storage-unit conversion, and conservative
+  surface-flux remapping, included inside `InitialConditionIO`.
 - [`InputStaging.jl`](InputStaging.jl) — opt-in rolling NVMe input staging
   (`InputStager`, `staged_path_for!`, `cleanup_staging!`) for the per-day
   binary loop: copies upcoming days NAS→local NVMe ahead of the GPU loop and

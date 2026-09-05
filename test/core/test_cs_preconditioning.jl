@@ -24,7 +24,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 const AT = AtmosTransport
 
 const FT_TEST = Float64

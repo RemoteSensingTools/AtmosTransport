@@ -5,8 +5,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 Prep = AtmosTransport.Preprocessing
 
 # ---------------------------------------------------------------------------

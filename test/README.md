@@ -46,3 +46,9 @@ julia --project=test test/runtests.jl --tiers=core,orphan # only listed tiers
 - A `core/` file becomes archivable when the code path it tests is
   deleted or has been fully subsumed by a newer test. Move it into
   `archived/` with a note in `archived/legacy_README.md`.
+
+Core tests load the installed development package with `using AtmosTransport`
+or `import AtmosTransport`. The runner isolates each file's test helpers in its
+own module while reusing Julia's package cache. Avoid including the package
+source separately in each core test: that repeats compilation and gives each
+copy distinct type identities.

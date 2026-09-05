@@ -15,8 +15,7 @@
 using Test
 using Logging: with_logger, NullLogger
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Preprocessing: verify_substep_positivity_ll!,
                                        verify_ll_window_contract!,
                                        init_ll_positivity_accumulator,

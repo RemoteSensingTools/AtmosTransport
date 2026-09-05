@@ -17,11 +17,8 @@
 #   julia --project=test test/runtests.jl --orphan       # default + orphan watchlist
 #   julia --project=test test/runtests.jl --tiers=core,real_data,orphan
 #
-# Each test file is included into a fresh anonymous module so files don't
-# leak `using .AtmosTransport.X: Y` bindings into each other. On Julia 1.12
-# top-level `include`s in `Main` silently keep stale bindings between files
-# (e.g. `op isa AbstractConvection` returning false because LHS is from
-# include #2 but the RHS abstract type came from include #1).
+# Each test file runs in its own module to isolate helpers and constants.
+# Core tests import the cached package rather than compiling a new copy per file.
 
 const TIER_FOLDERS = (
     core       = "core",
@@ -62,10 +59,8 @@ function _tier_files(tier::Symbol)
     files = sort([joinpath(TIER_FOLDERS[tier], f)
                   for f in readdir(folder) if endswith(f, ".jl")])
     if tier === :core
-        # Package-level analyzers must run before tests that include local
-        # copies of AtmosTransport in anonymous modules. In particular, JET's
-        # package cache otherwise sees an incomplete 13-report snapshot instead
-        # of the standalone package's full report set.
+        # Keep the inference baseline independent of later optional extensions
+        # and methods added by individual tests.
         health_gates = [joinpath(TIER_FOLDERS[tier], name)
                         for name in ("test_aqua.jl", "test_jet.jl")]
         return vcat(health_gates, setdiff(files, health_gates))

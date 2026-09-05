@@ -35,8 +35,7 @@ or loses mass — are caught here.
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 
 using .AtmosTransport.State: CellState, CubedSphereState, DryBasis
 using .AtmosTransport.Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh,

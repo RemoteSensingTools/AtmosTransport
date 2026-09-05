@@ -13,8 +13,7 @@ and reader copyto offsets from future drift.
 using Test
 using JSON3
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport: Operators, Grids, State, MetDrivers, Preprocessing
 
 using .AtmosTransport.Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh,

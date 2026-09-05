@@ -17,8 +17,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.MetDrivers: driver_grid, current_time
 using .AtmosTransport.Operators.SurfaceFlux: StepwiseFlux, _flux_temporal_weights
 

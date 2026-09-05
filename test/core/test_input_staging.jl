@@ -2,8 +2,7 @@
 # copy-failure fallback, and cross-run reuse. CPU-only, no transport binaries.
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Models: InputStager, staged_path_for!, cleanup_staging!
 const _IS = AtmosTransport.Models.InputStaging   # for the internal name helper
 

@@ -115,8 +115,9 @@ struct TM5Convection{FT} <: AbstractConvection
     # exact for every observed column.
     #
     # The runtime envelope is `lmax_conv ∈ {1..85}` (the size that
-    # fits Metal at Nt ≤ NT_MAX). When `use_collab_lu = true` but the
-    # effective collab size (`L_super`) or `Nt` falls outside the
+    # fits the fixed six-slot shared RHS buffer). Tracers are batched, so
+    # total tracer count has no upper limit here. When `use_collab_lu = true`
+    # but the effective collab size (`L_super`) falls outside the
     # envelope, `apply_convection!` HARD-ERRORS on F32+GPU runs (the
     # silent ~20-60× perf cliff is a config bug — cap `lmax_conv ≤ 85`
     # and/or raise `n_merge`) and warns-once before the per-thread
@@ -211,7 +212,7 @@ end
 
 # Decide between the collaborative path (workgroup-shared LU in
 # `@localmem`) and the legacy per-thread path. The collab kernel
-# only supports a bounded `(lmax_conv, Nt)` envelope —
+# only supports a bounded matrix depth and positive tracer count —
 # `_tm5_collab_supports` returns `false` outside that envelope — AND
 # it hardcodes `Float32` throughout the `@localmem` allocations and
 # arithmetic. If the caller's `FT` is anything else (the F64
@@ -267,7 +268,8 @@ end
 #   * Intrinsic — `FT ≠ Float32` (the `@localmem` kernel is Float32-only) or the
 #     KA CPU backend (unsupported lowering). These are legitimate; downgrade to
 #     the per-thread path with a one-time `@warn` (non-breaking).
-#   * Envelope — F32 + GPU, but the effective `L_super > 85` or `Nt > NT_MAX`.
+#   * Envelope — F32 + GPU, but the effective depth is outside 1..85 or
+#     exceeds Nz, or the tracer count is nonpositive. Tracers are batched.
 #     That is a CONFIG mistake (e.g. `lmax_conv = 0 → Nz = 137`) which would
 #     otherwise silently run the per-thread kernel ~20-60× slower. Hard error so
 #     the perf cliff can never hide.
@@ -283,10 +285,10 @@ end
         throw(ArgumentError(
             "TM5Convection: use_collab_lu=true requested but the collaborative LU path " *
             "cannot engage on this F32 GPU run — L_super=$(L_super) (lmax_conv=$(L), " *
-            "n_merge=$(nm)) or Nt=$(Nt) exceeds the envelope (L_super ≤ 85, Nt ≤ " *
-            "$(_TM5_COLLAB_NT_MAX)). Falling back here would run the per-thread kernel " *
-            "~20-60× slower SILENTLY. Fix: cap lmax_conv ≤ 85 (the binary's max active " *
-            "convective depth) and/or set n_merge ∈ {3,4,5} so fld(lmax_conv,n_merge) ≤ 85. " *
+            "n_merge=$(nm)), Nz=$(Nz), Nt=$(Nt). The effective depth must fit 1..85 " *
+            "and the model's vertical extent, and Nt must be positive. Tracers are " *
+            "processed in batches with no upper count limit. Choose a convection " *
+            "depth/aggregation consistent with the forcing's active cloud depth. " *
             "To deliberately use the per-thread path, set use_collab_lu=false."))
     end
     return nothing

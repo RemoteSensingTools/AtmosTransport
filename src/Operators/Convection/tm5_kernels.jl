@@ -165,86 +165,71 @@ end
 # The collaborative kernels put the column's matrix in workgroup-local
 # memory and have WG_SIZE threads cooperatively (a) build, (b) factor
 # with partial pivoting, (c) apply pivots + forward solve + back solve.
-# Measured on a C180 panel (Nz=85, Nt=2, L40S): the collaborative
-# kernel runs at 53–63 ms / panel versus 397–692 ms for the per-thread
-# baseline — an 8–11× speedup that is bit-exact to baseline within
-# Float32 rounding (≈ 7e-7 max abs deviation).
+# Historical L40S measurements before tracer batching (C180, Nz=85,
+# Nt=2) were 53–63 ms/panel versus 397–692 ms for the per-thread
+# baseline, with approximately 7e-7 maximum absolute deviation.
+# These are not performance measurements of the current batched kernel.
 #
-# Compile-time `LMAX_CONV` parameter:
-#   `@localmem` allocations need compile-time sizes, so the matrix size
-#   is propagated via `Val{LMAX_CONV}`. The host extracts `LMAX_CONV = size(air_mass)[end]`
-#   and constructs `Val(LMAX_CONV)` at kernel-launch time; KA compiles one
-#   variant per unique `LMAX_CONV` it sees. This keeps the per-workgroup
-#   shared-memory footprint exactly `LMAX_CONV² · sizeof(FT) + O(LMAX_CONV)`.
+# `LMAX_CONV` is the effective convection depth, passed through Val so KA
+# can allocate the matrix at compile time. A six-slot RHS buffer is reused
+# across tracer batches; total tracer count does not change shared memory.
+# The current 1..85 matrix envelope fits the 32 KiB cross-backend budget.
+# Float32 GPU requests outside that envelope error in the host dispatcher;
+# CPU and Float64 use the legacy solver with a warning.
 #
-#   Realistic LMAX_CONV values: 60, 72, 85, 91, 137. The largest fitting under
-#   Metal's 32 KB threadgroup-memory limit is ~85 (28.9 KB for A_loc plus
-#   ~3 KB scratch). For LMAX_CONV > 85 the dispatch falls back to the per-thread
-#   kernel above; a runtime assertion at the host side enforces this.
-#
-# `NT_MAX` constant:
-#   The per-column RHS storage `q_loc` is sized `(LMAX_CONV, NT_MAX)` for a
-#   compile-time max tracer count of 8. Production runs with more than
-#   8 tracers fall back to the per-thread kernel (runtime check at the
-#   host side). The number was chosen so that the total `@localmem`
-#   footprint at LMAX_CONV=85, NT_MAX=8 stays ≤ 32 KB (28.9 KB for A_loc plus
-#   2.7 KB for q_loc plus ~0.7 KB scratch = ~32.3 KB; a soft warning,
-#   not a hard error — Metal threadgroup memory varies by chip).
-#
-# Implementation notes:
-#   - The matrix build (Phase 1) runs sequentially in thread 1 because the
-#     `amu[k]` and `amd[k]` recurrences have a serial dependency. The
-#     inner `kk` loops on each `k` could be parallelised; left as future
-#     work because the build is only ~3.5% of the LU's flop count.
-#   - The pivot search inside the LU (Phase 3) also runs in thread 1.
-#     A parallel-reduction pivot search would shave a few µs per outer
-#     iteration; left as future work for the same reason.
-#   - The shared-memory layout aliases A_loc and the build's intermediate
-#     `f` matrix, matching `_tm5_build_conv1!`'s production behaviour.
+# Matrix construction and pivot search still run in thread 1. Their runtime
+# contribution needs profiling independently of the parallel LU updates.
+# A_loc aliases the build's intermediate flux matrix.
 # ---------------------------------------------------------------------------
 
 const _TM5_COLLAB_WG_SIZE = 32
-# Compile-time tracer-slot count for the per-workgroup RHS storage
-# `q_loc`. Production CO2 inversions use Nt ∈ {1..6}; configurations
-# with Nt > 6 fall back to the per-thread kernel.
-#
-# This number is bounded by Metal's 32 KiB threadgroup-memory budget:
-# total per-workgroup `@localmem` is `4·Nz² + (4·NT_MAX + 16)·Nz + 16`
-# bytes (A_loc + q_loc + piv_loc + bmass_loc + amu/amd + icl_top/lfs).
-# At Nz=85 the max NT_MAX that fits Metal's 32 768 bytes is 6 (giving
-# 32 316 B); NT_MAX=8 would need 32 996 B and overflow the M1/M2/M3
-# baseline. Confirmed by an external code review on 2026-05-22.
-const _TM5_COLLAB_NT_MAX  = 6
+# Fixed RHS capacity, not a limit on the scientific tracer count. Declared
+# shared storage is 4*L^2 + (4*B + 16)*L + 16 bytes, including scratch.
+# L=85, B=6 uses 32,316 bytes; B=8 would exceed 32 KiB (32,996 bytes).
+const _TM5_COLLAB_TRACER_BATCH = 6
 
 """
     _tm5_collab_supports(lmax_conv, Nt) -> Bool
 
-True when the collaborative kernels can run for the given convection-
-matrix size and tracer count. The host uses this to decide between
-the new collab path and the legacy per-thread path; outside the
-supported envelope the legacy kernels remain numerically correct,
-just slower.
+Whether the effective matrix dimension fits the collaborative kernels and
+there is at least one tracer. Tracers are processed in fixed-capacity batches
+against one LU factorization, so there is no upper tracer-count limit here.
 
-The `lmax_conv ≤ 85` ceiling is set by Metal's 32 KB threadgroup-
-memory baseline: at lmax_conv=85, NT_MAX=6 the per-workgroup
-`@localmem` footprint is ~32.3 KB. With NT_MAX dropped to 6 in this
-patch, lmax_conv=85 fits Metal comfortably. lmax_conv=91 would need
-~36 KB and refuses to launch on Apple Silicon — so the envelope is
-set to 85 here.
-
-Critically, the gate is on **lmax_conv**, not on the underlying
-total `Nz`. This unlocks ml91/tropo60 and ml137/tropo34a-style
-configurations (TM5's own approach): a high-resolution vertical
-grid (Nz=91 or 137) coupled with a smaller convection ceiling that
-fits the threadgroup budget. The kernel allocates `@localmem` at
-`(lmax_conv, lmax_conv)`; layers `k ≤ Nz - lmax_conv` are pass-
-through (no convection writes there). Production must verify via
-`scripts/diagnostics/per_column_depth_histogram.jl` that the
-binary's deepest observed convection fits inside `[Nz - lmax_conv +
-1, Nz]` so stratospheric overshoots aren't silently dropped.
+The matrix dimension must be in 1..85 to fit the 32 KiB shared-memory budget.
+This gate uses the effective convection depth after any vertical aggregation,
+not the full model Nz. Configured truncation/aggregation remains a scientific
+choice that must cover the forcing's active depth; batching requires neither.
 """
 @inline _tm5_collab_supports(lmax_conv::Integer, Nt::Integer) =
-    lmax_conv > 0 && lmax_conv <= 85 && Nt > 0 && Nt <= _TM5_COLLAB_NT_MAX
+    lmax_conv > 0 && lmax_conv <= 85 && Nt > 0
+
+# A thread owns one complete shared-memory RHS. There are no workgroup
+# operations here, so KA can inline this helper in each topology kernel.
+@inline function _tm5_solve_shared_tracer!(q, A, pivots, n, lo, slot)
+    @inbounds begin
+        for k in lo:n
+            p = Int(pivots[k])
+            if p != k
+                q[k, slot], q[p, slot] = q[p, slot], q[k, slot]
+            end
+        end
+        for k in lo:n
+            value = q[k, slot]
+            for j in lo:(k - 1)
+                value -= A[k, j] * q[j, slot]
+            end
+            q[k, slot] = value
+        end
+        for k in n:-1:lo
+            value = q[k, slot]
+            for j in (k + 1):n
+                value -= A[k, j] * q[j, slot]
+            end
+            q[k, slot] = value / A[k, k]
+        end
+    end
+    return nothing
+end
 
 # The collaborative-solve body is inlined verbatim into all three
 # topology kernels below. We tried sharing it via a Julia macro and a
@@ -268,7 +253,7 @@ binary's deepest observed convection fits inside `[Nz - lmax_conv +
 #
 # Shared-memory allocations per kernel:
 #   A_loc      : @localmem Float32 (LMAX_CONV, LMAX_CONV)
-#   q_loc      : @localmem Float32 (LMAX_CONV, NT_MAX)
+#   q_loc      : @localmem Float32 (LMAX_CONV, TRACER_BATCH)
 #   piv_loc    : @localmem Int32   (LMAX_CONV,)
 #   bmass_loc  : @localmem Float32 (LMAX_CONV,)
 #   amu_loc    : @localmem Float32 (LMAX_CONV + 1,)
@@ -293,7 +278,7 @@ binary's deepest observed convection fits inside `[Nz - lmax_conv +
     t = @index(Local)
 
     A_loc     = @localmem Float32 (LMAX_CONV, LMAX_CONV)
-    q_loc     = @localmem Float32 (LMAX_CONV, _TM5_COLLAB_NT_MAX)
+    q_loc     = @localmem Float32 (LMAX_CONV, _TM5_COLLAB_TRACER_BATCH)
     piv_loc   = @localmem Int32   (LMAX_CONV,)
     bmass_loc = @localmem Float32 (LMAX_CONV,)
     amu_loc   = @localmem Float32 (LMAX_CONV + 1,)
@@ -436,15 +421,7 @@ binary's deepest observed convection fits inside `[Nz - lmax_conv +
     end
     @synchronize
 
-    # ---- 5. Load RHS (parallel) ------------------------------
-    @inbounds for idx in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV * Nt)
-        k_  = (idx - 1) % LMAX_CONV + 1
-        tt = (idx - 1) ÷ LMAX_CONV + 1
-        q_loc[k_, tt] = _tm5_read_q(q_raw_arr, i, j, Hp, k_shift + k_, tt, Val(:ll))
-    end
-    @synchronize
-
-    # ---- 6. LU + pivot apply + forward/back solve ------------
+    # ---- 5. Factor the matrix once for all tracers ------------
     if !no_conv
         for k in k_lo:LMAX_CONV
             if t == 1
@@ -485,49 +462,37 @@ binary's deepest observed convection fits inside `[Nz - lmax_conv +
             end
             @synchronize
         end
-
-        if t == 1
-            @inbounds for k in k_lo:LMAX_CONV
-                piv = Int(piv_loc[k])
-                if piv != k
-                    for tt in 1:Nt
-                        tmp = q_loc[k, tt]
-                        q_loc[k, tt] = q_loc[piv, tt]
-                        q_loc[piv, tt] = tmp
-                    end
-                end
-            end
-        end
-        @synchronize
-
-        @inbounds for tt in t:_TM5_COLLAB_WG_SIZE:Nt
-            for k in k_lo:LMAX_CONV
-                s = q_loc[k, tt]
-                for j2 in k_lo:(k - 1)
-                    s -= A_loc[k, j2] * q_loc[j2, tt]
-                end
-                q_loc[k, tt] = s
-            end
-        end
-        @synchronize
-
-        @inbounds for tt in t:_TM5_COLLAB_WG_SIZE:Nt
-            for k in LMAX_CONV:-1:k_lo
-                s = q_loc[k, tt]
-                for j2 in (k + 1):LMAX_CONV
-                    s -= A_loc[k, j2] * q_loc[j2, tt]
-                end
-                q_loc[k, tt] = s / A_loc[k, k]
-            end
-        end
-        @synchronize
     end
 
-    # ---- 7. Store back (parallel) ----------------------------
-    @inbounds for idx in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV * Nt)
-        k_  = (idx - 1) % LMAX_CONV + 1
-        tt = (idx - 1) ÷ LMAX_CONV + 1
-        _tm5_write_q!(q_raw_arr, i, j, Hp, k_shift + k_, tt, q_loc[k_, tt], Val(:ll))
+    # Reuse this column's LU for every tracer batch. The shared RHS buffer
+    # has fixed capacity, independent of the total number of tracers.
+    for first_tracer in 1:_TM5_COLLAB_TRACER_BATCH:Nt
+        n_batch = min(_TM5_COLLAB_TRACER_BATCH, Nt - first_tracer + 1)
+        @inbounds for idx in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV * n_batch)
+            k_ = (idx - 1) % LMAX_CONV + 1
+            slot = (idx - 1) ÷ LMAX_CONV + 1
+            tracer = first_tracer + slot - 1
+            q_loc[k_, slot] = _tm5_read_q(q_raw_arr, i, j, Hp, k_shift + k_, tracer, Val(:ll))
+        end
+        @synchronize
+
+        # Each thread owns a complete RHS: permutation, forward solve, and
+        # back solve need no barriers between them or between tracers.
+        if !no_conv
+            for slot in t:_TM5_COLLAB_WG_SIZE:n_batch
+                _tm5_solve_shared_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot)
+            end
+        end
+        @synchronize
+
+        @inbounds for idx in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV * n_batch)
+            k_ = (idx - 1) % LMAX_CONV + 1
+            slot = (idx - 1) ÷ LMAX_CONV + 1
+            tracer = first_tracer + slot - 1
+            _tm5_write_q!(q_raw_arr, i, j, Hp, k_shift + k_, tracer, q_loc[k_, slot], Val(:ll))
+        end
+        # All readers must finish before the next batch overwrites q_loc.
+        @synchronize
     end
 end
 
@@ -545,7 +510,7 @@ end
     t = @index(Local)
 
     A_loc     = @localmem Float32 (LMAX_CONV, LMAX_CONV)
-    q_loc     = @localmem Float32 (LMAX_CONV, _TM5_COLLAB_NT_MAX)
+    q_loc     = @localmem Float32 (LMAX_CONV, _TM5_COLLAB_TRACER_BATCH)
     piv_loc   = @localmem Int32   (LMAX_CONV,)
     bmass_loc = @localmem Float32 (LMAX_CONV,)
     amu_loc   = @localmem Float32 (LMAX_CONV + 1,)
@@ -681,12 +646,6 @@ end
     end
     @synchronize
 
-    @inbounds for idx in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV * Nt)
-        k_  = (idx - 1) % LMAX_CONV + 1
-        tt = (idx - 1) ÷ LMAX_CONV + 1
-        q_loc[k_, tt] = _tm5_read_q(q_raw_arr, c, b, Hp, k_shift + k_, tt, Val(:rg))
-    end
-    @synchronize
 
     if !no_conv
         for k in k_lo:LMAX_CONV
@@ -728,48 +687,37 @@ end
             end
             @synchronize
         end
-
-        if t == 1
-            @inbounds for k in k_lo:LMAX_CONV
-                piv = Int(piv_loc[k])
-                if piv != k
-                    for tt in 1:Nt
-                        tmp = q_loc[k, tt]
-                        q_loc[k, tt] = q_loc[piv, tt]
-                        q_loc[piv, tt] = tmp
-                    end
-                end
-            end
-        end
-        @synchronize
-
-        @inbounds for tt in t:_TM5_COLLAB_WG_SIZE:Nt
-            for k in k_lo:LMAX_CONV
-                s = q_loc[k, tt]
-                for j2 in k_lo:(k - 1)
-                    s -= A_loc[k, j2] * q_loc[j2, tt]
-                end
-                q_loc[k, tt] = s
-            end
-        end
-        @synchronize
-
-        @inbounds for tt in t:_TM5_COLLAB_WG_SIZE:Nt
-            for k in LMAX_CONV:-1:k_lo
-                s = q_loc[k, tt]
-                for j2 in (k + 1):LMAX_CONV
-                    s -= A_loc[k, j2] * q_loc[j2, tt]
-                end
-                q_loc[k, tt] = s / A_loc[k, k]
-            end
-        end
-        @synchronize
     end
 
-    @inbounds for idx in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV * Nt)
-        k_  = (idx - 1) % LMAX_CONV + 1
-        tt = (idx - 1) ÷ LMAX_CONV + 1
-        _tm5_write_q!(q_raw_arr, c, b, Hp, k_shift + k_, tt, q_loc[k_, tt], Val(:rg))
+    # Reuse this column's LU for every tracer batch. The shared RHS buffer
+    # has fixed capacity, independent of the total number of tracers.
+    for first_tracer in 1:_TM5_COLLAB_TRACER_BATCH:Nt
+        n_batch = min(_TM5_COLLAB_TRACER_BATCH, Nt - first_tracer + 1)
+        @inbounds for idx in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV * n_batch)
+            k_ = (idx - 1) % LMAX_CONV + 1
+            slot = (idx - 1) ÷ LMAX_CONV + 1
+            tracer = first_tracer + slot - 1
+            q_loc[k_, slot] = _tm5_read_q(q_raw_arr, c, b, Hp, k_shift + k_, tracer, Val(:rg))
+        end
+        @synchronize
+
+        # Each thread owns a complete RHS: permutation, forward solve, and
+        # back solve need no barriers between them or between tracers.
+        if !no_conv
+            for slot in t:_TM5_COLLAB_WG_SIZE:n_batch
+                _tm5_solve_shared_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot)
+            end
+        end
+        @synchronize
+
+        @inbounds for idx in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV * n_batch)
+            k_ = (idx - 1) % LMAX_CONV + 1
+            slot = (idx - 1) ÷ LMAX_CONV + 1
+            tracer = first_tracer + slot - 1
+            _tm5_write_q!(q_raw_arr, c, b, Hp, k_shift + k_, tracer, q_loc[k_, slot], Val(:rg))
+        end
+        # All readers must finish before the next batch overwrites q_loc.
+        @synchronize
     end
 end
 
@@ -790,7 +738,7 @@ end
     t = @index(Local)
 
     A_loc     = @localmem Float32 (LMAX_CONV, LMAX_CONV)
-    q_loc     = @localmem Float32 (LMAX_CONV, _TM5_COLLAB_NT_MAX)
+    q_loc     = @localmem Float32 (LMAX_CONV, _TM5_COLLAB_TRACER_BATCH)
     piv_loc   = @localmem Int32   (LMAX_CONV,)
     bmass_loc = @localmem Float32 (LMAX_CONV,)
     amu_loc   = @localmem Float32 (LMAX_CONV + 1,)
@@ -925,12 +873,6 @@ end
     end
     @synchronize
 
-    @inbounds for idx in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV * Nt)
-        k_  = (idx - 1) % LMAX_CONV + 1
-        tt = (idx - 1) ÷ LMAX_CONV + 1
-        q_loc[k_, tt] = _tm5_read_q(q_raw_arr, c1, c2, Hp, k_shift + k_, tt, Val(:cs))
-    end
-    @synchronize
 
     if !no_conv
         for k in k_lo:LMAX_CONV
@@ -972,48 +914,37 @@ end
             end
             @synchronize
         end
-
-        if t == 1
-            @inbounds for k in k_lo:LMAX_CONV
-                piv = Int(piv_loc[k])
-                if piv != k
-                    for tt in 1:Nt
-                        tmp = q_loc[k, tt]
-                        q_loc[k, tt] = q_loc[piv, tt]
-                        q_loc[piv, tt] = tmp
-                    end
-                end
-            end
-        end
-        @synchronize
-
-        @inbounds for tt in t:_TM5_COLLAB_WG_SIZE:Nt
-            for k in k_lo:LMAX_CONV
-                s = q_loc[k, tt]
-                for j2 in k_lo:(k - 1)
-                    s -= A_loc[k, j2] * q_loc[j2, tt]
-                end
-                q_loc[k, tt] = s
-            end
-        end
-        @synchronize
-
-        @inbounds for tt in t:_TM5_COLLAB_WG_SIZE:Nt
-            for k in LMAX_CONV:-1:k_lo
-                s = q_loc[k, tt]
-                for j2 in (k + 1):LMAX_CONV
-                    s -= A_loc[k, j2] * q_loc[j2, tt]
-                end
-                q_loc[k, tt] = s / A_loc[k, k]
-            end
-        end
-        @synchronize
     end
 
-    @inbounds for idx in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV * Nt)
-        k_  = (idx - 1) % LMAX_CONV + 1
-        tt = (idx - 1) ÷ LMAX_CONV + 1
-        _tm5_write_q!(q_raw_arr, c1, c2, Hp, k_shift + k_, tt, q_loc[k_, tt], Val(:cs))
+    # Reuse this column's LU for every tracer batch. The shared RHS buffer
+    # has fixed capacity, independent of the total number of tracers.
+    for first_tracer in 1:_TM5_COLLAB_TRACER_BATCH:Nt
+        n_batch = min(_TM5_COLLAB_TRACER_BATCH, Nt - first_tracer + 1)
+        @inbounds for idx in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV * n_batch)
+            k_ = (idx - 1) % LMAX_CONV + 1
+            slot = (idx - 1) ÷ LMAX_CONV + 1
+            tracer = first_tracer + slot - 1
+            q_loc[k_, slot] = _tm5_read_q(q_raw_arr, c1, c2, Hp, k_shift + k_, tracer, Val(:cs))
+        end
+        @synchronize
+
+        # Each thread owns a complete RHS: permutation, forward solve, and
+        # back solve need no barriers between them or between tracers.
+        if !no_conv
+            for slot in t:_TM5_COLLAB_WG_SIZE:n_batch
+                _tm5_solve_shared_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot)
+            end
+        end
+        @synchronize
+
+        @inbounds for idx in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV * n_batch)
+            k_ = (idx - 1) % LMAX_CONV + 1
+            slot = (idx - 1) ÷ LMAX_CONV + 1
+            tracer = first_tracer + slot - 1
+            _tm5_write_q!(q_raw_arr, c1, c2, Hp, k_shift + k_, tracer, q_loc[k_, slot], Val(:cs))
+        end
+        # All readers must finish before the next batch overwrites q_loc.
+        @synchronize
     end
 end
 

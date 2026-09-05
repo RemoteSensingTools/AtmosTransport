@@ -1,0 +1,119 @@
+[6_0_host]
+gc_seconds = 0.009857712
+seconds = 0.385518708
+allocated_bytes = 154897480
+
+[32_1_device]
+gc_seconds = 0.0
+seconds = 0.104585079
+allocated_bytes = 225168
+
+[32_4_host]
+gc_seconds = 0.001043741
+seconds = 0.165403284
+allocated_bytes = 596605920
+
+[32_0_host]
+gc_seconds = 0.001997011
+seconds = 0.278633933
+allocated_bytes = 598328576
+
+[32_0_device]
+gc_seconds = 0.0
+seconds = 0.10679864
+allocated_bytes = 225200
+
+[32_3_device]
+gc_seconds = 0.0
+seconds = 0.104442814
+allocated_bytes = 225200
+
+[32_5_device]
+gc_seconds = 0.0
+seconds = 0.104834061
+allocated_bytes = 225200
+
+[6_5_host]
+gc_seconds = 0.0
+seconds = 0.05431209
+allocated_bytes = 148710888
+
+[32_3_host]
+gc_seconds = 0.001085301
+seconds = 0.165304792
+allocated_bytes = 596605744
+
+[6_4_device]
+gc_seconds = 0.0
+seconds = 0.032997632
+allocated_bytes = 223264
+
+[6_2_device]
+gc_seconds = 0.0
+seconds = 0.032963633
+allocated_bytes = 223264
+
+[6_3_host]
+gc_seconds = 0.0
+seconds = 0.054283716
+allocated_bytes = 148710888
+
+[6_3_device]
+gc_seconds = 0.0
+seconds = 0.032796203
+allocated_bytes = 223280
+
+[6_4_host]
+gc_seconds = 0.0
+seconds = 0.054299909
+allocated_bytes = 148710904
+
+[32_1_host]
+gc_seconds = 0.001082537
+seconds = 0.165459932
+allocated_bytes = 596605744
+
+[32_2_device]
+gc_seconds = 0.0
+seconds = 0.104841024
+allocated_bytes = 225200
+
+[6_2_host]
+gc_seconds = 0.0
+seconds = 0.054229499
+allocated_bytes = 148710888
+
+[32_5_host]
+gc_seconds = 0.001086698
+seconds = 0.165588345
+allocated_bytes = 596605744
+
+[32_2_host]
+gc_seconds = 0.001053271
+seconds = 0.166301781
+allocated_bytes = 596605680
+
+[6_5_device]
+gc_seconds = 0.0
+seconds = 0.032862681
+allocated_bytes = 223280
+
+[6_1_host]
+gc_seconds = 0.0
+seconds = 0.055020266
+allocated_bytes = 148710840
+
+[6_1_device]
+gc_seconds = 0.0
+seconds = 0.044434917
+allocated_bytes = 441088
+
+[6_0_device]
+gc_seconds = 0.0
+seconds = 0.060325595
+allocated_bytes = 1126136
+
+[32_4_device]
+gc_seconds = 0.0
+seconds = 0.104703278
+allocated_bytes = 225200

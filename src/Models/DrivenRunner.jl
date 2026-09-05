@@ -654,6 +654,14 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
 
     state  = CubedSphereState(BasisT, mesh, air_mass; tracer_kwargs...)
     fluxes = _allocate_cs_runner_fluxes(mesh, Nz, FT, BasisT)
+    # Workspace constructors allocate with `similar(state.air_mass[1])`.
+    # Move prognostic storage first so scratch is created on the target backend,
+    # avoiding temporary CPU workspaces and copying their unused contents.
+    adaptor = array_adapter(arch)
+    if adaptor !== Array
+        state = Base.invokelatest(Adapt.adapt, adaptor, state)
+        fluxes = Base.invokelatest(Adapt.adapt, adaptor, fluxes)
+    end
 
     # Build the CS physics object. The recipe-selected operators are installed
     # on the model here; the kernels start running later in the `step!(sim)`
@@ -661,10 +669,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     model = TransportModel(state, fluxes, grid, recipe.advection;
                             diffusion  = recipe.diffusion,
                             convection = recipe.convection)
-    # Adapt state + fluxes to the selected backend. `invokelatest` is required
-    # because GPU packages may be loaded dynamically and their Adapt methods can
-    # arrive in a newer world age than this function's compiled body.
-    adaptor = array_adapter(arch)
+    # Adapt remaining operator and geometry metadata. Device state and scratch
+    # already live on the selected backend and are retained by Adapt.
     if adaptor !== Array
         model  = Base.invokelatest(Adapt.adapt, adaptor, model)
         state  = model.state                           # rebind post-adapt

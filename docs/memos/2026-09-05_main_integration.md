@@ -56,8 +56,9 @@ pass; maximum relative total-storage drift is 2.572e-6. See the complete
 ## Main-based validation
 
 The complete Julia 1.12.6 CPU baseline (`julia --startup-file=no --project=test test/runtests.jl`, four Julia threads,
-GPUs hidden) passes 80,136 checks across
-108 core files plus the regridding runner. There are 22 existing skips or
+GPUs hidden) passes 82,059 checks across
+115 core files plus the regridding runner after output, input, staging, and
+direct device workspace integration. There are 22 existing skips or
 expected-broken checks and no failures. Aqua passes; JET reports 142 findings
 against main's unchanged 144-report allowance. The run includes signed
 advection, signed native initialization, surface-inventory conversions, model
@@ -82,9 +83,15 @@ Staging ownership and source-identity checks are now integrated too; see the
 provenance probes preserve fallback values without printing fatal Git messages
 from exported source trees.
 
+CS workspace construction now follows the device state directly; see the
+[allocation measurements](2026-09-05_main_device_workspace.md). It reduces host
+allocation and isolated construction time without a claimed additional
+whole-run speedup.
+
 ## Remaining integration work
 
-- Reduce transient CPU workspace allocation before GPU adaptation.
+- Extend the measured CS device-allocation approach to other startup costs
+  only after profiling; host initial-condition packing still allocates heavily.
 - Retain current signed-tracer conservation and output-total contracts.
 - Reconcile scientific documentation and package-loading improvements.
 - Repeat CPU and GPU runtime validation after the remaining I/O ports. Compare

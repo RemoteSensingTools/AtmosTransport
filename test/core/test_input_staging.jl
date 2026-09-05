@@ -56,15 +56,89 @@ end
 
     @testset "reuse correct + replace stale across runs" begin
         stage = mktempdir()
-        cp(paths[1], joinpath(stage, _IS._staged_basename(paths[1])))             # correct: reuse
+        cp(paths[1], joinpath(stage, _IS._staged_basename(paths[1])))             # same size, no metadata: re-copy
         write(joinpath(stage, _IS._staged_basename(paths[2])), rand(UInt8, 9))    # wrong size: re-copy
         mgr = InputStager(paths, Dict("enabled" => true, "dir" => stage,
                                       "lookahead_days" => 0, "cleanup_on_exit" => false))
         @test read(staged_path_for!(mgr, 1)) == read(paths[1])
         @test read(staged_path_for!(mgr, 2)) == read(paths[2])
+        cleanup_staging!(mgr)
     end
 
     @testset "config validation" begin
         @test_throws ArgumentError InputStager(paths, Dict("enabled" => true))  # missing dir
+    end
+end
+
+@testset "InputStaging — source identity and directory ownership" begin
+    mktempdir() do dir
+        source = joinpath(dir,"source.bin")
+        write(source,fill(UInt8(1),4096))
+        stage = joinpath(dir,"stage")
+        cfg = Dict("enabled"=>true,"dir"=>stage,"lookahead_days"=>0,
+                   "cleanup_on_exit"=>false)
+        blocked_dir = joinpath(dir,"not-a-directory")
+        write(blocked_dir,"occupied")
+        unavailable = @test_logs (:warn,r"Input staging directory") InputStager(
+            [source],merge(cfg,Dict("dir"=>blocked_dir)))
+        @test !unavailable.enabled
+        @test staged_path_for!(unavailable,1) == source
+
+        first = InputStager([source],cfg)
+        staged = staged_path_for!(first,1)
+        @test _IS._can_reuse_staged(source,staged)
+        @test isfile(_IS._staged_metadata_path(staged))
+        original_inode = stat(staged).inode
+        # A simultaneous run must not write into or evict this run's cache.
+        second = @test_logs (:warn,r"Input staging directory") InputStager([source],cfg)
+        @test !second.enabled
+        @test staged_path_for!(second,1) == source
+        cleanup_staging!(second)
+        @test isfile(staged)
+        unrelated_partial = joinpath(stage,"another-producer.part")
+        write(unrelated_partial,"owned elsewhere")
+        cleanup_staging!(first)
+        @test !isfile(joinpath(stage,".atmostransport-staging.pid"))
+        @test read(unrelated_partial,String) == "owned elsewhere"
+        @test_throws ArgumentError staged_path_for!(first,1)
+        @test cleanup_staging!(first) === nothing
+
+        # An unchanged source really is reused, preserving the staged inode.
+        reused = InputStager([source],cfg)
+        @test staged_path_for!(reused,1) == staged
+        @test stat(staged).inode == original_inode
+        cleanup_staging!(reused)
+
+        # Replacing the source with the same size must invalidate cached data.
+        replacement = joinpath(dir,"replacement.bin")
+        write(replacement,fill(UInt8(2),4096))
+        mv(replacement,source;force=true)
+        @test filesize(source) == filesize(staged)
+        @test !_IS._can_reuse_staged(source,staged)
+        changed = InputStager([source],cfg)
+        @test read(staged_path_for!(changed,1)) == fill(UInt8(2),4096)
+        @test _IS._can_reuse_staged(source,staged)
+        cleanup_staging!(changed)
+
+        # Corrupt metadata never authorizes reuse, and cleanup removes only
+        # files owned by this stager (including their source metadata).
+        write(_IS._staged_metadata_path(staged),"invalid [ metadata")
+        @test !_IS._can_reuse_staged(source,staged)
+        final = InputStager([source],merge(cfg,Dict("cleanup_on_exit"=>true)))
+        @test read(staged_path_for!(final,1)) == read(source)
+        cleanup_staging!(final)
+        @test !isfile(staged)
+        @test !isfile(_IS._staged_metadata_path(staged))
+        @test read(unrelated_partial,String) == "owned elsewhere"
+
+        repeated = InputStager(fill(source,5),merge(cfg,Dict(
+            "cleanup_on_exit"=>true,"lookahead_days"=>2)))
+        for idx in 1:5
+            path = staged_path_for!(repeated,idx)
+            @test isfile(path)
+            @test read(path) == read(source)
+        end
+        cleanup_staging!(repeated)
+        @test !isfile(staged)
     end
 end

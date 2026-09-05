@@ -67,7 +67,17 @@ cleanup_on_exit  = true                       # remove staged files at run end (
 
 Default off ⇒ bit-identical to a non-staged run. Copies run on a background
 task (overlapping GPU transport); a copy failure transparently falls back to the
-NAS path. Implementation: `src/Models/InputStaging.jl`.
+NAS path. Each active run owns its staging directory; another run targeting
+that directory falls back to the source paths. Use distinct directories when
+concurrent runs should both stage inputs.
+
+With `cleanup_on_exit = false`, retained copies can be reused on a later run.
+Reuse requires matching source path, size, modification/change times, and inode
+metadata in a `.source.toml` sidecar. This rejects equal-sized rewritten inputs
+and old copies without metadata. These checks are filesystem identity checks,
+not content checksums: source binaries must remain immutable during a run.
+Cleanup removes this run's staged files and metadata, preserving unrelated
+files in the directory. Implementation: `src/Models/InputStaging.jl`.
 
 ### `[architecture]` — backend selection
 

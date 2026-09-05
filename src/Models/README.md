@@ -86,6 +86,8 @@ read.
   (`InputStager`, `staged_path_for!`, `cleanup_staging!`) for the per-day
   binary loop: copies upcoming days NAS→local NVMe ahead of the GPU loop and
   evicts processed days, bounding local-disk use for multi-month/year runs.
+  A directory has one active owner, and retained-copy reuse checks source
+  identity metadata. Unavailable staging falls back to original source paths.
   Default off ⇒ bit-identical to a non-staged run
 
 ## Common Tasks

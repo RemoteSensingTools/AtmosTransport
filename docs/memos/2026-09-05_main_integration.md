@@ -77,9 +77,13 @@ Input ownership, startup loading, cache handoff, and cubed-sphere workspace
 reuse are ported to main's APIs. The [input integration report](2026-09-05_main_input_port.md)
 records the lifetime and continuous/split-file regression checks.
 
+Staging ownership and source-identity checks are now integrated too; see the
+[staging report](2026-09-05_main_staging_port.md). Optional preprocessing Git
+provenance probes preserve fallback values without printing fatal Git messages
+from exported source trees.
+
 ## Remaining integration work
 
-- Port staging ownership and source-identity checks.
 - Reduce transient CPU workspace allocation before GPU adaptation.
 - Retain current signed-tracer conservation and output-total contracts.
 - Reconcile scientific documentation and package-loading improvements.

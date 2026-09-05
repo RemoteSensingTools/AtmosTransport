@@ -1,0 +1,11 @@
+--- a/src/Operators/Convection/tm5_kernels.jl
++++ b/src/Operators/Convection/tm5_kernels.jl
+@@ -186,7 +186,7 @@
+ # Fixed RHS capacity, not a limit on the scientific tracer count. Declared
+ # shared storage is 4*L^2 + (4*B + 16)*L + 16 bytes, including scratch.
+ # L=85, B=6 uses 32,316 bytes; B=8 would exceed 32 KiB (32,996 bytes).
+-const _TM5_COLLAB_TRACER_BATCH = 6
++const _TM5_COLLAB_TRACER_BATCH = 32
+
+ """
+     _tm5_collab_supports(lmax_conv, Nt) -> Bool

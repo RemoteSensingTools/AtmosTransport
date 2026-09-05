@@ -1,0 +1,360 @@
+--- a/src/Operators/Convection/tm5_kernels.jl
++++ b/src/Operators/Convection/tm5_kernels.jl
+@@ -344,71 +344,75 @@
+         end
+         @synchronize
+
++        # Only the mass-flux recurrence is serial; matrix columns are independent.
+         if t == 1
+-            # Updraft pass.
+             @inbounds for k in LMAX_CONV:-1:icltop
+                 e = _tm5_read_forcing(entu, i, j, Hp, k_shift + k, Val(:ll))
+                 d = _tm5_read_forcing(detu, i, j, Hp, k_shift + k, Val(:ll))
+-                # Cloud-top closure (clipping guard). ONLY when the cloud
+-                # reaches the very top of the active region (`icltop == 1`,
+-                # i.e. `lmax_conv` clips the cloud top) force the updraft to
+-                # fully detrain so no residual `amu` escapes into the
+-                # passthrough region above. The subsidence pass runs
+-                # `LMAX_CONV:-1:2`, so a layer-1 residual is the ONLY
+-                # uncompensated one; fed by emission tracers it drives a
+-                # multi-substep mass blow-up. For non-clipping columns
+-                # (`icltop >= 2`) the subsidence already compensates, so this
+-                # is an exact no-op there — validated lmax_conv=0 runs unchanged.
+                 if icltop == 1 && k == icltop
+                     d = amu_loc[k + 1] + e
+                 end
+                 amu_loc[k] = amu_loc[k + 1] + e - d
+-                zxi = 0f0
+-                if amu_loc[k] > 0f0
+-                    denom = amu_loc[k + 1] + e
+-                    zxi = max(0f0, 1f0 - d / denom)
+-                else
++                if !(amu_loc[k] > 0f0)
+                     amu_loc[k] = 0f0
+                 end
+-                for kk in (k + 1):LMAX_CONV
+-                    f_below = k == LMAX_CONV ? 0f0 : A_loc[k + 1, kk]
+-                    A_loc[k, kk] = f_below * zxi
+-                end
+-                bmass_k = bmass_loc[k]
+-                A_loc[k, k] = e / bmass_k * zxi
+-            end
+-            # Downdraft pass.
++            end
+             if icllfs <= LMAX_CONV
+                 @inbounds for k in icllfs:(LMAX_CONV - 1)
+                     e = _tm5_read_forcing(entd, i, j, Hp, k_shift + k, Val(:ll))
+                     d = _tm5_read_forcing(detd, i, j, Hp, k_shift + k, Val(:ll))
+                     amd_loc[k + 1] = amd_loc[k] - e + d
++                    if !(amd_loc[k + 1] < 0f0)
++                        amd_loc[k + 1] = 0f0
++                    end
++                end
++            end
++        end
++        @synchronize
++        # Columns are independent. Ascending levels preserve the original
++        # f below each row until it is consumed by the in-place difference.
++        @inbounds for kk in t:_TM5_COLLAB_WG_SIZE:LMAX_CONV
++            # Updraft contribution in this matrix column (top triangle).
++            if kk >= icltop
++                below = 0f0
++                for k in kk:-1:icltop
++                    e = _tm5_read_forcing(entu, i, j, Hp, k_shift + k, Val(:ll))
++                    d = _tm5_read_forcing(detu, i, j, Hp, k_shift + k, Val(:ll))
++                    if icltop == 1 && k == icltop
++                        d = amu_loc[k + 1] + e
++                    end
++                    zxi = 0f0
++                    if amu_loc[k] > 0f0
++                        denom = amu_loc[k + 1] + e
++                        zxi = max(0f0, 1f0 - d / denom)
++                    end
++                    value = k == kk ? e / bmass_loc[k] * zxi : below * zxi
++                    A_loc[k,kk] = value
++                    below = value
++                end
++            end
++            # Downdraft contribution (strict lower triangle).
++            if kk >= icllfs && kk < LMAX_CONV
++                above = 0f0
++                for k in kk:(LMAX_CONV - 1)
++                    e = _tm5_read_forcing(entd, i, j, Hp, k_shift + k, Val(:ll))
++                    d = _tm5_read_forcing(detd, i, j, Hp, k_shift + k, Val(:ll))
+                     zxi = 0f0
+                     if amd_loc[k + 1] < 0f0
+                         denom = amd_loc[k] - e
+                         zxi = max(0f0, 1f0 + d / denom)
+-                    else
+-                        amd_loc[k + 1] = 0f0
+-                    end
+-                    for kk in icllfs:(k - 1)
+-                        A_loc[k + 1, kk] = A_loc[k, kk] * zxi
+-                    end
+-                    bmass_k = bmass_loc[k]
+-                    A_loc[k + 1, k] = -e / bmass_k * zxi
+-                end
+-            end
+-            # Subsidence subtraction.
+-            @inbounds for k in LMAX_CONV:-1:2
+-                bmass_above = bmass_loc[k - 1]
+-                bmass_k = bmass_loc[k]
+-                A_loc[k, k - 1] -= amu_loc[k] / bmass_above
+-                A_loc[k, k]     -= amd_loc[k] / bmass_k
+-            end
+-        end
+-        @synchronize
+-        # Columns are independent. Ascending levels preserve the original
+-        # f below each row until it is consumed by the in-place difference.
+-        @inbounds for kk in t:_TM5_COLLAB_WG_SIZE:LMAX_CONV
++                    end
++                    value = k == kk ? -e / bmass_loc[k] * zxi : above * zxi
++                    A_loc[k+1,kk] = value
++                    above = value
++                end
++            end
++            if kk < LMAX_CONV
++                A_loc[kk+1,kk] -= amu_loc[kk+1] / bmass_loc[kk]
++            end
++            if kk >= 2
++                A_loc[kk,kk] -= amd_loc[kk] / bmass_loc[kk]
++            end
+             for k in 1:LMAX_CONV
+                 if k < k_lo || kk < k_lo
+                     A_loc[k, kk] = (k == kk) ? 1f0 : 0f0
+@@ -589,68 +593,75 @@
+         end
+         @synchronize
+
++        # Only the mass-flux recurrence is serial; matrix columns are independent.
+         if t == 1
+             @inbounds for k in LMAX_CONV:-1:icltop
+                 e = _tm5_read_forcing(entu, c, b, Hp, k_shift + k, Val(:rg))
+                 d = _tm5_read_forcing(detu, c, b, Hp, k_shift + k, Val(:rg))
+-                # Cloud-top closure (clipping guard). ONLY when the cloud
+-                # reaches the very top of the active region (`icltop == 1`,
+-                # i.e. `lmax_conv` clips the cloud top) force the updraft to
+-                # fully detrain so no residual `amu` escapes into the
+-                # passthrough region above. The subsidence pass runs
+-                # `LMAX_CONV:-1:2`, so a layer-1 residual is the ONLY
+-                # uncompensated one; fed by emission tracers it drives a
+-                # multi-substep mass blow-up. For non-clipping columns
+-                # (`icltop >= 2`) the subsidence already compensates, so this
+-                # is an exact no-op there — validated lmax_conv=0 runs unchanged.
+                 if icltop == 1 && k == icltop
+                     d = amu_loc[k + 1] + e
+                 end
+                 amu_loc[k] = amu_loc[k + 1] + e - d
+-                zxi = 0f0
+-                if amu_loc[k] > 0f0
+-                    denom = amu_loc[k + 1] + e
+-                    zxi = max(0f0, 1f0 - d / denom)
+-                else
++                if !(amu_loc[k] > 0f0)
+                     amu_loc[k] = 0f0
+                 end
+-                for kk in (k + 1):LMAX_CONV
+-                    f_below = k == LMAX_CONV ? 0f0 : A_loc[k + 1, kk]
+-                    A_loc[k, kk] = f_below * zxi
+-                end
+-                bmass_k = bmass_loc[k]
+-                A_loc[k, k] = e / bmass_k * zxi
+             end
+             if icllfs <= LMAX_CONV
+                 @inbounds for k in icllfs:(LMAX_CONV - 1)
+                     e = _tm5_read_forcing(entd, c, b, Hp, k_shift + k, Val(:rg))
+                     d = _tm5_read_forcing(detd, c, b, Hp, k_shift + k, Val(:rg))
+                     amd_loc[k + 1] = amd_loc[k] - e + d
++                    if !(amd_loc[k + 1] < 0f0)
++                        amd_loc[k + 1] = 0f0
++                    end
++                end
++            end
++        end
++        @synchronize
++        # Columns are independent. Ascending levels preserve the original
++        # f below each row until it is consumed by the in-place difference.
++        @inbounds for kk in t:_TM5_COLLAB_WG_SIZE:LMAX_CONV
++            # Updraft contribution in this matrix column (top triangle).
++            if kk >= icltop
++                below = 0f0
++                for k in kk:-1:icltop
++                    e = _tm5_read_forcing(entu, c, b, Hp, k_shift + k, Val(:rg))
++                    d = _tm5_read_forcing(detu, c, b, Hp, k_shift + k, Val(:rg))
++                    if icltop == 1 && k == icltop
++                        d = amu_loc[k + 1] + e
++                    end
++                    zxi = 0f0
++                    if amu_loc[k] > 0f0
++                        denom = amu_loc[k + 1] + e
++                        zxi = max(0f0, 1f0 - d / denom)
++                    end
++                    value = k == kk ? e / bmass_loc[k] * zxi : below * zxi
++                    A_loc[k,kk] = value
++                    below = value
++                end
++            end
++            # Downdraft contribution (strict lower triangle).
++            if kk >= icllfs && kk < LMAX_CONV
++                above = 0f0
++                for k in kk:(LMAX_CONV - 1)
++                    e = _tm5_read_forcing(entd, c, b, Hp, k_shift + k, Val(:rg))
++                    d = _tm5_read_forcing(detd, c, b, Hp, k_shift + k, Val(:rg))
+                     zxi = 0f0
+                     if amd_loc[k + 1] < 0f0
+                         denom = amd_loc[k] - e
+                         zxi = max(0f0, 1f0 + d / denom)
+-                    else
+-                        amd_loc[k + 1] = 0f0
+-                    end
+-                    for kk in icllfs:(k - 1)
+-                        A_loc[k + 1, kk] = A_loc[k, kk] * zxi
+-                    end
+-                    bmass_k = bmass_loc[k]
+-                    A_loc[k + 1, k] = -e / bmass_k * zxi
+-                end
+-            end
+-            @inbounds for k in LMAX_CONV:-1:2
+-                bmass_above = bmass_loc[k - 1]
+-                bmass_k = bmass_loc[k]
+-                A_loc[k, k - 1] -= amu_loc[k] / bmass_above
+-                A_loc[k, k]     -= amd_loc[k] / bmass_k
+-            end
+-        end
+-        @synchronize
+-        # Columns are independent. Ascending levels preserve the original
+-        # f below each row until it is consumed by the in-place difference.
+-        @inbounds for kk in t:_TM5_COLLAB_WG_SIZE:LMAX_CONV
++                    end
++                    value = k == kk ? -e / bmass_loc[k] * zxi : above * zxi
++                    A_loc[k+1,kk] = value
++                    above = value
++                end
++            end
++            if kk < LMAX_CONV
++                A_loc[kk+1,kk] -= amu_loc[kk+1] / bmass_loc[kk]
++            end
++            if kk >= 2
++                A_loc[kk,kk] -= amd_loc[kk] / bmass_loc[kk]
++            end
+             for k in 1:LMAX_CONV
+                 if k < k_lo || kk < k_lo
+                     A_loc[k, kk] = (k == kk) ? 1f0 : 0f0
+@@ -833,68 +844,75 @@
+         end
+         @synchronize
+
++        # Only the mass-flux recurrence is serial; matrix columns are independent.
+         if t == 1
+             @inbounds for k in LMAX_CONV:-1:icltop
+                 e = _tm5_read_forcing(entu, c1, c2, Hp, k_shift + k, Val(:cs))
+                 d = _tm5_read_forcing(detu, c1, c2, Hp, k_shift + k, Val(:cs))
+-                # Cloud-top closure (clipping guard). ONLY when the cloud
+-                # reaches the very top of the active region (`icltop == 1`,
+-                # i.e. `lmax_conv` clips the cloud top) force the updraft to
+-                # fully detrain so no residual `amu` escapes into the
+-                # passthrough region above. The subsidence pass runs
+-                # `LMAX_CONV:-1:2`, so a layer-1 residual is the ONLY
+-                # uncompensated one; fed by emission tracers it drives a
+-                # multi-substep mass blow-up. For non-clipping columns
+-                # (`icltop >= 2`) the subsidence already compensates, so this
+-                # is an exact no-op there — validated lmax_conv=0 runs unchanged.
+                 if icltop == 1 && k == icltop
+                     d = amu_loc[k + 1] + e
+                 end
+                 amu_loc[k] = amu_loc[k + 1] + e - d
+-                zxi = 0f0
+-                if amu_loc[k] > 0f0
+-                    denom = amu_loc[k + 1] + e
+-                    zxi = max(0f0, 1f0 - d / denom)
+-                else
++                if !(amu_loc[k] > 0f0)
+                     amu_loc[k] = 0f0
+                 end
+-                for kk in (k + 1):LMAX_CONV
+-                    f_below = k == LMAX_CONV ? 0f0 : A_loc[k + 1, kk]
+-                    A_loc[k, kk] = f_below * zxi
+-                end
+-                bmass_k = bmass_loc[k]
+-                A_loc[k, k] = e / bmass_k * zxi
+             end
+             if icllfs <= LMAX_CONV
+                 @inbounds for k in icllfs:(LMAX_CONV - 1)
+                     e = _tm5_read_forcing(entd, c1, c2, Hp, k_shift + k, Val(:cs))
+                     d = _tm5_read_forcing(detd, c1, c2, Hp, k_shift + k, Val(:cs))
+                     amd_loc[k + 1] = amd_loc[k] - e + d
++                    if !(amd_loc[k + 1] < 0f0)
++                        amd_loc[k + 1] = 0f0
++                    end
++                end
++            end
++        end
++        @synchronize
++        # Columns are independent. Ascending levels preserve the original
++        # f below each row until it is consumed by the in-place difference.
++        @inbounds for kk in t:_TM5_COLLAB_WG_SIZE:LMAX_CONV
++            # Updraft contribution in this matrix column (top triangle).
++            if kk >= icltop
++                below = 0f0
++                for k in kk:-1:icltop
++                    e = _tm5_read_forcing(entu, c1, c2, Hp, k_shift + k, Val(:cs))
++                    d = _tm5_read_forcing(detu, c1, c2, Hp, k_shift + k, Val(:cs))
++                    if icltop == 1 && k == icltop
++                        d = amu_loc[k + 1] + e
++                    end
++                    zxi = 0f0
++                    if amu_loc[k] > 0f0
++                        denom = amu_loc[k + 1] + e
++                        zxi = max(0f0, 1f0 - d / denom)
++                    end
++                    value = k == kk ? e / bmass_loc[k] * zxi : below * zxi
++                    A_loc[k,kk] = value
++                    below = value
++                end
++            end
++            # Downdraft contribution (strict lower triangle).
++            if kk >= icllfs && kk < LMAX_CONV
++                above = 0f0
++                for k in kk:(LMAX_CONV - 1)
++                    e = _tm5_read_forcing(entd, c1, c2, Hp, k_shift + k, Val(:cs))
++                    d = _tm5_read_forcing(detd, c1, c2, Hp, k_shift + k, Val(:cs))
+                     zxi = 0f0
+                     if amd_loc[k + 1] < 0f0
+                         denom = amd_loc[k] - e
+                         zxi = max(0f0, 1f0 + d / denom)
+-                    else
+-                        amd_loc[k + 1] = 0f0
+-                    end
+-                    for kk in icllfs:(k - 1)
+-                        A_loc[k + 1, kk] = A_loc[k, kk] * zxi
+-                    end
+-                    bmass_k = bmass_loc[k]
+-                    A_loc[k + 1, k] = -e / bmass_k * zxi
+-                end
+-            end
+-            @inbounds for k in LMAX_CONV:-1:2
+-                bmass_above = bmass_loc[k - 1]
+-                bmass_k = bmass_loc[k]
+-                A_loc[k, k - 1] -= amu_loc[k] / bmass_above
+-                A_loc[k, k]     -= amd_loc[k] / bmass_k
+-            end
+-        end
+-        @synchronize
+-        # Columns are independent. Ascending levels preserve the original
+-        # f below each row until it is consumed by the in-place difference.
+-        @inbounds for kk in t:_TM5_COLLAB_WG_SIZE:LMAX_CONV
++                    end
++                    value = k == kk ? -e / bmass_loc[k] * zxi : above * zxi
++                    A_loc[k+1,kk] = value
++                    above = value
++                end
++            end
++            if kk < LMAX_CONV
++                A_loc[kk+1,kk] -= amu_loc[kk+1] / bmass_loc[kk]
++            end
++            if kk >= 2
++                A_loc[kk,kk] -= amd_loc[kk] / bmass_loc[kk]
++            end
+             for k in 1:LMAX_CONV
+                 if k < k_lo || kk < k_lo
+                     A_loc[k, kk] = (k == kk) ? 1f0 : 0f0

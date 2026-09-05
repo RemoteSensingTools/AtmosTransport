@@ -100,6 +100,30 @@ function _push_snapshot_frame!(::SingleOutputFile,
     return nothing
 end
 
+# The outer run owns this resource, including exceptional exits from either topology.
+mutable struct RunSnapshotOutput
+    stream::Union{Nothing,NetCDFSnapshotStream}
+end
+RunSnapshotOutput() = RunSnapshotOutput(nothing)
+function Base.close(output::RunSnapshotOutput)
+    stream = output.stream
+    stream === nothing || close(stream)
+    return nothing
+end
+
+function _single_netcdf_stream(output::RunSnapshotOutput, spec::RuntimeOutputSpec, grid; mass_basis)
+    output_enabled(spec) && spec.format === :netcdf && spec.partition isa SingleOutputFile ||
+        return nothing
+    output.stream = NetCDFSnapshotStream(output_path(spec), grid;
+                                         mass_basis, options=spec.options, fields=spec.fields)
+    return output.stream
+end
+
+_record_snapshot!(::Nothing, partition, snapshots, day_snapshots, frame) =
+    _push_snapshot_frame!(partition, snapshots, day_snapshots, frame)
+_record_snapshot!(stream::NetCDFSnapshotStream, partition, snapshots, day_snapshots, frame) =
+    append_snapshot!(stream, frame)
+
 function _push_snapshot_frame!(::DailyOutputFiles,
                                ::AbstractVector{<:AbstractSnapshotFrame},
                                day_snapshots::AbstractVector{<:AbstractSnapshotFrame},

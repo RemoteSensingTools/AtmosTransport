@@ -81,6 +81,9 @@ speedup from the isolated kernel changes. Single-file output still retains its
 captured frames until completion; daily output bounds retention to a day plus
 one in-flight daily write. Metal hardware was not available for testing.
 
+The subsequent [streaming-output follow-up](2026-09-04_streaming_output.md)
+removes the single-file NetCDF retention described above.
+
 ## Validation
 
 - Core coverage: 104 files exercised in an isolated-module sweep (excluding

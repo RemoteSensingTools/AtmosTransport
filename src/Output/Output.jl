@@ -62,6 +62,7 @@ include("diagnostics.jl")
 include("selected_snapshots.jl")
 include("netcdf_schema.jl")
 include("netcdf_writer.jl")
+include("netcdf_stream.jl")
 include("binary_writer.jl")
 
 end # module Output

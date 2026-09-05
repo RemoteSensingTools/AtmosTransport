@@ -40,8 +40,13 @@ const PAYLOAD_FILL_VALUE = 1.0e15
 @inline _payload_fill_value(::Type{Float64}) = Float64(PAYLOAD_FILL_VALUE)
 
 function _def_payload_var(ds, name::AbstractString, ::Type{T}, dims;
-                          attrib, options::SnapshotWriteOptions{T}) where
+                          attrib, options::SnapshotWriteOptions{T}, reuse::Bool=false) where
         {T <: AbstractFloat}
+    # Append calls reuse the schema defined by the first snapshot.
+    if haskey(ds, name)
+        reuse || throw(ArgumentError("duplicate output variable name: $(name)"))
+        return ds[name]
+    end
     # Inject the FillValue sentinel as both `_FillValue` (CF) and
     # `missing_value` (GEOS-Chem / GrADS / older readers) so every tool
     # masks invalid cells correctly. `defVar(..., fillvalue=...)` writes
@@ -238,7 +243,7 @@ end
 function _write_snapshot_payload!(ds, mesh::LatLonMesh, frames, tracer_keys,
                                   geometry, mass_basis_sym::Symbol,
                                   options::SnapshotWriteOptions,
-                                  fields::OutputFieldSpec)
+                                  fields::OutputFieldSpec; time_offset::Integer=0)
     T = options.float_type
     Nz = _nlevel(first(frames), mesh)
     air_idx = _layer_indices(fields.air_mass_layers, fields, Nz)
@@ -250,20 +255,20 @@ function _write_snapshot_payload!(ds, mesh::LatLonMesh, frames, tracer_keys,
                            attrib = _var_attrib(units = "kg",
                                                 long_name = "stored air mass",
                                                 coordinates = "lon lat"),
-                           options = options) : nothing
+                           options = options, reuse = time_offset > 0) : nothing
     air_area = fields.air_mass_per_area && !isempty(air_idx) ?
                _def_payload_var(ds, "air_mass_per_area", T, air_dims,
                                 attrib = _var_attrib(units = "kg m-2",
                                                      long_name = "stored layer air mass per area",
                                                      coordinates = "lon lat"),
-                                options = options) : nothing
+                                options = options, reuse = time_offset > 0) : nothing
     col_air = fields.column_air_mass_per_area ?
               _def_payload_var(ds, "column_air_mass_per_area", T, ("lon", "lat", "time"),
                                attrib = _var_attrib(units = "kg m-2",
                                                     long_name = "column air mass per area",
                                                     coordinates = "lon lat",
                                                     cell_methods = "lev: sum"),
-                               options = options) : nothing
+                               options = options, reuse = time_offset > 0) : nothing
 
     tracer_vars = Dict{Symbol, Any}()
     tracer_cm_vars = Dict{Symbol, Any}()
@@ -280,7 +285,7 @@ function _write_snapshot_payload!(ds, mesh::LatLonMesh, frames, tracer_keys,
                                                  attrib = _var_attrib(units = _tracer_units(mass_basis_sym),
                                                                       long_name = "per-layer $(s) mixing ratio",
                                                                       coordinates = "lon lat"),
-                                                 options = options)
+                                                 options = options, reuse = time_offset > 0)
         end
         if tf.column_mean
             tracer_cm_vars[name] = _def_payload_var(ds, "$(s)_column_mean", T, ("lon", "lat", "time"),
@@ -288,7 +293,7 @@ function _write_snapshot_payload!(ds, mesh::LatLonMesh, frames, tracer_keys,
                                                                          long_name = "air-mass-weighted column-mean $(s) mixing ratio",
                                                                          coordinates = "lon lat",
                                                                          cell_methods = "lev: mean"),
-                                                    options = options)
+                                                    options = options, reuse = time_offset > 0)
         end
         if tf.column_mass_per_area
             tracer_col_vars[name] = _def_payload_var(ds, "$(s)_column_mass_per_area", T, ("lon", "lat", "time"),
@@ -298,11 +303,12 @@ function _write_snapshot_payload!(ds, mesh::LatLonMesh, frames, tracer_keys,
                                                                           cell_methods = "lev: sum",
                                                                           extra = Dict("description" =>
                                                                               "Sum of model tracer mass divided by horizontal cell area; no molecular-weight conversion is applied.")),
-                                                     options = options)
+                                                     options = options, reuse = time_offset > 0)
         end
     end
 
-    for (t, frame) in enumerate(frames)
+    for (index, frame) in enumerate(frames)
+        t = time_offset + index
         air === nothing || (air[:, :, :, t] = T.(_air_layers(frame, air_idx)))
         air_area === nothing || (air_area[:, :, :, t] =
             T.(layer_mass_per_area(_air_layers(frame, air_idx), mesh)))
@@ -326,7 +332,7 @@ end
 function _write_snapshot_payload!(ds, mesh::ReducedGaussianMesh, frames, tracer_keys,
                                   geometry, mass_basis_sym::Symbol,
                                   options::SnapshotWriteOptions,
-                                  fields::OutputFieldSpec)
+                                  fields::OutputFieldSpec; time_offset::Integer=0)
     T = options.float_type
     Nz = _nlevel(first(frames), mesh)
     air_idx = _layer_indices(fields.air_mass_layers, fields, Nz)
@@ -338,20 +344,20 @@ function _write_snapshot_payload!(ds, mesh::ReducedGaussianMesh, frames, tracer_
                            attrib = _var_attrib(units = "kg",
                                                 long_name = "stored air mass",
                                                 coordinates = "cell_lon cell_lat"),
-                           options = options) : nothing
+                           options = options, reuse = time_offset > 0) : nothing
     air_area = fields.air_mass_per_area && !isempty(air_idx) ?
                _def_payload_var(ds, "air_mass_per_area", T, air_dims,
                                 attrib = _var_attrib(units = "kg m-2",
                                                      long_name = "stored layer air mass per area",
                                                      coordinates = "cell_lon cell_lat"),
-                                options = options) : nothing
+                                options = options, reuse = time_offset > 0) : nothing
     col_air = fields.column_air_mass_per_area ?
               _def_payload_var(ds, "column_air_mass_per_area", T, ("cell", "time"),
                                attrib = _var_attrib(units = "kg m-2",
                                                     long_name = "column air mass per area",
                                                     coordinates = "cell_lon cell_lat",
                                                     cell_methods = "lev: sum"),
-                               options = options) : nothing
+                               options = options, reuse = time_offset > 0) : nothing
 
     tracer_vars = Dict{Symbol, Any}()
     tracer_cm_native_vars = Dict{Symbol, Any}()
@@ -369,7 +375,7 @@ function _write_snapshot_payload!(ds, mesh::ReducedGaussianMesh, frames, tracer_
                                                  attrib = _var_attrib(units = _tracer_units(mass_basis_sym),
                                                                       long_name = "native per-layer $(s) mixing ratio",
                                                                       coordinates = "cell_lon cell_lat"),
-                                                 options = options)
+                                                 options = options, reuse = time_offset > 0)
         end
         if tf.column_mean
             tracer_cm_native_vars[name] = _def_payload_var(ds, "$(s)_column_mean_native", T, ("cell", "time"),
@@ -377,14 +383,14 @@ function _write_snapshot_payload!(ds, mesh::ReducedGaussianMesh, frames, tracer_
                                                                                 long_name = "native air-mass-weighted column-mean $(s) mixing ratio",
                                                                                 coordinates = "cell_lon cell_lat",
                                                                                 cell_methods = "lev: mean"),
-                                                           options = options)
+                                                           options = options, reuse = time_offset > 0)
             tracer_cm_raster_vars[name] = _def_payload_var(ds, "$(s)_column_mean", T, ("lon", "lat", "time"),
                                                            attrib = _var_attrib(units = _tracer_units(mass_basis_sym),
                                                                                 long_name = "diagnostic lon-lat raster column-mean $(s) mixing ratio",
                                                                                 coordinates = "lon lat",
                                                                                 cell_methods = "lev: mean",
                                                                                 extra = Dict("regridding" => ds.attrib["regridding"])),
-                                                           options = options)
+                                                           options = options, reuse = time_offset > 0)
         end
         if tf.column_mass_per_area
             tracer_col_vars[name] = _def_payload_var(ds, "$(s)_column_mass_per_area", T, ("cell", "time"),
@@ -394,12 +400,13 @@ function _write_snapshot_payload!(ds, mesh::ReducedGaussianMesh, frames, tracer_
                                                                           cell_methods = "lev: sum",
                                                                           extra = Dict("description" =>
                                                                               "Sum of model tracer mass divided by horizontal cell area; no molecular-weight conversion is applied.")),
-                                                     options = options)
+                                                     options = options, reuse = time_offset > 0)
         end
     end
 
     nn_map = geometry.nn_map
-    for (t, frame) in enumerate(frames)
+    for (index, frame) in enumerate(frames)
+        t = time_offset + index
         air === nothing || (air[:, :, t] = T.(_air_layers(frame, air_idx)))
         air_area === nothing || (air_area[:, :, t] =
             T.(layer_mass_per_area(_air_layers(frame, air_idx), mesh)))
@@ -425,7 +432,7 @@ end
 function _write_snapshot_payload!(ds, mesh::CubedSphereMesh, frames, tracer_keys,
                                   geometry, mass_basis_sym::Symbol,
                                   options::SnapshotWriteOptions,
-                                  fields::OutputFieldSpec)
+                                  fields::OutputFieldSpec; time_offset::Integer=0)
     T = options.float_type
     dims4 = ("Xdim", "Ydim", "nf", "time")
     coord = "lons lats"
@@ -440,14 +447,14 @@ function _write_snapshot_payload!(ds, mesh::CubedSphereMesh, frames, tracer_keys
                                                 long_name = "stored air mass",
                                                 coordinates = coord,
                                                 grid_mapping = "cubed_sphere"),
-                           options = options) : nothing
+                           options = options, reuse = time_offset > 0) : nothing
     air_area = fields.air_mass_per_area && !isempty(air_idx) ?
                _def_payload_var(ds, "air_mass_per_area", T, air_dims,
                                 attrib = _var_attrib(units = "kg m-2",
                                                      long_name = "stored layer air mass per area",
                                                      coordinates = coord,
                                                      grid_mapping = "cubed_sphere"),
-                                options = options) : nothing
+                                options = options, reuse = time_offset > 0) : nothing
     col_air = fields.column_air_mass_per_area ?
               _def_payload_var(ds, "column_air_mass_per_area", T, dims4,
                                attrib = _var_attrib(units = "kg m-2",
@@ -455,7 +462,7 @@ function _write_snapshot_payload!(ds, mesh::CubedSphereMesh, frames, tracer_keys
                                                     coordinates = coord,
                                                     grid_mapping = "cubed_sphere",
                                                     cell_methods = "lev: sum"),
-                               options = options) : nothing
+                               options = options, reuse = time_offset > 0) : nothing
 
     tracer_vars = Dict{Symbol, Any}()
     tracer_cm_vars = Dict{Symbol, Any}()
@@ -474,7 +481,7 @@ function _write_snapshot_payload!(ds, mesh::CubedSphereMesh, frames, tracer_keys
                                                                       long_name = "per-layer $(s) mixing ratio",
                                                                       coordinates = coord,
                                                                       grid_mapping = "cubed_sphere"),
-                                                 options = options)
+                                                 options = options, reuse = time_offset > 0)
         end
         if tf.column_mean
             tracer_cm_vars[name] = _def_payload_var(ds, "$(s)_column_mean", T, dims4,
@@ -483,7 +490,7 @@ function _write_snapshot_payload!(ds, mesh::CubedSphereMesh, frames, tracer_keys
                                                                          coordinates = coord,
                                                                          grid_mapping = "cubed_sphere",
                                                                          cell_methods = "lev: mean"),
-                                                    options = options)
+                                                    options = options, reuse = time_offset > 0)
         end
         if tf.column_mass_per_area
             tracer_col_vars[name] = _def_payload_var(ds, "$(s)_column_mass_per_area", T, dims4,
@@ -494,11 +501,12 @@ function _write_snapshot_payload!(ds, mesh::CubedSphereMesh, frames, tracer_keys
                                                                           cell_methods = "lev: sum",
                                                                           extra = Dict("description" =>
                                                                               "Sum of model tracer mass divided by horizontal cell area; no molecular-weight conversion is applied.")),
-                                                     options = options)
+                                                     options = options, reuse = time_offset > 0)
         end
     end
 
-    for (t, frame) in enumerate(frames)
+    for (index, frame) in enumerate(frames)
+        t = time_offset + index
         air === nothing || (air[:, :, :, :, t] = T.(_cs_stack3(_air_layers(frame, air_idx))))
         air_area === nothing || (air_area[:, :, :, :, t] =
             T.(_cs_stack3(layer_mass_per_area(_air_layers(frame, air_idx), mesh))))

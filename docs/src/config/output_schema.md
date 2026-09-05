@@ -241,6 +241,18 @@ The low-level `capture_snapshot(model)` call keeps its full-field contract.
 Use `capture_snapshot(model; fields=output_field_spec(...))` for selective
 capture. Binary snapshots continue to capture the full fields.
 
-Single-file output retains its captured frames until the run ends. For long
-campaigns, daily partitioning bounds this retention to a day plus at most one
-in-flight daily write. Column-only capture reduces memory in either mode.
+Single-file NetCDF output appends and flushes each captured snapshot immediately.
+The run owns one file handle and closes it on completion or failure.
+Its time dimension is unlimited, so retained host memory does not grow with the
+number of snapshots. Variable names, coordinates, units and diagnostic values
+follow the same contract as batch output. Column-only capture also reduces the
+size of each transfer and write.
+
+The `completed_snapshots` global attribute records successful appends. An I/O
+failure can leave a partial final record beyond this count; the run fails and
+does not reuse that writer. Files from interrupted runs are diagnostic output,
+not restart checkpoints. A new run replaces its single output file when its
+first snapshot is captured.
+
+Daily output retains a day of frames plus at most one in-flight daily write.
+Single-file `binary_mmap` output retains its frames until completion.

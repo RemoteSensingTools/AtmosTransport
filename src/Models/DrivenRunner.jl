@@ -101,7 +101,7 @@ using ..InitialConditionIO: build_initial_mixing_ratio,
                              build_surface_flux_sources
 using ..BinaryPathExpander: expand_binary_paths
 using ..InputStaging: InputStager, staged_path_for!, cleanup_staging!
-using ..Output: AbstractSnapshotFrame, SnapshotFrame,
+using ..Output: AbstractSnapshotFrame, SnapshotFrame, NetCDFSnapshotStream, append_snapshot!,
                 AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
                 RuntimeOutputSpec, runtime_output_spec, snapshot_hours,
                 output_enabled, output_path, output_path_for_day,
@@ -172,10 +172,15 @@ function run_driven_simulation(cfg::AbstractDict)
     # here and torn down in `finally` so staged multi-GB files are always
     # cleaned up, even if the run throws partway through.
     stager = InputStager(binary_paths, get(input_cfg, "staging", Dict{String, Any}()))
+    output_resources = RunSnapshotOutput()
     result = try
-        _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg, stager)
+        _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg, stager, output_resources)
     finally
-        cleanup_staging!(stager)
+        try
+            close(output_resources)
+        finally
+            cleanup_staging!(stager)
+        end
     end
     if timers_on
         SectionTimer.disable!()
@@ -193,13 +198,13 @@ function run_driven_simulation(cfg::AbstractDict)
     return result
 end
 
-_run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg, stager::InputStager) =
-    _run_driven_simulation_structured(binary_paths, cfg, stager)
-_run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg, stager::InputStager) =
-    _run_driven_simulation_structured(binary_paths, cfg, stager)
-_run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg, stager::InputStager) =
-    _run_driven_simulation_cs(binary_paths, cfg, stager)
-function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String}, _cfg, _stager::InputStager) where grid_type
+_run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput) =
+    _run_driven_simulation_structured(binary_paths, cfg, stager, output_resources)
+_run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput) =
+    _run_driven_simulation_structured(binary_paths, cfg, stager, output_resources)
+_run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput) =
+    _run_driven_simulation_cs(binary_paths, cfg, stager, output_resources)
+function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String}, _cfg, _stager::InputStager, _output_resources::RunSnapshotOutput) where grid_type
     throw(ArgumentError("Unsupported transport-binary grid_type=$(grid_type)."))
 end
 
@@ -227,7 +232,7 @@ function _surface_source_total_rate(source)
     end
 end
 
-function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, stager::InputStager)
+function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput)
     FT = _cfg_float_type(cfg)
     assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
     run_cfg = get(cfg, "run", Dict{String, Any}())
@@ -300,6 +305,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
 
     snapshots = AbstractSnapshotFrame[]
     day_snapshots = AbstractSnapshotFrame[]
+    snapshot_stream = _single_netcdf_stream(output_resources, output_spec, grid_of_first;
+                                            mass_basis=air_mass_basis(first_driver))
     snapshot_count = Ref(0)
     snap_idx = 1
     total_elapsed_hours = 0.0
@@ -319,8 +326,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
         timed_io_write!(timer, () -> begin
             frame = capture_snapshot(model; time_hours = hour_total,
                                      fields = output_spec.format === :netcdf ? output_spec.fields : nothing)
-            _push_snapshot_frame!(output_spec.partition, snapshots,
-                                  day_snapshots, frame)
+            _record_snapshot!(snapshot_stream, output_spec.partition, snapshots,
+                              day_snapshots, frame)
         end)
         snapshot_count[] += 1
         return nothing
@@ -505,7 +512,7 @@ function _cfg_architecture(cfg)
     return CPU()
 end
 
-function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::InputStager)
+function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput)
     FT   = _cfg_float_type(cfg)
     assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
     arch = _cfg_architecture(cfg)
@@ -641,6 +648,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
     # stripping and NetCDF diagnostics.
     snapshots = AbstractSnapshotFrame[]
     day_snapshots = AbstractSnapshotFrame[]
+    snapshot_stream = _single_netcdf_stream(output_resources, output_spec, grid;
+                                            mass_basis=air_mass_basis(driver1))
     snapshot_count = Ref(0)
 
     # Progress + IO/Transport timer. Estimate total windows from the
@@ -655,8 +664,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
             frame = capture_snapshot(model; time_hours = hour_total,
                                      halo_width = Hp,
                                      fields = output_spec.format === :netcdf ? output_spec.fields : nothing)
-            _push_snapshot_frame!(output_spec.partition, snapshots,
-                                  day_snapshots, frame)
+            _record_snapshot!(snapshot_stream, output_spec.partition, snapshots,
+                              day_snapshots, frame)
         end)
         snapshot_count[] += 1
         return nothing

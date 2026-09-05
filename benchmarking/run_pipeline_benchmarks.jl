@@ -81,13 +81,22 @@ mktempdir() do dir
                 end
                 r>0 && push!(samples,result)
             end
+            # Validate the actual public reader outside the measured interval.
+            snapshot = AtmosTransport.Visualization.open_snapshot(output)
+            @assert AtmosTransport.Visualization.snapshot_times(snapshot) == [0.0,1.0,2.0]
+            for tracer in 1:nt, ti in 1:3
+                field = AtmosTransport.Visualization.fieldview(snapshot,Symbol("tr$tracer");time=ti)
+                @assert all(x -> isapprox(x,400e-6;rtol=5e-5),field.values)
+            end
             record = Dict("topology"=>String(topology),"backend"=>backend,"Nc"=>Nc,
                 "levels"=>Nz,"tracers"=>nt,"layers"=>layers,"windows"=>2,
                 "median_seconds"=>median(x.time for x in samples),
                 "host_allocated_bytes"=>median(x.bytes for x in samples),
                 "input_bytes"=>filesize(binary),"output_bytes"=>filesize(output),
                 "cache"=>"warm OS page cache; includes setup, capture and NetCDF write",
-                "device"=>backend=="cuda" ? CUDA.name(CUDA.device()) : Sys.cpu_info()[1].model)
+                "device"=>backend=="cuda" ? CUDA.name(CUDA.device()) : Sys.cpu_info()[1].model,
+                "cuda_visible_devices"=>get(ENV,"CUDA_VISIBLE_DEVICES",""),
+                "reader_checks"=>"all three times and all tracer column means")
             push!(records,record)
             println(JSON3.write(record))
         end

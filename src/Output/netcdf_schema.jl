@@ -132,6 +132,15 @@ function _define_time!(ds, times)
     return v
 end
 
+# Streaming files grow along time; batch output keeps its fixed dimension.
+function _define_time!(ds, ::Nothing)
+    defDim(ds, "time", Inf)
+    return defVar(ds, "time", Float64, ("time",),
+                  attrib = Dict("units" => "hours",
+                                "long_name" => "elapsed simulation time",
+                                "comment" => "hours since the configured simulation start"))
+end
+
 function _define_lev!(ds, Nz::Integer)
     defDim(ds, "lev", Int(Nz))
     # `axis = "Z"` + `positive = "down"` is what Panoply / ncview look

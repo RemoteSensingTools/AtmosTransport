@@ -89,6 +89,27 @@ flowchart LR
     Y2 --> X2[X half-sweep]
 ```
 
+## Matrix convection and many tracers
+
+TM5 and CMFMC-matrix convection use the same backward-Euler solve after their
+forcing is prepared. In the collaborative Float32 GPU path, one workgroup
+builds and factors a column's matrix in shared memory. It retains the factors
+while loading, solving, and storing successive batches of six tracers.
+Additional tracers require more solves and memory traffic, but no larger shared
+matrix or tracer buffer. The final batch can be partially filled.
+
+The solver uses the matrix's upper-Hessenberg structure for columns without
+downdrafts and retains the general pivoted path when downdrafts are present.
+An unpivoted factorization also admits a specialized forward solve. These
+optimizations preserve the chosen vertical grid; `lmax_conv` truncation and
+`n_merge` layer aggregation are separate scientific approximations.
+
+Legacy global matrix scratch is allocated lazily when a fallback needs it.
+Collaborative runs therefore avoid reserving an otherwise unused column tile.
+The V100 tests cover positive and signed tracers through 65 species, comparing
+against dense CPU LU and independent tracer batches. Kernel timings are
+hardware- and forcing-dependent; use the section timers below for your run.
+
 ## What mmap does—and does not do
 
 `TransportBinaryReader` memory-maps the version-4 payload as a read-only CPU

@@ -223,17 +223,13 @@ kind = "cmfmc"                  # "none" | "cmfmc" | "cmfmc_matrix" | "tm5"
 # Collaborative-LU knobs (cmfmc_matrix and tm5). use_collab_lu is REQUIRED for
 # lmax_conv / n_merge to take effect — setting them without it is a hard error.
 use_collab_lu = true            # batched/collaborative column LU (fast path)
-lmax_conv     = 0               # 0 = full column; >0 truncates convection above
-                                # that level (cloud-top closure keeps it mass-safe)
-n_merge       = 2               # merge n adjacent columns per LU solve; 1 is
-                                # bit-exact, 2 is the best-accuracy production
-                                # merge (the historical n=2 blow-up was a
-                                # clipping bug, since fixed)
+lmax_conv     = 0               # 0 = full column; >0 retains that many bottom layers
+n_merge       = 1               # 1 = no aggregation; >1 merges adjacent vertical
+                                # layers within each column (a numerical approximation)
 
-# TM5-only — per-topology budget for the column-tile workspace,
-# in binary GiB. Default 1.0 (fits production through C720/L137 on
-# H100). Set lower on memory-tight GPUs; setting it higher beyond
-# the topology's total cells is a no-op.
+# TM5 and CMFMC-matrix: per-topology legacy column-tile budget in GiB.
+# Collaborative GPU runs defer this global scratch allocation. A CPU/Float64
+# fallback allocates the configured tile when first needed.
 tile_workspace_gib = 1.0
 
 [chemistry]
@@ -241,6 +237,14 @@ kind = "decay"                  # currently only first-order decay
   [chemistry.half_lives_seconds]
   rn222 = 330350.4              # per-tracer half-lives (seconds)
 ```
+
+For Float32 GPU matrix convection, each column's LU factors remain in shared
+memory while tracers pass through in batches of six. This buffer size does not
+limit the run to six tracers; 65-tracer runs are covered by V100 regression
+tests. The effective vertical matrix depth must still fit the supported
+1–85-level envelope. Tracer batching requires neither truncation nor layer
+aggregation. Choose `lmax_conv` and `n_merge` from scientific accuracy checks;
+conservation alone does not establish that either approximation is acceptable.
 
 Topology checks happen while the runtime recipe is built: reduced-Gaussian
 runs accept `upwind` or `none` advection and require midpoint surface-flux

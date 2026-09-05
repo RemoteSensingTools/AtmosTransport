@@ -1,0 +1,14 @@
+tracers = 6
+gc_seconds = 3.49080565
+sample = 0
+wall_seconds = 120.337554287
+host_allocated_bytes = 14989266544
+output_bytes = 4345288
+
+[final_totals]
+tracer02 = 4.809648128e9
+tracer04 = 4.809651712e9
+tracer06 = 4.809650688e9
+tracer03 = 4.80964864e9
+tracer01 = 4.80964608e9
+tracer05 = 4.809651712e9

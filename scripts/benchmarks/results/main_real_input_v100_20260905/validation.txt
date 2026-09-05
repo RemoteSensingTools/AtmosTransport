@@ -1,0 +1,2 @@
+Maximum relative total-mass drift: 2.5718011894571768e-6
+Tracer field/mass checks: 456 plus six time-axis checks

@@ -28,11 +28,15 @@ include("TransportBinaryDriver.jl")
 include("CubedSphereBinaryReader.jl")
 include("CubedSphereTransportDriver.jl")
 include("ERA5/ERA5.jl")
-using .ERA5
+using .ERA5: ERA5BinaryReader, ERA5BinaryHeader, PreprocessedERA5Driver,
+             ERA5ReducedGaussianGeometry, read_era5_reduced_gaussian_geometry,
+             read_era5_reduced_gaussian_mesh,
+             diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!,
+             diagnose_cm_from_continuity_ka!, load_cmfmc_window!,
+             load_tm5conv_window!, load_temperature_window!
 
-# ERA5.BinaryReader lives in a nested module. Names that already exist in
-# MetDrivers (for CS/generic transport readers) are not imported by `using
-# .ERA5`, so add forwarding methods on the public MetDrivers generics.
+# ERA5 readers live in a nested module. Extend the public MetDrivers generics
+# explicitly, preserving their LL/RG/CS methods without conflicting imports.
 window_count(r::ERA5BinaryReader) = ERA5.window_count(r)
 has_qv(r::ERA5BinaryReader) = ERA5.has_qv(r)
 has_qv_endpoints(r::ERA5BinaryReader) = ERA5.has_qv_endpoints(r)

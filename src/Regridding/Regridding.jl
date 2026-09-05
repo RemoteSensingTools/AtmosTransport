@@ -74,7 +74,7 @@ using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh,
 
 using ConservativeRegridding
 using ConservativeRegridding: Regridder
-using ConservativeRegridding.Trees
+import ConservativeRegridding: Trees
 
 import GeometryOps as GO
 import GeometryOpsCore as GOCore

@@ -1,7 +1,7 @@
 # Explicit opt-in; normal test discovery must not initialize a GPU.
 # On the authorized A100:
 # ATMOSTR_RUN_MATRIX_BATCH_GPU_TESTS=1 julia --project=. test/diagnostic/test_tm5_tracer_batching_gpu.jl
-using Test, Random
+using Test, Random, Adapt
 using AtmosTransport
 import KernelAbstractions as KA
 const C = AtmosTransport.Operators.Convection
@@ -109,6 +109,21 @@ if get(ENV, "ATMOSTR_RUN_MATRIX_BATCH_GPU_TESTS", "0") == "1"
     CUDA.functional() || error("This opt-in test requires the authorized A100")
     occursin("A100", CUDA.name(CUDA.device())) || error("Select the authorized A100 before running this test")
     CUDA.allowscalar(false)
+    @testset "Deferred scratch adaptation on A100" begin
+        cpu_ws = C.TM5Workspace(zeros(Float32,2,2,8); tile_columns=4,
+                                cell_metrics=ones(Float32,2), defer_scratch=true)
+        # Simulate a CPU fallback before adapting the model to the GPU.
+        C._ensure_tm5_scratch!(cpu_ws)
+        gpu_ws = Adapt.adapt(CUDA.CuArray, cpu_ws)
+        @test isempty(gpu_ws.conv1)
+        @test gpu_ws.scratch_columns == 4
+        @test gpu_ws.cell_metrics isa CUDA.CuArray
+        @test gpu_ws.f_scratch === gpu_ws.conv1
+        C._ensure_tm5_scratch!(gpu_ws)
+        @test size(gpu_ws.conv1) == (8,8,4)
+        @test gpu_ws.f_scratch === gpu_ws.conv1
+        @test isempty(Adapt.adapt(Array, gpu_ws).conv1)
+    end
     @testset "Collaborative tracer batching on A100" begin
         for topology in (:ll, :rg, :cs), (nz, depth) in ((8,8), (91,85)),
             nt in (1,6,7,12,32,65), downdrafts in (false,true)

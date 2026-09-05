@@ -151,7 +151,8 @@ end
     CMFMCMatrixWorkspace(air_mass; tile_workspace_gib = nothing,
                           tile_columns = nothing,
                           cell_metrics = nothing,
-                          halo_width = 0) -> CMFMCMatrixWorkspace
+                          halo_width = 0,
+                          defer_scratch = false) -> CMFMCMatrixWorkspace
 
 Construct a fresh workspace from an air-mass payload. `air_mass` may be a
 single array (LL / RG) or a panel tuple (CS). The inner `TM5Workspace`
@@ -166,19 +167,24 @@ the convective fluxes share).
 `halo_width` is the per-panel halo half-width `Hp` for cubed-sphere
 payloads (the production CS factory passes `grid.horizontal.Hp`). LL and
 RG leave it at 0.
+
+`defer_scratch` passes through to the inner TM5 workspace. Runtime factories
+enable it for collaborative LU; derived-rate arrays are still allocated.
 """
 function CMFMCMatrixWorkspace(air_mass;
                               tile_workspace_gib::Union{Real, Nothing} = nothing,
                               tile_columns::Union{Integer, Nothing} = nothing,
                               cell_metrics = nothing,
                               cache_columns::Union{Integer, Nothing} = nothing,
-                              halo_width::Integer = 0)
+                              halo_width::Integer = 0,
+                              defer_scratch::Bool = false)
     FT = eltype(_tm5_template(air_mass))
     tm5_ws = TM5Workspace(air_mass;
                           tile_workspace_gib = tile_workspace_gib,
                           tile_columns = tile_columns,
                           cell_metrics = cell_metrics,
-                          cache_columns = cache_columns)
+                          cache_columns = cache_columns,
+                          defer_scratch = defer_scratch)
     Hp = Int(halo_width)
     derived_entu = _cmfmc_matrix_rate_like(air_mass, FT, Hp)
     derived_detu = _cmfmc_matrix_rate_like(air_mass, FT, Hp)

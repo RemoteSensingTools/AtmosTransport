@@ -110,6 +110,13 @@ the retained factors. Six is the buffer capacity, not the total tracer limit;
 seven, 32, or more tracers use additional batches without changing the matrix
 or shared-memory allocation. The final batch may contain fewer than six.
 
+Runtime workspaces defer the legacy solver's global matrix scratch when
+collaborative LU is requested, including during backend adaptation. If a CPU,
+Float64, or supported adjoint solve needs those buffers, it allocates the
+configured tile once and reuses it. Cell metrics and cached CMFMC rates remain
+available throughout. This avoids an unused allocation near the default 1 GiB
+tile budget on the collaborative path.
+
 The effective matrix depth still must fit 1..85 levels. Tracer batching does
 not require vertical truncation or aggregation. CPU and Float64 requests use
 the legacy solver with a warning. The batching change has CPU arithmetic

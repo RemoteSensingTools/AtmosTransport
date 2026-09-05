@@ -28,13 +28,12 @@ substep by `DrivenSimulation._refresh_forcing!` from
 the TM5 column-tile workspace.
 `_convection_workspace_for(::TM5Convection, ...)` reads this field
 and derives a tile size `B` via [`derive_tile_columns`](@ref); the
-[`TM5Workspace`](@ref) then allocates a single `(Nz, Nz, B)`
-matrix slab plus matching pivot / cloud-dim / `amu` / `amd`
-slabs. A larger budget means fewer kernel launches per substep at
-the cost of larger GPU working set; the default 1.0 GiB fits all
-production resolutions through C720/L137 with slack on H100. The
-tile machinery is the load-bearing storage change: the workspace no longer scales with
-`N_cells × Nz²`.
+[`TM5Workspace`](@ref) uses a single `(Nz, Nz, B)` matrix slab plus
+matching pivot, cloud-dimension, and flux-vector slabs. A larger budget
+means fewer legacy kernel launches at the cost of more memory.
+When collaborative LU is requested, global scratch is deferred because
+the kernels use shared memory. CPU/Float64 fallback allocates the configured
+tile on first use and reuses it. The default legacy budget is 1.0 GiB.
 
 # Basis convention
 
@@ -502,6 +501,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
         # Tile loop — KA stream ordering serializes panels safely
         # because the workspace is shared. `synchronize(backend)`
         # after the loop, not per launch.
+        _ensure_tm5_scratch!(workspace)
         B = size(workspace.conv1, 3)
         for tile_off in 0:B:(N_total - 1)
             n = min(B, N_total - tile_off)
@@ -560,6 +560,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 3},
         end
     else
         kernel = _tm5_faceindexed_column_kernel!(backend)
+        _ensure_tm5_scratch!(workspace)
         B = size(workspace.conv1, 3)
         for tile_off in 0:B:(N_total - 1)
             n = min(B, N_total - tile_off)
@@ -638,6 +639,7 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
         end
     else
         kernel = _tm5_cs_panel_column_kernel!(backend)
+        _ensure_tm5_scratch!(workspace)
         B = size(workspace.conv1, 3)
         # The workspace is shared across panels; KA stream ordering
         # makes that safe (panel n+1 can't start until panel n's

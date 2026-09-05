@@ -239,6 +239,19 @@ end
     apply!(state_zero, zero_forcing, grid, TM5Convection(), FT(600);
             workspace = ws_zero)
     @test state_zero.tracers_raw == state0_identity
+
+    # A deferred workspace must materialize the requested legacy tile on CPU
+    # fallback, then reproduce the normal allocation path exactly.
+    deferred = TM5Workspace(state.air_mass; tile_columns=3, defer_scratch=true,
+                            cell_metrics=ws.cell_metrics)
+    @test isempty(deferred.conv1)
+    initial = copy(state0_copy)
+    apply_convection!(initial, state.air_mass, forcing,
+                      TM5Convection(use_collab_lu=true), FT(600), deferred, grid)
+    @test initial == state.tracers_raw
+    @test size(deferred.conv1, 3) == 3
+    @test deferred.f_scratch === deferred.conv1
+
 end
 
 @testset "plan 23 Commit 4: TM5Convection apply! RG kernel" begin
@@ -270,6 +283,19 @@ end
     mass_after = sum(state.tracers_raw)
     @test isapprox(mass_after, mass_before; rtol = 1f4 * eps(FT))
     @test any(state.tracers_raw .!= state0_copy)
+
+    # A deferred workspace must materialize the requested legacy tile on CPU
+    # fallback, then reproduce the normal allocation path exactly.
+    deferred = TM5Workspace(state.air_mass; tile_columns=3, defer_scratch=true,
+                            cell_metrics=ws.cell_metrics)
+    @test isempty(deferred.conv1)
+    initial = copy(state0_copy)
+    apply_convection!(initial, state.air_mass, forcing,
+                      TM5Convection(use_collab_lu=true), FT(600), deferred, grid)
+    @test initial == state.tracers_raw
+    @test size(deferred.conv1, 3) == 3
+    @test deferred.f_scratch === deferred.conv1
+
 end
 
 @testset "plan 23 Commit 4: TM5Convection apply! CS kernel" begin
@@ -306,10 +332,24 @@ end
         end
         return s
     end
+    state0_copy = map(copy, state.tracers_raw)
     mass_before = interior_mass(state.tracers_raw)
     apply!(state, forcing, grid, TM5Convection(), FT(600); workspace = ws)
     mass_after = interior_mass(state.tracers_raw)
     @test isapprox(mass_after, mass_before; rtol = 1f4 * eps(FT))
+
+    # A deferred workspace must materialize the requested legacy tile on CPU
+    # fallback, then reproduce the normal allocation path exactly.
+    deferred = TM5Workspace(state.air_mass; tile_columns=3, defer_scratch=true,
+                            cell_metrics=ws.cell_metrics)
+    @test isempty(deferred.conv1)
+    initial = map(copy, state0_copy)
+    apply_convection!(initial, state.air_mass, forcing,
+                      TM5Convection(use_collab_lu=true), FT(600), deferred, grid)
+    @test initial == state.tracers_raw
+    @test size(deferred.conv1, 3) == 3
+    @test deferred.f_scratch === deferred.conv1
+
 end
 
 # The collaborative-LU kernel uses `@uniform` for workgroup-uniform

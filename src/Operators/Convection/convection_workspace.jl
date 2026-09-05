@@ -133,57 +133,49 @@ invalidate_cmfmc_cache!(::Any) = nothing
 """
     TM5Workspace{FT, M, P, C, F, A, CA}
 
-Per-sim pre-allocated workspace for [`TM5Convection`](@ref).
+Per-simulation workspace for [`TM5Convection`](@ref). Collaborative runs can
+defer global scratch until a legacy solve needs it. The workspace is mutable
+only to install those buffers once; array types and the tile budget stay fixed.
 
 # Fields
 
-- `conv1 :: M` — `conv1 = I - dt·D` matrix slab, one `(Nz, Nz)`
-  block per column. Parametric on array type so
-  `Adapt.adapt_structure` can swap CPU ↔ GPU without changing the
-  `TM5Workspace` type constructor.
-  Shapes per topology:
-  - Structured LatLon: `(Nz, Nz, Nx, Ny)` — 4D.
-  - Face-indexed ReducedGaussian: `(Nz, Nz, ncells)` — 3D.
-  - Panel-native CubedSphere: `NTuple{6, AbstractArray{FT, 4}}`
-    with per-panel shape `(Nz, Nz, Nc, Nc)`.
-- `pivots :: P` — permutation vector from partial-pivot LU, one
-  Nz-length Int slice per column. Preserved so the adjoint can
-  replay the same factorization with transposed back-substitution.
-  Shapes strip the leading Nz
-  from `conv1` shape: `(Nz, Nx, Ny)` / `(Nz, ncells)` /
-  `NTuple{6, (Nz, Nc, Nc)}`.
-- `cloud_dims :: C` — per-column `(icltop, iclbas, icllfs)` triple
-  in AtmosTransport indexing (k=1=TOA, k=Nz=surface; the
-  preprocessor delivers forcings in this orientation so the solver
-  has zero orientation logic). Shape `(3, Nx, Ny)` /
-  `(3, ncells)` / `NTuple{6, (3, Nc, Nc)}`.
+- `conv1 :: M` — `conv1 = I - dt·D`, with shape `(Nz, Nz, B)` on
+  every topology. A single tile is reused across cubed-sphere panels.
+- `pivots :: P` — partial-pivot indices with shape `(Nz, B)`.
+- `cloud_dims :: C` — cloud top, base, and free-sinking indices with
+  shape `(3, B)`, using k=1 at TOA and k=Nz at the surface.
 - `f_scratch :: F` — per-column intermediate matrix for the
   matrix build (TM5 `f(0:lmx, 1:lmx)`, with the updraft merged into
   `f`). Pre-allocated so `_tm5_build_conv1!` runs without heap
   allocation inside KA kernels (mandatory on GPU; same contract on
-  CPU for parity). `f_scratch` aliases `conv1` in the production
+  CPU for parity). Allocation happens before the first legacy kernel.
+  `f_scratch` aliases `conv1` in the production
   workspace because `conv1` is only needed after `f` has been
   converted into `I - dt*D`; this saves one dense `(Nz, Nz)` slab
   per column. There is no standalone `fu_scratch` field — the
   updraft and downdraft passes write disjoint index ranges, so the
   builder writes directly into `f`.
 - `amu_scratch :: A`, `amd_scratch :: A` — length-`(Nz+1)`
-  per-column boundary-aware mass-flux vectors (TM5 `amu(0:lmx)` /
-  `amd(0:lmx)`). Same allocation policy as the scratch matrices.
+  per-column boundary-aware mass-flux vectors, shape `(Nz+1, B)`.
+  Same allocation policy as the scratch matrices.
 - `cell_metrics :: CA` — pre-adapted cell-area metrics used to
   convert runtime `air_mass` from kg per grid cell to the kg/m²
   column mass expected by the TM5 matrix. `nothing` is allowed only
   for standalone unit-area column tests; topology-level `apply!`
   requires this field to be populated.
+- `scratch_columns` — configured legacy tile size. With deferred allocation,
+  the arrays have `B=0` until a legacy entry point requests this many columns.
+- `defer_scratch` — whether adaptation should also defer scratch on the
+  destination backend. Persistent metrics and optional caches are preserved.
 
 # Usage
 
 Constructed once at `DrivenSimulation` setup time via
 `_convection_workspace_for(::TM5Convection, state, grid)`.
-`Adapt.adapt_structure` adapts each array to the requested backend
-without reallocating on the host.
+`Adapt.adapt_structure` adapts persistent data to the requested backend.
+Deferred legacy buffers are recreated only if that backend needs them.
 """
-struct TM5Workspace{FT, M, P, C, F, A, CA, CM, CP, CV}
+mutable struct TM5Workspace{FT, M, P, C, F, A, CA, CM, CP, CV}
     conv1       :: M
     pivots      :: P
     cloud_dims  :: C
@@ -191,18 +183,13 @@ struct TM5Workspace{FT, M, P, C, F, A, CA, CM, CP, CV}
     amu_scratch :: A
     amd_scratch :: A
     cell_metrics :: CA
-    # Optional LU-factor cache fields (allocated only when the
-    # operator requests it). `cache_A` mirrors `conv1` per-grid-cell
-    # (so its leading dim is `Nz × Nz` matching `_tm5_build_conv1!`'s
-    # output), `cache_pivots` mirrors `pivots`, and `cache_valid` is a
-    # single host-side sentinel: `false` after window-advance, set to
-    # `true` by the miss kernel once the cache has been populated for
-    # the current met window. When the cache is disabled all three
-    # carry `nothing`; the dispatcher then falls through to the cache-
-    # free collaborative kernel without touching these fields.
+    # Optional persistent-cache scaffold. Current production apply kernels do
+    # not use these factors; callers must explicitly request cache_columns.
     cache_A     :: CM
     cache_pivots:: CP
     cache_valid :: CV   # Base.RefValue{Bool} or Nothing
+    scratch_columns :: Int
+    defer_scratch :: Bool
 end
 
 # Topology-shape introspection helpers used by the tile workspace
@@ -285,11 +272,14 @@ The per-launch column count `B` is set by exactly one of:
   already know `B`.
 - `tile_workspace_gib::Real` (budget). Picks `B` via
   [`derive_tile_columns`](@ref) from
-  [`TM5Convection`](@ref)'s `tile_workspace_gib` field. Bypassed
-  if `tile_columns` is also passed (explicit wins).
+  [`TM5Convection`](@ref)'s `tile_workspace_gib` field.
 - `cell_metrics` carries topology cell areas. Production
   `_convection_workspace_for(::TM5Convection, ...)` supplies this;
   leaving it `nothing` is only for unit-area solver tests.
+- `defer_scratch=true` starts with zero-column scratch buffers. Collaborative
+  kernels only need the metrics; CPU/Float64 and adjoint legacy solves allocate
+  the configured tile once on first use. Adaptation also defers scratch on the
+  destination backend, avoiding a copy of unused matrix buffers.
 
 Specifying both is an error.
 """
@@ -297,7 +287,8 @@ function TM5Workspace(air_mass;
                       tile_columns::Union{Integer, Nothing} = nothing,
                       tile_workspace_gib::Union{Real, Nothing} = nothing,
                       cell_metrics = nothing,
-                      cache_columns::Union{Integer, Nothing} = nothing)
+                      cache_columns::Union{Integer, Nothing} = nothing,
+                      defer_scratch::Bool = false)
     Nz          = _tm5_extract_Nz(air_mass)
     template    = _tm5_template(air_mass)
     FT          = eltype(template)
@@ -313,18 +304,19 @@ function TM5Workspace(air_mass;
         total_cells
     end
     B > 0 || throw(ArgumentError("TM5Workspace: tile size must be > 0"))
-    conv1       = similar(template, FT,  Nz, Nz, B)
-    pivots      = similar(template, Int, Nz,     B)
-    cloud_dims  = similar(template, Int, 3,      B)
+    allocated_columns = defer_scratch ? 0 : B
+    conv1       = similar(template, FT,  Nz, Nz, allocated_columns)
+    pivots      = similar(template, Int, Nz,     allocated_columns)
+    cloud_dims  = similar(template, Int, 3,      allocated_columns)
     f_scratch   = conv1                     # alias — see docstring
-    amu_scratch = similar(template, FT,  Nz + 1, B)
-    amd_scratch = similar(template, FT,  Nz + 1, B)
+    amu_scratch = similar(template, FT,  Nz + 1, allocated_columns)
+    amd_scratch = similar(template, FT,  Nz + 1, allocated_columns)
     metrics = cell_metrics === nothing ? nothing : _cmfmc_metric_buffer(cell_metrics, FT)
     # Optional LU-factor cache. `cache_columns` is the *total* per-topology
     # cell count to allocate cache slots for; pass `nothing` (default)
     # to disable the cache. The memory cost is `Nz² · cache_columns ·
-    # sizeof(FT) + Nz · cache_columns · sizeof(Int)` — at C180/L85
-    # Float32 that is ~5.6 GiB across all six CS panels, so the cache
+    # sizeof(FT) + Nz · cache_columns · sizeof(Int32)` — at C180/L85
+    # Float32 that is ~5.294 GiB across all six CS panels, so the cache
     # is opt-in by design (see `TM5Convection.use_collab_lu`).
     cache_A, cache_pivots, cache_valid = if cache_columns === nothing
         nothing, nothing, nothing
@@ -348,18 +340,51 @@ function TM5Workspace(air_mass;
                         typeof(cache_valid)}(
         conv1, pivots, cloud_dims,
         f_scratch, amu_scratch, amd_scratch, metrics,
-        cache_A, cache_pivots, cache_valid,
+        cache_A, cache_pivots, cache_valid, B, defer_scratch,
     )
 end
 
+# Only legacy entry points call this. Retain the configured tile size rather
+# than falling back to single-column launches. Allocate all buffers before
+# installing them, so an allocation failure leaves a deferred workspace intact.
+function _ensure_tm5_scratch!(ws::TM5Workspace{FT}) where FT
+    size(ws.conv1, 3) > 0 && return ws
+    Nz = size(ws.conv1, 1)
+    B = ws.scratch_columns
+    conv1 = similar(ws.conv1, FT, Nz, Nz, B)
+    pivots = similar(ws.pivots, Int, Nz, B)
+    cloud_dims = similar(ws.cloud_dims, Int, 3, B)
+    amu = similar(ws.amu_scratch, FT, Nz+1, B)
+    amd = similar(ws.amd_scratch, FT, Nz+1, B)
+    ws.conv1 = conv1
+    ws.f_scratch = conv1
+    ws.pivots = pivots
+    ws.cloud_dims = cloud_dims
+    ws.amu_scratch = amu
+    ws.amd_scratch = amd
+    return ws
+end
+
 function Adapt.adapt_structure(to, ws::TM5Workspace{FT}) where FT
-    f_aliases_conv1 = ws.conv1 === ws.f_scratch
-    conv1       = Adapt.adapt(to, ws.conv1)
-    pivots      = Adapt.adapt(to, ws.pivots)
-    cloud_dims  = Adapt.adapt(to, ws.cloud_dims)
-    f_scratch   = f_aliases_conv1 ? conv1 : Adapt.adapt(to, ws.f_scratch)
-    amu_scratch = Adapt.adapt(to, ws.amu_scratch)
-    amd_scratch = Adapt.adapt(to, ws.amd_scratch)
+    if ws.defer_scratch
+        # Scratch is recomputed by every legacy solve. Preserve persistent
+        # metrics/cache below, but never transfer an unused legacy tile.
+        Nz = size(ws.conv1, 1)
+        conv1 = Adapt.adapt(to, similar(ws.conv1, FT, Nz, Nz, 0))
+        pivots = Adapt.adapt(to, similar(ws.pivots, Int, Nz, 0))
+        cloud_dims = Adapt.adapt(to, similar(ws.cloud_dims, Int, 3, 0))
+        f_scratch = conv1
+        amu_scratch = Adapt.adapt(to, similar(ws.amu_scratch, FT, Nz+1, 0))
+        amd_scratch = Adapt.adapt(to, similar(ws.amd_scratch, FT, Nz+1, 0))
+    else
+        f_aliases_conv1 = ws.conv1 === ws.f_scratch
+        conv1       = Adapt.adapt(to, ws.conv1)
+        pivots      = Adapt.adapt(to, ws.pivots)
+        cloud_dims  = Adapt.adapt(to, ws.cloud_dims)
+        f_scratch   = f_aliases_conv1 ? conv1 : Adapt.adapt(to, ws.f_scratch)
+        amu_scratch = Adapt.adapt(to, ws.amu_scratch)
+        amd_scratch = Adapt.adapt(to, ws.amd_scratch)
+    end
     cell_metrics = ws.cell_metrics === nothing ? nothing : Adapt.adapt(to, ws.cell_metrics)
     cache_A      = ws.cache_A      === nothing ? nothing : Adapt.adapt(to, ws.cache_A)
     cache_pivots = ws.cache_pivots === nothing ? nothing : Adapt.adapt(to, ws.cache_pivots)
@@ -374,7 +399,7 @@ function Adapt.adapt_structure(to, ws::TM5Workspace{FT}) where FT
                         typeof(cache_valid)}(
         conv1, pivots, cloud_dims,
         f_scratch, amu_scratch, amd_scratch, cell_metrics,
-        cache_A, cache_pivots, cache_valid,
+        cache_A, cache_pivots, cache_valid, ws.scratch_columns, ws.defer_scratch,
     )
 end
 
@@ -382,9 +407,8 @@ end
     invalidate_tm5_cache!(ws::TM5Workspace) -> nothing
     invalidate_tm5_cache!(::Any) -> nothing
 
-Mark the LU-factor cache stale. Called on met-window advance by
-`DrivenSimulation._maybe_advance_window!` so the next `apply!` repopulates
-the cache from the new forcing fields. The polymorphic no-op default
+Mark the optional LU-factor cache scaffold stale on met-window advance.
+Current production `apply!` kernels do not populate or reuse these factors. The polymorphic no-op default
 keeps the call site type-agnostic (the same way `invalidate_cmfmc_cache!`
 is structured).
 

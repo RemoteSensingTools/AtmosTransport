@@ -734,6 +734,10 @@ function _install_convection_forcing(::AbstractConvection, model::TransportModel
                                      window::AbstractTransportWindow)
     forcing = allocate_convection_forcing_like(window.convection, model.state.air_mass)
     copy_convection_forcing!(forcing, window.convection)
+    # A reused model can carry the previous driver's final-window cache.
+    # Installing a new first window needs the same invalidation as advancement.
+    invalidate_cmfmc_cache!(model.workspace.convection_ws)
+    invalidate_tm5_cache!(model.workspace.convection_ws)
     return with_convection_forcing(model, forcing)
 end
 

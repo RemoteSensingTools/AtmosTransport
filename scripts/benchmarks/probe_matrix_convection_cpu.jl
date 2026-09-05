@@ -161,10 +161,30 @@ function benchmark()
             C._tm5_solve_column!(q, f.m, f.entu, f.detu, f.zero, f.zero,
                 work, piv, cloud_dims, f.dt; f_buf=work, amu_buf=amu, amd_buf=amd)
         end
+        general_rhs_column_time = median_us() do
+            build!(work, f, amu, amd)
+            hessenberg_lu!(work, piv, n; icltop_eff=lo)
+            copyto!(q, rhs)
+            C._tm5_solve!(q, work, piv, n, nt; icltop_eff=lo)
+        end
+        @assert C._tm5_identity_pivots(piv, n, lo)
+        general_solve_time = median_us() do
+            copyto!(q, rhs)
+            C._tm5_solve!(q, work, piv, n, nt; icltop_eff=lo)
+        end
+        bidiagonal_solve_time = median_us() do
+            copyto!(q, rhs)
+            C._tm5_solve_bidiagonal!(q, work, n, nt; icltop_eff=lo)
+        end
         push!(results, Dict("levels"=>n, "tracers"=>nt,
             "dense_factor_us"=>factor_times[1], "hessenberg_factor_us"=>factor_times[2],
             "dense_column_us"=>full_times[1], "hessenberg_column_us"=>full_times[2],
             "automatic_column_us"=>selected_time,
+            "general_rhs_column_us"=>general_rhs_column_time,
+            "general_rhs_solve_us"=>general_solve_time,
+            "bidiagonal_rhs_solve_us"=>bidiagonal_solve_time,
+            "rhs_solve_speedup"=>general_solve_time/bidiagonal_solve_time,
+            "rhs_column_speedup"=>general_rhs_column_time/selected_time,
             "factor_speedup"=>factor_times[1]/factor_times[2],
             "column_speedup"=>full_times[1]/full_times[2]))
     end

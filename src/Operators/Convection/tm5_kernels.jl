@@ -467,6 +467,11 @@ end
         end
     end
 
+    # The lower factor is bidiagonal only for an unpivoted Hessenberg LU.
+    # This workgroup-uniform predicate is evaluated once for all tracer batches.
+    bidiagonal_lower = !no_conv && icllfs > LMAX_CONV &&
+                        _tm5_identity_pivots(piv_loc, LMAX_CONV, k_lo)
+
     # Reuse this column's LU for every tracer batch. The shared RHS buffer
     # has fixed capacity, independent of the total number of tracers.
     for first_tracer in 1:_TM5_COLLAB_TRACER_BATCH:Nt
@@ -483,7 +488,11 @@ end
         # back solve need no barriers between them or between tracers.
         if !no_conv
             for slot in t:_TM5_COLLAB_WG_SIZE:n_batch
-                _tm5_solve_shared_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot)
+                if bidiagonal_lower
+                    _tm5_solve_bidiagonal_tracer!(q_loc, A_loc, LMAX_CONV, k_lo, slot)
+                else
+                    _tm5_solve_shared_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot)
+                end
             end
         end
         @synchronize
@@ -695,6 +704,11 @@ end
         end
     end
 
+    # The lower factor is bidiagonal only for an unpivoted Hessenberg LU.
+    # This workgroup-uniform predicate is evaluated once for all tracer batches.
+    bidiagonal_lower = !no_conv && icllfs > LMAX_CONV &&
+                        _tm5_identity_pivots(piv_loc, LMAX_CONV, k_lo)
+
     # Reuse this column's LU for every tracer batch. The shared RHS buffer
     # has fixed capacity, independent of the total number of tracers.
     for first_tracer in 1:_TM5_COLLAB_TRACER_BATCH:Nt
@@ -711,7 +725,11 @@ end
         # back solve need no barriers between them or between tracers.
         if !no_conv
             for slot in t:_TM5_COLLAB_WG_SIZE:n_batch
-                _tm5_solve_shared_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot)
+                if bidiagonal_lower
+                    _tm5_solve_bidiagonal_tracer!(q_loc, A_loc, LMAX_CONV, k_lo, slot)
+                else
+                    _tm5_solve_shared_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot)
+                end
             end
         end
         @synchronize
@@ -925,6 +943,11 @@ end
         end
     end
 
+    # The lower factor is bidiagonal only for an unpivoted Hessenberg LU.
+    # This workgroup-uniform predicate is evaluated once for all tracer batches.
+    bidiagonal_lower = !no_conv && icllfs > LMAX_CONV &&
+                        _tm5_identity_pivots(piv_loc, LMAX_CONV, k_lo)
+
     # Reuse this column's LU for every tracer batch. The shared RHS buffer
     # has fixed capacity, independent of the total number of tracers.
     for first_tracer in 1:_TM5_COLLAB_TRACER_BATCH:Nt
@@ -941,7 +964,11 @@ end
         # back solve need no barriers between them or between tracers.
         if !no_conv
             for slot in t:_TM5_COLLAB_WG_SIZE:n_batch
-                _tm5_solve_shared_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot)
+                if bidiagonal_lower
+                    _tm5_solve_bidiagonal_tracer!(q_loc, A_loc, LMAX_CONV, k_lo, slot)
+                else
+                    _tm5_solve_shared_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot)
+                end
             end
         end
         @synchronize

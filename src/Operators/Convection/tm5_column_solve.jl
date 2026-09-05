@@ -360,7 +360,8 @@ Partial-pivot LU for an active upper-Hessenberg block. The caller guarantees
 that entries below the first subdiagonal are zero. At step k, only rows k and
 k+1 can supply a nonzero pivot, and only row k+1 needs elimination, reducing
 factorization from cubic to quadratic work. Full active-row swaps preserve
-previous L multipliers; use the general forward/transpose triangular solves.
+previous L multipliers. General triangular solves handle every pivot sequence;
+identity pivots allow specialized bidiagonal L and transpose-L solves.
 """
 function _tm5_hessenberg_lu!(A::AbstractMatrix{FT},
                             pivots::AbstractVector{<:Integer}, Nz::Integer;
@@ -448,6 +449,41 @@ function _tm5_solve!(rm_col::AbstractMatrix{FT},
     return nothing
 end
 
+# With no row swaps, Hessenberg elimination leaves a lower-bidiagonal L.
+# Check the actual pivot sequence; the structural property alone is not enough.
+@inline function _tm5_identity_pivots(pivots, Nz, lo)
+    @inbounds for k in lo:Nz
+        pivots[k] == k || return false
+    end
+    return true
+end
+
+# One independent RHS, shared by serial CPU and collaborative GPU callers.
+# Preconditions: Hessenberg factors, identity pivots, finite tracer input.
+@inline function _tm5_solve_bidiagonal_tracer!(q, A, Nz, lo, tracer)
+    @inbounds begin
+        for k in (lo+1):Nz
+            q[k,tracer] -= A[k,k-1] * q[k-1,tracer]
+        end
+        for k in Nz:-1:lo
+            value = q[k,tracer]
+            for j in (k+1):Nz
+                value -= A[k,j] * q[j,tracer]
+            end
+            q[k,tracer] = value / A[k,k]
+        end
+    end
+    return nothing
+end
+
+function _tm5_solve_bidiagonal!(q, A, Nz, Nt; icltop_eff=1)
+    lo = max(Int(icltop_eff), 1)
+    for tracer in 1:Nt
+        _tm5_solve_bidiagonal_tracer!(q, A, Nz, lo, tracer)
+    end
+    return nothing
+end
+
 """
     _tm5_solve_column!(rm_col, m_col, entu_col, detu_col, entd_col, detd_col,
                        conv1_buf, pivots_buf, cloud_dims, dt) -> nothing
@@ -512,6 +548,10 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
                       f = f_buf,
                       amu = amu_buf, amd = amd_buf)
     _tm5_factorize!(conv1_buf, pivots_buf, Nz, icllfs; icltop_eff = icltop_eff)
-    _tm5_solve!(rm_col, conv1_buf, pivots_buf, Nz, Nt; icltop_eff = icltop_eff)
+    if icllfs > Nz && _tm5_identity_pivots(pivots_buf, Nz, icltop_eff)
+        _tm5_solve_bidiagonal!(rm_col, conv1_buf, Nz, Nt; icltop_eff = icltop_eff)
+    else
+        _tm5_solve!(rm_col, conv1_buf, pivots_buf, Nz, Nt; icltop_eff = icltop_eff)
+    end
     return nothing
 end

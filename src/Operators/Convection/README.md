@@ -106,11 +106,16 @@ downdraft use the same optimization. Any positive diagnosed downdraft,
 however small, keeps the general dense factorization.
 
 Both routes retain partial pivoting and the same factor representation.
-The general forward and transpose triangular solves remain in place because
-row swaps can move earlier L entries below the first subdiagonal. No forcing
-threshold, timestep change, vertical aggregation, or additional approximation
-is introduced. CPU forward/adjoint checks exercise both routes. Collaborative
-GPU kernels use the corresponding row bound, pending A100 validation.
+After Hessenberg LU, the solver checks whether any active row was swapped.
+With no swaps, L has only one subdiagonal, so its forward solve (and the
+adjoint's transpose-L solve) takes linear work per tracer. The U solve remains
+quadratic. If a row was swapped, or a downdraft was diagnosed, the solver keeps
+the general triangular solves: swaps can move earlier L entries below the
+first subdiagonal. No forcing threshold, timestep change, vertical aggregation,
+or additional approximation is introduced. CPU forward/adjoint checks exercise
+both routes. Collaborative GPU kernels use the same selection once per column
+for all tracer batches, pending A100 validation. See the
+[CPU measurements and validation](../../../docs/memos/2026-09-05_matrix_convection_rhs.md).
 
 ### Multiple tracers with collaborative LU
 

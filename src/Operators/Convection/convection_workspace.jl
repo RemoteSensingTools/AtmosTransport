@@ -183,7 +183,7 @@ Constructed once at `DrivenSimulation` setup time via
 `Adapt.adapt_structure` adapts each array to the requested backend
 without reallocating on the host.
 """
-struct TM5Workspace{FT, M, P, C, F, A, CA}
+mutable struct TM5Workspace{FT, M, P, C, F, A, CA}
     conv1       :: M
     pivots      :: P
     cloud_dims  :: C
@@ -191,6 +191,8 @@ struct TM5Workspace{FT, M, P, C, F, A, CA}
     amu_scratch :: A
     amd_scratch :: A
     cell_metrics :: CA
+    scratch_columns :: Int
+    defer_scratch :: Bool
 end
 
 # Topology-shape introspection helpers used by the tile workspace
@@ -256,7 +258,8 @@ end
 """
     TM5Workspace(air_mass; tile_columns = …,
                             tile_workspace_gib = nothing,
-                            cell_metrics = nothing) -> TM5Workspace
+                            cell_metrics = nothing,
+                      defer_scratch::Bool = false) -> TM5Workspace
 
 Construct a fresh workspace from an air-mass payload. `air_mass`
 may be a single array (structured `(Nx, Ny, Nz)` or face-indexed
@@ -300,30 +303,64 @@ function TM5Workspace(air_mass;
         total_cells
     end
     B > 0 || throw(ArgumentError("TM5Workspace: tile size must be > 0"))
-    conv1       = similar(template, FT,  Nz, Nz, B)
-    pivots      = similar(template, Int, Nz,     B)
-    cloud_dims  = similar(template, Int, 3,      B)
+    allocated_columns = defer_scratch ? 0 : B
+    conv1       = similar(template, FT,  Nz, Nz, allocated_columns)
+    pivots      = similar(template, Int, Nz,     allocated_columns)
+    cloud_dims  = similar(template, Int, 3,      allocated_columns)
     f_scratch   = conv1                     # alias — see docstring
-    amu_scratch = similar(template, FT,  Nz + 1, B)
-    amd_scratch = similar(template, FT,  Nz + 1, B)
+    amu_scratch = similar(template, FT,  Nz + 1, allocated_columns)
+    amd_scratch = similar(template, FT,  Nz + 1, allocated_columns)
     metrics = cell_metrics === nothing ? nothing : _cmfmc_metric_buffer(cell_metrics, FT)
     return TM5Workspace{FT,
                         typeof(conv1), typeof(pivots), typeof(cloud_dims),
                         typeof(f_scratch), typeof(amu_scratch),
                         typeof(metrics)}(
         conv1, pivots, cloud_dims,
-        f_scratch, amu_scratch, amd_scratch, metrics,
+        f_scratch, amu_scratch, amd_scratch, metrics, B, defer_scratch,
     )
 end
 
+# Only legacy entry points call this. Retain the configured tile size rather
+# than falling back to single-column launches. Allocate all buffers before
+# installing them, so an allocation failure leaves a deferred workspace intact.
+function _ensure_tm5_scratch!(ws::TM5Workspace{FT}) where FT
+    size(ws.conv1, 3) > 0 && return ws
+    Nz = size(ws.conv1, 1)
+    B = ws.scratch_columns
+    conv1 = similar(ws.conv1, FT, Nz, Nz, B)
+    pivots = similar(ws.pivots, Int, Nz, B)
+    cloud_dims = similar(ws.cloud_dims, Int, 3, B)
+    amu = similar(ws.amu_scratch, FT, Nz+1, B)
+    amd = similar(ws.amd_scratch, FT, Nz+1, B)
+    ws.conv1 = conv1
+    ws.f_scratch = conv1
+    ws.pivots = pivots
+    ws.cloud_dims = cloud_dims
+    ws.amu_scratch = amu
+    ws.amd_scratch = amd
+    return ws
+end
+
 function Adapt.adapt_structure(to, ws::TM5Workspace{FT}) where FT
-    f_aliases_conv1 = ws.conv1 === ws.f_scratch
-    conv1       = Adapt.adapt(to, ws.conv1)
-    pivots      = Adapt.adapt(to, ws.pivots)
-    cloud_dims  = Adapt.adapt(to, ws.cloud_dims)
-    f_scratch   = f_aliases_conv1 ? conv1 : Adapt.adapt(to, ws.f_scratch)
-    amu_scratch = Adapt.adapt(to, ws.amu_scratch)
-    amd_scratch = Adapt.adapt(to, ws.amd_scratch)
+    if ws.defer_scratch
+        # Scratch is recomputed by every legacy solve. Preserve persistent
+        # metrics/cache below, but never transfer an unused legacy tile.
+        Nz = size(ws.conv1, 1)
+        conv1 = Adapt.adapt(to, similar(ws.conv1, FT, Nz, Nz, 0))
+        pivots = Adapt.adapt(to, similar(ws.pivots, Int, Nz, 0))
+        cloud_dims = Adapt.adapt(to, similar(ws.cloud_dims, Int, 3, 0))
+        f_scratch = conv1
+        amu_scratch = Adapt.adapt(to, similar(ws.amu_scratch, FT, Nz+1, 0))
+        amd_scratch = Adapt.adapt(to, similar(ws.amd_scratch, FT, Nz+1, 0))
+    else
+        f_aliases_conv1 = ws.conv1 === ws.f_scratch
+        conv1       = Adapt.adapt(to, ws.conv1)
+        pivots      = Adapt.adapt(to, ws.pivots)
+        cloud_dims  = Adapt.adapt(to, ws.cloud_dims)
+        f_scratch   = f_aliases_conv1 ? conv1 : Adapt.adapt(to, ws.f_scratch)
+        amu_scratch = Adapt.adapt(to, ws.amu_scratch)
+        amd_scratch = Adapt.adapt(to, ws.amd_scratch)
+    end
     cell_metrics = ws.cell_metrics === nothing ? nothing : Adapt.adapt(to, ws.cell_metrics)
     return TM5Workspace{FT,
                         typeof(conv1), typeof(pivots), typeof(cloud_dims),
@@ -331,8 +368,10 @@ function Adapt.adapt_structure(to, ws::TM5Workspace{FT}) where FT
                         typeof(cell_metrics)}(
         conv1, pivots, cloud_dims,
         f_scratch, amu_scratch, amd_scratch, cell_metrics,
+        ws.scratch_columns, ws.defer_scratch,
     )
 end
+
 
 export CMFMCWorkspace, invalidate_cmfmc_cache!
 export TM5Workspace, derive_tile_columns

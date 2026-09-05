@@ -682,6 +682,7 @@ function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
     Nc = mesh.Nc
     Hp = mesh.Hp
     N_total = Nc * Nc
+    _ensure_tm5_scratch!(workspace)
     B = size(workspace.conv1, 3)
     backend = get_backend(panels_rm[1])
     kernel! = _tm5_cs_panel_column_single_kernel!(backend)
@@ -771,6 +772,7 @@ function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
     Nc = mesh.Nc
     Hp = mesh.Hp
     N_total = Nc * Nc
+    _ensure_tm5_scratch!(workspace)
     B = size(workspace.conv1, 3)
     backend = get_backend(lambda_panels[1])
     kernel! = _tm5_cs_panel_column_adjoint_kernel!(backend)

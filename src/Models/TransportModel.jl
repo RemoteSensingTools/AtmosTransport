@@ -119,18 +119,21 @@ _convection_workspace_for(op::TM5Convection,
                           grid::AtmosGrid{<:LatLonMesh}) where {B, A, Raw <: AbstractArray{<:Any, 4}} =
     TM5Workspace(state.air_mass;
                  tile_workspace_gib = op.tile_workspace_gib,
+                 defer_scratch = op.use_collab_lu,
                  cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
 _convection_workspace_for(op::TM5Convection,
                           state::CellState{B, A, Raw},
                           grid::AtmosGrid{<:ReducedGaussianMesh}) where {B, A, Raw <: AbstractArray{<:Any, 3}} =
     TM5Workspace(state.air_mass;
                  tile_workspace_gib = op.tile_workspace_gib,
+                 defer_scratch = op.use_collab_lu,
                  cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
 _convection_workspace_for(op::TM5Convection,
                           state::CubedSphereState{B},
                           grid::AtmosGrid{<:CubedSphereMesh}) where {B} =
     TM5Workspace(state.air_mass;
                  tile_workspace_gib = op.tile_workspace_gib,
+                 defer_scratch = op.use_collab_lu,
                  cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
 
 # CMFMCMatrixConvection — derives (entu, detu) from GEOS (cmfmc, dtrain) and
@@ -141,18 +144,21 @@ _convection_workspace_for(op::CMFMCMatrixConvection,
                           grid::AtmosGrid{<:LatLonMesh}) where {B, A, Raw <: AbstractArray{<:Any, 4}} =
     CMFMCMatrixWorkspace(state.air_mass;
                          tile_workspace_gib = op.inner.tile_workspace_gib,
+                         defer_scratch = op.inner.use_collab_lu,
                          cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
 _convection_workspace_for(op::CMFMCMatrixConvection,
                           state::CellState{B, A, Raw},
                           grid::AtmosGrid{<:ReducedGaussianMesh}) where {B, A, Raw <: AbstractArray{<:Any, 3}} =
     CMFMCMatrixWorkspace(state.air_mass;
                          tile_workspace_gib = op.inner.tile_workspace_gib,
+                         defer_scratch = op.inner.use_collab_lu,
                          cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
 _convection_workspace_for(op::CMFMCMatrixConvection,
                           state::CubedSphereState{B},
                           grid::AtmosGrid{<:CubedSphereMesh}) where {B} =
     CMFMCMatrixWorkspace(state.air_mass;
                          tile_workspace_gib = op.inner.tile_workspace_gib,
+                         defer_scratch = op.inner.use_collab_lu,
                          cell_metrics = _cmfmc_cell_metrics(grid.horizontal),
                          halo_width = grid.horizontal.Hp)
 

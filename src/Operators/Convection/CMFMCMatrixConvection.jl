@@ -171,12 +171,14 @@ function CMFMCMatrixWorkspace(air_mass;
                               tile_workspace_gib::Union{Real, Nothing} = nothing,
                               tile_columns::Union{Integer, Nothing} = nothing,
                               cell_metrics = nothing,
-                              halo_width::Integer = 0)
+                              halo_width::Integer = 0,
+                              defer_scratch::Bool = false)
     FT = eltype(_tm5_template(air_mass))
     tm5_ws = TM5Workspace(air_mass;
                           tile_workspace_gib = tile_workspace_gib,
                           tile_columns = tile_columns,
-                          cell_metrics = cell_metrics)
+                          cell_metrics = cell_metrics,
+                          defer_scratch = defer_scratch)
     Hp = Int(halo_width)
     derived_entu = _cmfmc_matrix_rate_like(air_mass, FT, Hp)
     derived_detu = _cmfmc_matrix_rate_like(air_mass, FT, Hp)

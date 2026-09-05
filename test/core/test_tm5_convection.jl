@@ -782,19 +782,15 @@ end
     end
 end
 
-@testset "P6 collab-LU: outside-envelope falls back to per-thread" begin
-    # Configurations outside the supported `(lmax_conv, Nt)` envelope
-    # must dispatch to the per-thread kernel even when `use_collab_lu
-    # = true`. The gate is on `lmax_conv` (the convection-matrix
-    # size), not on the underlying Nz — that's the whole point of
-    # the lmax_conv refactor: L91 and L137 binaries can use the
-    # collab kernel as long as their effective `lmax_conv ≤ 85`.
-    # Limits set by Metal's 32 KiB threadgroup-memory budget:
-    # `4·lmax_conv² + (4·NT_MAX + 16)·lmax_conv + 16` bytes; current
-    # production bound is `lmax_conv ≤ 85, Nt ≤ 6`.
+@testset "Collaborative LU: depth envelope and unbounded tracer batching" begin
+    # Depth controls matrix storage; a fixed six-slot RHS buffer is reused
+    # for any positive tracer count. CPU/Float64 fallback is independent.
     @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 2) == true
     @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 6) == true
-    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 7) == false
+    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 7) == true
+    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 65) == true
+    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 0) == false
+    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, -1) == false
     @test AtmosTransport.Operators.Convection._tm5_collab_supports(75, 2) == true   # ERA5/L85 target
     @test AtmosTransport.Operators.Convection._tm5_collab_supports(40, 2) == true   # ml91/tropo60
     @test AtmosTransport.Operators.Convection._tm5_collab_supports(25, 2) == true   # ml137/tropo25a

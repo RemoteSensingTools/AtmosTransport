@@ -101,6 +101,24 @@ are genuine fast-path implementations, not generic wrappers.
 
 ## Common Tasks
 
+### Multiple tracers with collaborative LU
+
+For `TM5Convection` and `CMFMCMatrixConvection`, `use_collab_lu=true` uses
+workgroup shared memory on Float32 GPUs. Each column is built and factored
+once. Tracers are then loaded, solved, and stored in batches of six against
+the retained factors. Six is the buffer capacity, not the total tracer limit;
+seven, 32, or more tracers use additional batches without changing the matrix
+or shared-memory allocation. The final batch may contain fewer than six.
+
+The effective matrix depth still must fit 1..85 levels. Tracer batching does
+not require vertical truncation or aggregation. CPU and Float64 requests use
+the legacy solver with a warning. The batching change has CPU arithmetic
+coverage; device compilation, synchronization, and speed still require the
+opt-in A100 regression in
+[`test_tm5_tracer_batching_gpu.jl`](../../../test/diagnostic/test_tm5_tracer_batching_gpu.jl).
+
+### Finding the implementation
+
 - Tracing the live block wiring:
   start in [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl)
   at the convection block in `step!`, then follow the topology-

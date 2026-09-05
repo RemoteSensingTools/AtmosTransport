@@ -7,11 +7,11 @@ using AtmosTransport
 import KernelAbstractions as KA
 const C = AtmosTransport.Operators.Convection
 
-function batch_fixture(nz, depth, nt, downdrafts)
+function batch_fixture(nz, depth, nt, downdrafts; signed=false)
     rng = MersenneTwister(9042026)
     nc = 4
     m = 50f0 .+ 150f0 .* rand(rng, Float32, nc, nz)
-    q = rand(rng, Float32, nc, nz, nt) .* m
+    q = (rand(rng, Float32, nc, nz, nt) .- (signed ? 0.5f0 : 0f0)) .* m
     entu, detu, entd, detd = (zeros(Float32, nc, nz) for _ in 1:4)
     shift = nz-depth
     # Column 1 is cloud-free. The others have shallow/deep closed clouds.
@@ -27,7 +27,7 @@ function batch_fixture(nz, depth, nt, downdrafts)
             detd[c, nz] = flux
         end
     end
-    (; m, q, rates=(entu, detu, entd, detd), nz, depth, nt)
+    (; m, q, rates=(entu, detu, entd, detd), nz, depth, nt, signed)
 end
 
 function batch_reference(f)
@@ -91,12 +91,13 @@ function check_batches(f, topology)
     columns = reshape(interior, 4, f.nz, f.nt)
     reference = batch_reference(f)
     @test isapprox(columns, reference; rtol=100eps(Float32))
-    @test minimum(columns) >= 0
+    @test f.signed ? minimum(columns) < 0 < maximum(columns) : minimum(columns) >= 0
     @test columns[1, :, :] == f.q[1, :, :] # No-convection column, all batches.
     @test columns[:, 1:(f.nz-f.depth), :] == f.q[:, 1:(f.nz-f.depth), :]
     before = sum(Float64.(f.q); dims=2)
     after = sum(Float64.(columns); dims=2)
-    @test maximum(abs.(after-before) ./ before) < 100eps(Float32)
+    scale = sum(abs.(Float64.(f.q)); dims=2)
+    @test maximum(abs.(after-before) ./ scale) < 100eps(Float32)
     if topology == :cs
         @test result[[1,4], :, :, :] == initial[[1,4], :, :, :]
         @test result[:, [1,4], :, :] == initial[:, [1,4], :, :]
@@ -142,6 +143,14 @@ if get(ENV, "ATMOSTR_RUN_MATRIX_BATCH_GPU_TESTS", "0") == "1"
             nt in (1,6,7,12,32,65), downdrafts in (false,true)
             @testset "$topology Nz=$nz Nt=$nt downdrafts=$downdrafts" begin
                 check_batches(batch_fixture(nz, depth, nt, downdrafts), topology)
+            end
+        end
+    end
+    @testset "Signed tracer batching on $expected_device" begin
+        for topology in (:ll, :rg, :cs), (nz, depth) in ((8,8), (91,85)),
+            nt in (7,32,65), downdrafts in (false,true)
+            @testset "$topology Nz=$nz Nt=$nt downdrafts=$downdrafts" begin
+                check_batches(batch_fixture(nz, depth, nt, downdrafts; signed=true), topology)
             end
         end
     end

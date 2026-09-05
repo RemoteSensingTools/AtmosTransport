@@ -111,7 +111,7 @@ function measure(nc, nz, nt, downdrafts, mode)
         push!(device_ms, elapsed*1e3)
     end
     # RHS storage is doubled solely to restore identical input between samples.
-    shared_bytes = 4*(nz*nz + 6nz + 2nz + 2(nz+1) + 2)
+    shared_bytes = 4*(nz*nz + C._TM5_COLLAB_TRACER_BATCH*nz + 2nz + 2(nz+1) + 2)
     r = Dict("columns"=>nc, "levels"=>nz, "tracers"=>nt,
         "downdrafts"=>downdrafts, "mode"=>mode, "launches"=>length(qs),
         "median_device_ms"=>median(device_ms), "minimum_device_ms"=>minimum(device_ms),
@@ -147,7 +147,11 @@ function main()
         "scope"=>"Synthetic Float32 face-indexed columns; all columns convect; no transfer or I/O timing",
         "timing"=>"Median of nine warmed single-step samples; same RHS restored outside timing",
         "benchmark"=>Dict{String,Any}[])
-    for nz in (60,85), downdrafts in (false,true), nt in (1,6,7,12,32,65)
+    levels = parse.(Int,split(get(ENV,"ATMOSTR_MATRIX_BENCH_LEVELS","60,85"),','))
+    tracers = parse.(Int,split(get(ENV,"ATMOSTR_MATRIX_BENCH_TRACERS","1,6,7,12,32,65"),','))
+    all(n -> 8 <= n <= 85,levels) || error("Benchmark levels must be between 8 and 85")
+    all(>(0),tracers) || error("Benchmark tracer counts must be positive")
+    for nz in levels, downdrafts in (false,true), nt in tracers
         push!(results["benchmark"], measure(nc,nz,nt,downdrafts,mode))
         open(output,"w") do io
             TOML.print(io,results)

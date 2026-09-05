@@ -1,0 +1,8 @@
+Precompiling packages...
+  18950.5 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 39 seconds. 192 already precompiled.
+Precompiling packages...
+  12047.6 ms  ✓ AtmosTransportCUDAExt (serial)
+  1 dependency successfully precompiled in 12 seconds
+Test Summary:                                                | Pass  Total   Time
+GPU startup reads once and owns independent prefetch storage |  140    140  14.5s

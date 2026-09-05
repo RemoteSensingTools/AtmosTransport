@@ -1,0 +1,3 @@
+Test Summary:                         | Pass  Total  Time
+Prefetch startup preserves CS physics |   37     37  0.4s
+Arrays bitwise equal: 23 / 36; worst relative difference: 1.735599113317221e-7

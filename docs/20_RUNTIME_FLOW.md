@@ -1,187 +1,135 @@
 # Runtime Flow
 
-End-to-end walkthrough of how a tracer step is executed, from the
-`DrivenSimulation` entry point down to the topology-dispatched
-operator kernels.
-
-## 30-second summary
-
-```
-DrivenSimulation.step!(sim)
-  └─ _active_substep
-  └─ _maybe_advance_window!(sim, substep)  ← load next transport window if needed
-  └─ _refresh_forcing!(sim, substep)       ← driver window → model forcing + convection_forcing
-  └─ default drivers: step!(sim.model, sim.Δt; meteo = sim)
-     binary-scheduled drivers:
-       ├─ transport_step!(sim.model, sim.Δt; meteo = sim)
-       └─ at met-window boundary:
-          convection_chemistry_step!(sim.model, sim.window_dt; meteo = sim)
-  └─ sim.time += sim.Δt; sim.iteration += 1; callbacks
-```
-
-All dispatch is multiple-dispatch on `typeof(grid.horizontal)` (the
-mesh) and `typeof(operator)`. `NoDiffusion` / `NoSurfaceFlux` /
-`NoConvection` / `NoChemistry` are compile-time dead branches — the
-default paths are bit-exact to pre-operator behavior.
+This walkthrough follows the current driven runtime from a meteorology window
+through one transport step. Start with
+[`DrivenSimulation.jl`](../src/Models/DrivenSimulation.jl) for forcing and timing,
+and [`TransportModel.jl`](../src/Models/TransportModel.jl) for operator ordering.
 
 ## Ownership
 
-| What | Owner | Where it lives at runtime |
-|---|---|---|
-| File I/O, window timing, humidity endpoints, interpolation | Met driver | `sim.driver` (e.g. `TransportBinaryDriver`, `CubedSphereBinaryReader`) |
-| Air mass, tracer masses, advection workspace, operator config | Model | `sim.model :: TransportModel` |
-| Current simulation time | Simulation | `sim.time`, exposed via `current_time(sim)` |
-| Per-window forcing payload | Driver-owned, model-consumed | `sim.window` (from driver) → `model.fluxes` + `model.convection_forcing` |
+| Quantity or resource | Owner |
+| --- | --- |
+| Input reader, grid metadata, window duration and step schedule | `sim.driver`, a `TransportBinaryDriver` or `CubedSphereTransportDriver` |
+| Current forcing and next-window prefetch buffer | `sim.window` and `sim.prefetch_window` |
+| Prognostic air and tracer masses, operators and numerical workspaces | `sim.model` |
+| Time, window index, iteration count and callbacks | `sim`, the `DrivenSimulation` |
+| Input/output task cleanup and optional file staging | `run_driven_simulation` and its resource scopes |
 
-This separation is load-bearing: tracer state must not be entangled
-with I/O policy.
+Driver windows contain meteorology, not prognostic tracer state. The model
+copies their forcing into the buffers used by its operators. Tracer storage
+and its mass basis are described in [the core contracts](10_CORE_CONTRACTS.md).
 
-## Step-by-step trace
+## Window loading and prefetch
 
-### 1. `DrivenSimulation.step!(sim)`
+The constructor validates grid geometry, mass basis, forcing capabilities and
+the requested window range. It reads the first window once. On a GPU, with
+multiple Julia threads and another window to process, it creates two independent
+device windows from that payload. A custom driver that returns device arrays
+gets an explicit copy for the second buffer. CPU and single-window runs share
+the initial window reference because they do not start a prefetch task.
 
-Defined at [`src/Models/DrivenSimulation.jl:349`](../src/Models/DrivenSimulation.jl#L349). The entry point called by `run!(sim)` and by all driven-simulation scripts under `scripts/`.
+The background task loads the next window into the spare device buffer while
+transport uses the current one. At the boundary, `_take_prefetched_window!`
+waits for that task and exchanges the two buffers. Without prefetch, the same
+boundary loads the window synchronously. `ATMOSTR_DISABLE_PREFETCH=1` disables
+prefetch for diagnosis or comparison.
 
-```julia
-substep = _active_substep(sim.iteration, sim.steps_per_window)
-_maybe_advance_window!(sim, substep)
-_refresh_forcing!(sim, substep)
-if uses_binary_substep_contract(sim.driver)
-    transport_step!(sim.model, sim.Δt; meteo = sim)
-else
-    step!(sim.model, sim.Δt; meteo = sim)
-end
-sim.time += sim.Δt
-sim.iteration += 1
-if uses_binary_substep_contract(sim.driver) &&
-   sim.iteration == sim.current_window_end_iteration
-    convection_chemistry_step!(sim.model, sim.window_dt; meteo = sim)
-end
-for callback in values(sim.callbacks)
-    callback(sim)
-end
-```
+Window advancement updates the step count and `Δt`, applies the configured
+air-mass reset policy, refreshes diffusion geometry/forcing, invalidates
+convection caches, and schedules the following prefetch. Installing the first
+window of a new driver also invalidates convection caches. The multi-file
+runner retains model state and numerical workspaces across compatible input
+files while advancing the run clock continuously.
 
-### 2. `_maybe_advance_window!`
+The runner drains prefetch before closing its input reader, including on
+failure. Users who construct a `DrivenSimulation` directly must keep its driver
+open while it is running.
 
-Defined at [`src/Models/DrivenSimulation.jl:193`](../src/Models/DrivenSimulation.jl#L193). When the substep counter rolls past `steps_per_window`, the driver loads the next transport window from disk and replaces `sim.window`. No work on substeps within the current window.
+## One simulation step
 
-### 3. `_refresh_forcing!`
+`step!(sim)` performs the following sequence:
 
-Defined at [`src/Models/DrivenSimulation.jl:172`](../src/Models/DrivenSimulation.jl#L172). Populates the model's runtime forcing containers from the driver's window object:
+1. Advance to the next meteorology window if the previous window is complete.
+2. Determine the substep within that window and refresh model forcing.
+3. Apply the transport block with `dt = sim.Δt`. For a driver without the binary
+   scheduling contract, apply convection and chemistry at this cadence too.
+4. Advance `sim.time` and `sim.iteration`.
+5. For a binary-scheduled driver, at the window boundary, apply the configured
+   endpoint air-mass reset and then convection and chemistry with
+   `dt = sim.window_dt`.
+6. Call each callback with the updated simulation.
 
-- `model.fluxes` — interpolated mass fluxes `am`, `bm`, `cm` for the current substep (time-linear interpolation between window endpoints)
-- `model.convection_forcing` — `cmfmc`, `dtrain`, surface pressure slices sliced to the substep; populated only when the driver supports CMFMC (`supports_cmfmc(sim.driver)`)
+`run_window!(sim)` repeats this sequence to a meteorology-window boundary;
+`run!(sim)` repeats it through the requested final window. Window-specific step
+counts come from the driver, so `Δt` can change between windows. The stored
+substep schedule controls transport resolution, not the number of convection
+applications per hour.
 
-### 4. `step!(sim.model, sim.Δt; meteo = sim)`
+`ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1` is a diagnostic override that applies
+convection and chemistry at each transport substep even for binary-scheduled
+drivers. It is off by default and changes the physical splitting cadence.
 
-Defined at [`src/Models/TransportModel.jl:335`](../src/Models/TransportModel.jl#L335). Three blocks, in order:
+## Forcing refresh and time
 
-```julia
-function step!(model::TransportModel, dt; meteo = nothing)
-    transport_step!(model, dt; meteo = meteo)
-    convection_chemistry_step!(model, dt; meteo = meteo)
-    return nothing
-end
-```
+`_refresh_forcing!(sim, substep)` prepares the arrays consumed by the operators:
 
-For Plan-41 v3 transport binaries that declare
-`runtime_substep_contract = "binary_schedule"`, `DrivenSimulation` calls
-`transport_step!` on every stored binary substep and calls
-`convection_chemistry_step!` once at the met-window boundary with
-`dt = sim.window_dt`. The stored schedule is therefore the advection/transport
-cadence, not a request to run convection and chemistry dozens of times per
-hour.
+- Mass fluxes are copied for window-constant forcing, or interpolated when the
+  driver's contract requests interpolation. Full-window stored mass amounts
+  are scaled by `1 / (2 * steps_per_window)` for the transport palindrome.
+- Expected air mass is evaluated from the window and its optional
+  mass deltas. Available humidity endpoints update `sim.qv_buffer`.
+- Active convection receives a copy of the window's CMFMC/DTRAIN or TM5 fields.
+  These fields are window forcing; they are not automatically interpolated
+  between neighboring windows.
 
-The block helpers are:
+For more than one substep, the default interpolation fraction is
+`(substep - 0.5) / steps_per_window`; disabling midpoint forcing uses
+`(substep - 1) / steps_per_window`. A one-substep window uses fraction zero.
+This interpolation fraction is distinct from the run clock used by time-varying
+surface fluxes and diffusivity fields.
 
-```julia
-function transport_step!(model::TransportModel, dt; meteo = nothing)
-    apply!(model.state, model.fluxes, model.grid, model.advection, dt;
-           workspace = model.workspace.advection_ws,
-           diffusion_op = model.diffusion,
-           emissions_op = model.emissions,
-           meteo = meteo)
-    return nothing
-end
+Operators receive `meteo = sim`. `current_time(sim)` returns seconds since the
+run start, including preceding input files. A bare driver has no evolving clock;
+its compatibility method `current_time(driver)` returns zero. Callbacks see time
+after the step and any due window-boundary physics have completed.
 
-function convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
-    if !(model.convection isa NoConvection)
-        apply!(model.state, model.convection_forcing, model.grid,
-               model.convection, dt;
-               workspace = model.workspace.convection_ws)
-    end
-    chemistry_block!(model.state, meteo, model.grid, model.chemistry, dt)
-    return nothing
-end
-```
+## Operator blocks
 
-Note that `meteo = sim` is passed, not `sim.driver`. Operators can reach the driver via `meteo.driver` when needed (e.g. for `supports_cmfmc(meteo.driver)`), and can ask `current_time(meteo)` which resolves to `sim.time`. The legacy `current_time(::AbstractMetDriver) = 0.0` stub is preserved for backward compatibility but the driver itself is stateless.
+`transport_step!` dispatches advection on the model's mesh and scheme, passing
+its diffusion and surface-emission operators and their workspaces into the
+transport splitting. The main implementations are
+[`StrangSplitting.jl`](../src/Operators/Advection/StrangSplitting.jl) for
+latitude–longitude and reduced-Gaussian meshes, and
+[`CubedSphereStrang.jl`](../src/Operators/Advection/CubedSphereStrang.jl) for
+panel-based transport. Horizontal CS sweeps exchange panel halos. Diffusion
+and emissions participate in this transport block, so their cadence follows
+transport substeps.
 
-### 5. Transport block — per-topology dispatch
+`convection_chemistry_step!` applies convection and then chemistry. Supported
+convection families are CMFMC, TM5 matrix convection, and CMFMC-derived matrix
+convection. Their forcing and solver contracts are documented in
+[the convection guide](../src/Operators/Convection/README.md). The collaborative
+matrix solver's six shared-memory tracer slots are reused across batches;
+they do not impose a six-tracer limit.
 
-The transport block's outer `apply!` dispatches on the mesh type:
+Chemistry dispatches on the configured operator, including exponential decay
+and composite operators. No-op operator types disable their corresponding
+blocks. See [the topology support table](../src/Operators/TOPOLOGY_SUPPORT.md)
+for supported mesh/scheme combinations and
+[the chemistry guide](../src/Operators/Chemistry/README.md) for its contract.
 
-- **`AtmosGrid{<:LatLonMesh}`** → rank-4 Strang palindrome in [`src/Operators/Advection/StrangSplitting.jl`](../src/Operators/Advection/StrangSplitting.jl). Sequence: `X → Y → Z → V(dt) → Z → Y → X`. Double-buffered ping-pong (Invariant 4) in `rm_A` / `m_A` and `rm_B` / `m_B`.
-- **`AtmosGrid{<:ReducedGaussianMesh}`** → face-indexed `H → V(dt) → H` in the same `StrangSplitting.jl`; `@atomic` scatter kernel on rank-3 `tracers_raw`.
-- **`AtmosGrid{<:CubedSphereMesh}`** → panel-oriented `strang_split_cs!` in [`src/Operators/Advection/CubedSphereStrang.jl`](../src/Operators/Advection/CubedSphereStrang.jl); halo exchanges between panels before each horizontal sweep.
+## Mass basis and continuity
 
-Diffusion and surface flux are embedded at the Strang midpoint via the `V(dt)` call. `diffusion_op = NoDiffusion()` and `emissions_op = NoSurfaceFlux()` collapse to a bit-exact no-op path.
+Preprocessing produces carrier-mass and flux fields with an explicit mass
+basis and continuity contract. Dry basis is the default; the runtime checks
+that driver, state and flux bases agree. It does not repair an inconsistent
+binary by redoing preprocessing continuity closure. Runtime endpoint resets
+and flux-storage scaling serve the declared transport contract and do not
+replace that preprocessing step.
 
-### 6. Convection block
-
-Runs only when `model.convection !isa NoConvection`. `CMFMCConvection.apply!` has three topology dispatches in [`src/Operators/Convection/CMFMCConvection.jl`](../src/Operators/Convection/CMFMCConvection.jl):
-
-- `apply!(::CellState, ::ConvectionForcing, ::AtmosGrid{<:LatLonMesh}, ::CMFMCConvection, dt)` — rank-4 `tracers_raw`
-- `apply!(::CellState, ::ConvectionForcing, ::AtmosGrid{<:ReducedGaussianMesh}, ::CMFMCConvection, dt)` — rank-3 face-indexed `tracers_raw`
-- `apply!(::CubedSphereState, ::ConvectionForcing, ::AtmosGrid{<:CubedSphereMesh}, ::CMFMCConvection, dt)` — `NTuple{6}` panel storage
-
-A fourth dispatch rejects face-indexed state on non-RG grids to catch configuration mistakes.
-
-Forcing refresh is upstream in `_refresh_forcing!`. The kernel consumes `convection_forcing.cmfmc` / `.dtrain` / `.ps` and accumulates tendencies into `state.tracers`.
-
-### 7. Chemistry block
-
-`chemistry_block!(state, meteo, grid, chemistry, dt)` dispatches on `typeof(chemistry)`. Operators: `ExponentialDecay` and `CompositeChemistry` support `CellState` (LatLon and RG) and `CubedSphereState`.
-
-### 8. Callbacks
-
-After `step!(sim.model, sim.Δt)` returns, each callback in `sim.callbacks` sees the post-step state. Common callbacks: output writers, mass diagnostics, CFL reporters.
-
-## Time interpolation
-
-Time interpolation belongs upstream of the kernels. The kernels
-themselves are time-agnostic: they see a snapshot forcing state per
-substep and produce a tendency.
-
-Substep interpolation is done in `_refresh_forcing!` by linearly
-blending between window endpoints using the fraction
-`(substep - 0.5) / steps_per_window`. `AbstractTimeVaryingField`
-implementations (`ConstantField`, `ProfileKzField`, `StepwiseField`,
-`DerivedKzField`, `PreComputedKzField`) all honor this convention via
-their `update_field!` hooks when they implement it.
-
-## Closure policy
-
-All carrier-mass conversion (wet → dry) and continuity closure
-(`cm` diagnosis from horizontal divergence) happens in **preprocessing**,
-not at runtime. The transport binary ships dry-basis, mass-balanced
-fluxes ready to consume (Invariants 13 and 14). See
-[`30_BINARY_AND_DRIVERS.md`](30_BINARY_AND_DRIVERS.md) for the binary
-contract.
-
-The `DryFluxBuilder` runtime converter (`src/MetDrivers/ERA5/DryFluxBuilder.jl`)
-is retained for backward compatibility with old moist-basis binaries
-only.
-
-## Related docs
-
-- [`10_CORE_CONTRACTS.md`](10_CORE_CONTRACTS.md) — State / flux / driver contracts
-- [`30_BINARY_AND_DRIVERS.md`](30_BINARY_AND_DRIVERS.md) — Transport binary format
-- [`35_RUNTIME_STABILITY_AND_SUBCYCLING.md`](35_RUNTIME_STABILITY_AND_SUBCYCLING.md) — CFL pilots and subcycling
-- [`../src/Operators/TOPOLOGY_SUPPORT.md`](../src/Operators/TOPOLOGY_SUPPORT.md) — Per-operator dispatch matrix
-- [`../src/Operators/TOPOLOGY_SUPPORT.md`](../src/Operators/TOPOLOGY_SUPPORT.md) — Per-operator dispatch matrix
-- [`reference/ARCHITECTURE.md`](reference/ARCHITECTURE.md) — Architecture overview
+See [binary and driver contracts](30_BINARY_AND_DRIVERS.md),
+[runtime stability and subcycling](35_RUNTIME_STABILITY_AND_SUBCYCLING.md), and
+[the architecture reference](reference/ARCHITECTURE.md).
 
 ## Optional run instrumentation
 

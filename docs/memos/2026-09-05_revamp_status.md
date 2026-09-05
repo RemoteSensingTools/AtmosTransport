@@ -51,14 +51,27 @@ edits already present in the workspace remain separate from these commits.
   start option that was previously ignored and multi-file ranges that would
   skip forcing between handoffs.
 
+## Continued runtime follow-up
+
+- [Run instrumentation lifetime](2026-09-05_run_instrumentation_lifetime.md)
+  fixes timing/allocation/NVTX flags leaking after failed input inspection or
+  setup. The 58-check input-resource suite passes on Julia 1.10 and 1.12.
+- [Prefetch startup](2026-09-05_prefetch_startup.md) removes a duplicate
+  first-window load while preserving independent GPU forcing buffers.
+  The V100 startup suite passes 140 checks. In the three-file C48/L40 pipeline,
+  cumulative host allocations fall by about 56.4 MB; column-only median time
+  falls from 0.219 s to 0.183 s across five warm-cache samples.
+- [Runtime flow](../20_RUNTIME_FLOW.md) now follows current function signatures,
+  prefetch ownership, forcing fields, and transport/window physics cadence.
+
 ## Validation and limits
 
 A fresh isolated export completes all 112 core test files and the regridding
 suite (113 files total, 81,817 passed checks summed from emitted test summaries).
 Subsequent import/window-bound changes pass focused tests and final Aqua/JET
 checks; Aqua passes all ten checks and JET reports 180 against the unchanged
-181-report threshold. Every committed `src/*.jl` file matches the final clean
-health-gate export. Julia 1.10.12 and 1.12.6 cover the new resource, staging, cache-handoff,
+181-report threshold. The continued runtime changes also pass a fresh clean export with
+226 focused checks, including Aqua and JET (180/181). Julia 1.10.12 and 1.12.6 cover the new resource, staging, cache-handoff,
 and CS multifile behavior. Documentation builds execute the tutorial, doctests,
 cross-references, and VitePress rendering with deployment explicitly disabled.
 

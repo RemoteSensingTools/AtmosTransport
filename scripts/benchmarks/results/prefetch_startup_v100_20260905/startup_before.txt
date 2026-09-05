@@ -1,0 +1,36 @@
+Precompiling packages...
+  18595.8 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 39 seconds. 192 already precompiled.
+Precompiling packages...
+  11970.0 ms  ✓ AtmosTransportCUDAExt (serial)
+  1 dependency successfully precompiled in 12 seconds
+ERROR: LoadError: Some tests did not pass: 88 passed, 1 failed, 0 errored, 0 broken.
+in expression starting at /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_gpu.jl:4
+GPU startup reads once and owns independent prefetch storage: Test Failed at /tmp/atmos-v100-prefetch-review/test/fixtures/window_prefetch.jl:56
+  Expression: driver.reads == if prefetching
+        [1, 2]
+    else
+        [1]
+    end
+   Evaluated: [1, 1, 2] == [1, 2]
+
+Stacktrace:
+ [1] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+ [2] (::Main.WindowPrefetchFixtures.var"#7#8"{Int64, Main.WindowPrefetchFixtures.CountedWindowDriver{AtmosTransport.Grids.AtmosGrid{AtmosTransport.Grids.LatLonMesh{Float32}, AtmosTransport.Grids.HybridSigmaPressure{Float32}, AtmosTransport.Architectures.CPU, AtmosTransport.Parameters.PlanetParameters{Float32}, Float32}, Vector{AtmosTransport.MetDrivers.StructuredTransportWindow{AtmosTransport.State.DryBasis, Array{Float32, 3}, Matrix{Float32}, AtmosTransport.State.DryStructuredFluxState{Array{Float32, 3}, Array{Float32, 3}, Array{Float32, 3}}, Array{Float32, 3}, AtmosTransport.MetDrivers.StructuredFluxDeltas{Array{Float32, 3}, Array{Float32, 3}, Array{Float32, 3}, Array{Float32, 3}}, AtmosTransport.MetDrivers.ConvectionForcing{Nothing, Nothing, @NamedTuple{entu::Array{Float32, 3}, detu::Array{Float32, 3}, entd::Array{Float32, 3}, detd::Array{Float32, 3}}}}}}})()
+   @ Main.WindowPrefetchFixtures /tmp/atmos-v100-prefetch-review/test/fixtures/window_prefetch.jl:56
+ [3] withenv(f::Main.WindowPrefetchFixtures.var"#7#8"{Int64, Main.WindowPrefetchFixtures.CountedWindowDriver{AtmosTransport.Grids.AtmosGrid{AtmosTransport.Grids.LatLonMesh{Float32}, AtmosTransport.Grids.HybridSigmaPressure{Float32}, AtmosTransport.Architectures.CPU, AtmosTransport.Parameters.PlanetParameters{Float32}, Float32}, Vector{AtmosTransport.MetDrivers.StructuredTransportWindow{AtmosTransport.State.DryBasis, Array{Float32, 3}, Matrix{Float32}, AtmosTransport.State.DryStructuredFluxState{Array{Float32, 3}, Array{Float32, 3}, Array{Float32, 3}}, Array{Float32, 3}, AtmosTransport.MetDrivers.StructuredFluxDeltas{Array{Float32, 3}, Array{Float32, 3}, Array{Float32, 3}, Array{Float32, 3}}, AtmosTransport.MetDrivers.ConvectionForcing{Nothing, Nothing, @NamedTuple{entu::Array{Float32, 3}, detu::Array{Float32, 3}, entd::Array{Float32, 3}, detd::Array{Float32, 3}}}}}}}, keyvals::Pair{String, String})
+   @ Base ./env.jl:265
+ [4] check_prefetch_startup(adapter::Type; enabled::Bool, stop_window::Int64)
+   @ Main.WindowPrefetchFixtures /tmp/atmos-v100-prefetch-review/test/fixtures/window_prefetch.jl:51
+ [5] check_prefetch_startup(adapter::Type)
+   @ Main.WindowPrefetchFixtures /tmp/atmos-v100-prefetch-review/test/fixtures/window_prefetch.jl:48
+ [6] top-level scope
+   @ /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_gpu.jl:16
+ [7] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+ [8] macro expansion
+   @ /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_gpu.jl:16 [inlined]
+Test Summary:                                                | Pass  Fail  Total   Time
+GPU startup reads once and owns independent prefetch storage |   88     1     89  15.4s
+RNG of the outermost testset: Random.Xoshiro(0xd823fc4f29e4bbb7, 0x8995c1784b8aab3d, 0xcf09f02b334c1146, 0xec2f9d5f82c1adbb, 0xf5643f2ca04cd3e9)

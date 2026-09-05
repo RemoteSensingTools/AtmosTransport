@@ -1,0 +1,62 @@
+[
+    {
+        "cuda_runtime_version": "12.6.0",
+        "Nc": 48,
+        "revision": "e1f61e53+single-load-prefetch",
+        "host_allocated_bytes": 695151176,
+        "reader_checks": "all output times and all tracer column means",
+        "backend": "cuda",
+        "julia_version": "1.12.6",
+        "device": "Tesla V100-PCIE-16GB",
+        "files": 3,
+        "output_bytes": 48246069,
+        "levels": 40,
+        "tracers": 1,
+        "cache": "warm OS page cache; includes setup, capture and NetCDF write",
+        "cuda_version": "5.11.3",
+        "topology": "cs",
+        "median_seconds": 0.566284229,
+        "input_bytes": 18231296,
+        "windows": 6,
+        "layers": "full",
+        "samples_seconds": [
+            0.699653221,
+            0.662811333,
+            0.439208121,
+            0.542329194,
+            0.566284229
+        ],
+        "cuda_driver_version": "13.0.0",
+        "cuda_visible_devices": "0"
+    },
+    {
+        "cuda_runtime_version": "12.6.0",
+        "Nc": 48,
+        "revision": "e1f61e53+single-load-prefetch",
+        "host_allocated_bytes": 214260440,
+        "reader_checks": "all output times and all tracer column means",
+        "backend": "cuda",
+        "julia_version": "1.12.6",
+        "device": "Tesla V100-PCIE-16GB",
+        "files": 3,
+        "output_bytes": 1775175,
+        "levels": 40,
+        "tracers": 1,
+        "cache": "warm OS page cache; includes setup, capture and NetCDF write",
+        "cuda_version": "5.11.3",
+        "topology": "cs",
+        "median_seconds": 0.182605041,
+        "input_bytes": 18231296,
+        "windows": 6,
+        "layers": "none",
+        "samples_seconds": [
+            0.194540083,
+            0.182605041,
+            0.181990701,
+            0.184284582,
+            0.180962643
+        ],
+        "cuda_driver_version": "13.0.0",
+        "cuda_visible_devices": "0"
+    }
+]

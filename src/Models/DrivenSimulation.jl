@@ -863,10 +863,18 @@ function DrivenSimulation(model::TransportModel,
     _check_grid_compatibility(model.grid, driver_grid(driver))
     _check_basis_compatibility(model, driver)
 
-    window = _adapt_window_to_model_backend(_load_window(driver, start_window), model.state.air_mass)
-    prefetch_window = _prefetch_enabled(model.state.air_mass) && start_window < stop_window ?
-                      _adapt_window_to_model_backend(_load_window(driver, start_window), model.state.air_mass) :
-                      window
+    # Read/decode the first forcing window once. Adapt its host payload twice
+    # when prefetching so the two device buffers remain independently writable.
+    loaded_window = _load_window(driver, start_window)
+    window = _adapt_window_to_model_backend(loaded_window, model.state.air_mass)
+    prefetch_window = if _prefetch_enabled(model.state.air_mass) && start_window < stop_window
+        # A custom driver may already supply device arrays; adapting those to
+        # the same backend can alias, so copy that window explicitly instead.
+        _window_backend_adapter(loaded_window.air_mass) === Array ?
+            _adapt_window_to_model_backend(loaded_window, model.state.air_mass) : deepcopy(window)
+    else
+        window
+    end
     prefetch_task = _empty_prefetch_task()
     expected_air_mass = _allocate_storage_like(model.state.air_mass)
     qv_buffer = _allocate_qv_buffer(window)

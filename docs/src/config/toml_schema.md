@@ -111,7 +111,10 @@ air_mass_reset_mode = "preserve_tracer_mass"
 ```
 
 `stop_window` is the inclusive last window; setting it lets you
-run a partial day for smoke tests. `air_mass_reset_mode` is one of
+run a partial day for smoke tests with a single input file. Multi-file runs
+require complete window ranges so no forcing is skipped between files.
+Cubed-sphere runs currently require `start_window = 1`.
+`air_mass_reset_mode` is one of
 `"none"`, `"preserve_vmr"`, or `"preserve_tracer_mass"`. Advection belongs
 in the separate `[advection]` table.
 
@@ -316,15 +319,17 @@ julia --threads=2 --project=. scripts/run_transport.jl <cfg.toml>
 
 Some preprocessing kernels (spectral synthesis, regridding) and
 some host-side workspace operations parallelize across threads.
-The runtime also overlaps I/O with compute when ≥2 threads are
-available: each met window is **prefetched** on a background task
-while the current window integrates (`_start_window_prefetch!` in
-`DrivenSimulation.jl`), and the per-day snapshot write runs on a
-spawned task (`pending_write` in `DrivenRunner.jl`) so disk output
-overlaps the next day's transport. For multi-day/-year runs over
-NFS, opt into rolling local-NVMe input staging via `[input.staging]`
-(above). There is no `[buffering]` TOML block — these overlaps are
-automatic; give the run `--threads=2` (or more) to enable them.
+GPU runs also prefetch the next meteorological window when ≥2 Julia threads
+are available. Startup reads the first window once and creates two independent
+device buffers, so loading the next window cannot overwrite active forcing.
+Daily snapshot writes run on an owned background task and overlap the next
+day's transport. The runner drains both tasks before closing their resources,
+including when stepping fails. Single-file NetCDF appends each snapshot without
+retaining earlier frames.
+
+For multi-day or multi-year runs over NFS, opt into rolling local-NVMe input
+staging via `[input.staging]` (above). There is no `[buffering]` TOML block.
+Give GPU runs `--threads=2` (or more) to enable prefetch.
 
 ## Preprocessing config (`config/preprocessing/*.toml`)
 

@@ -16,3 +16,26 @@ function _with_run_resource(f, resource)
     close(resource)
     return result
 end
+
+mutable struct RunInputResources
+    driver::Union{Nothing,AbstractMetDriver}
+    simulation::Union{Nothing,DrivenSimulation}
+end
+RunInputResources() = RunInputResources(nothing, nothing)
+
+function Base.close(input::RunInputResources)
+    driver, sim = input.driver, input.simulation
+    input.driver = nothing
+    input.simulation = nothing
+    driver === nothing && return nothing
+    try
+        _with_run_resource(driver) do
+            # A GPU prefetch task can still be reading the driver's mapping.
+            # Finish it before closing the reader or releasing mapped pages.
+            sim === nothing || _finish_window_prefetch!(sim)
+        end
+    finally
+        driver isa TransportBinaryDriver && release_payload!(driver)
+    end
+    return nothing
+end

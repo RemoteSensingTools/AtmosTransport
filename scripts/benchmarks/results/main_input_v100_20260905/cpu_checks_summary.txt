@@ -1,0 +1,48 @@
+Test Summary:                               | Pass  Total  Time
+Runner drains prefetch before closing input |   16     16  9.1s
+Test Summary:                                           | Pass  Total  Time
+Runner closes a first driver when setup rejects the run |    4      4  9.3s
+Test Summary:                                        | Pass  Total   Time
+Rejected driver construction closes its owned reader |    4      4  14.1s
+Test Summary:                                    | Pass  Total   Time
+Multi-file partial ranges reject skipped forcing |    6      6  12.4s
+Test Summary:                                     | Pass  Total  Time
+Runner disables its instrumentation after failure |   28     28  1.2s
+Test Summary:                        | Pass  Total  Time
+CPU startup loads one forcing window |   57     57  2.1s
+Test Summary:                                                     | Pass  Total   Time
+CS transport, diffusion, convection, and decay agree across files |   56     56  36.2s
+Test Summary:                     | Pass  Total  Time
+TransportModel convection runtime |   24     24  2.8s
+Test Summary:                       | Pass  Total  Time
+DrivenSimulation convection runtime |   10     10  0.9s
+Test Summary:                                             | Pass  Total  Time
+binary substep contract keeps chemistry at window cadence |    4      4  0.5s
+Test Summary:                                         | Pass  Total  Time
+DrivenSimulation keeps convection runtime on model FT |    4      4  0.7s
+Test Summary:                                                      | Pass  Total  Time
+New DrivenSimulation invalidates convection from a previous driver |    7      7  1.8s
+Test Summary:                                           | Pass  Total  Time
+Run output drains background writes on exceptional exit |    8      8  0.0s
+Test Summary:                                          | Pass  Total  Time
+Run and asynchronous output failures are both reported |    9      9  0.0s
+Test Summary:                                                        | Pass  Total   Time
+Daily output owns frames and closes other resources on write failure |   11     11  10.4s
+Test Summary:                                                          | Pass  Total  Time
+DrivenSimulation optional no-reset window carry preserves mixing ratio |    3      3  3.0s
+Test Summary:                                                                | Pass  Total  Time
+DrivenSimulation air-mass reset modes choose VMR or tracer-mass conservation |    9      9  0.3s
+Test Summary:                                         | Pass  Total  Time
+DrivenSimulation applies bottom-layer surface sources |    4      4  1.9s
+Test Summary:                                                            | Pass  Total  Time
+DrivenSimulation applies bottom-layer surface sources on ReducedGaussian |    4      4  3.2s
+Test Summary:                                                              | Pass  Total  Time
+DrivenSimulation ReducedGaussian run! accumulates emissions across windows |    6      6  1.2s
+Test Summary:                                                            | Pass  Total  Time
+DrivenSimulation ReducedGaussian supports diffusion plus surface sources |    4      4  1.6s
+Test Summary:                           | Pass  Total  Time
+DrivenSimulation window-forcing runtime |   50     50  1.9s
+Test Summary:                                       | Pass  Total  Time
+full-window flux scaling guard (flux_kind contract) |    4      4  0.5s
+Test Summary:                                        | Pass  Total  Time
+cubed-sphere window refresh copies diffusion forcing |    5      5  0.8s

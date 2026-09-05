@@ -110,6 +110,12 @@ At a high level, each meteorological window follows this sequence:
 5. The next forcing window is loaded and checked against the same binary and
    model contracts.
 
+Across input files, the runner retains the model's state and numerical
+workspaces. A new `DrivenSimulation` refreshes forcing, diffusion layer
+thickness, and convection caches for the next file. It carries the accumulated
+simulation clock forward, so time-varying emissions continue at the correct
+time. GPU prefetch is drained before the runner closes an input driver.
+
 The detailed operator ordering is documented in [Operators](@ref Operator-concepts). The mass
 invariant is derived in [Mass conservation](@ref).
 

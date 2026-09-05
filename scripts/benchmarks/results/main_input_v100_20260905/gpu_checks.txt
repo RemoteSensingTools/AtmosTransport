@@ -1,0 +1,122 @@
+CUDA.runtime_version() = v"12.6.0"
+CUDA.name(CUDA.device()) = "Tesla V100-PCIE-16GB"
+Test Summary:                                                | Pass  Total   Time
+GPU startup reads once and owns independent prefetch storage |  140    140  14.8s
+Precompiling packages...
+  18023.3 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 38 seconds. 192 already precompiled.
+Precompiling packages...
+  11929.4 ms  ✓ AtmosTransportCUDAExt (serial)
+  1 dependency successfully precompiled in 12 seconds
+Test Summary:                                            | Pass  Total  Time
+Failed prefetch is consumed once before resource cleanup |    8      8  1.2s
+Test Summary:                              | Pass  Total     Time
+CS multifile GPU physics and CPU reference |   75     75  2m42.2s
+┌ Info: CS file-boundary comparison
+│   adv = "upwind"
+│   conv = "cmfmc"
+│   panel = 1
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "upwind"
+│   conv = "cmfmc"
+│   panel = 2
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "upwind"
+│   conv = "cmfmc"
+│   panel = 3
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "upwind"
+│   conv = "cmfmc"
+│   panel = 4
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "upwind"
+│   conv = "cmfmc"
+│   panel = 5
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "upwind"
+│   conv = "cmfmc"
+│   panel = 6
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "ppm"
+│   conv = "cmfmc_matrix"
+│   panel = 1
+│   max_abs = 10.0f0
+└   max_rel = 7.231663f-8
+┌ Info: CS file-boundary comparison
+│   adv = "ppm"
+│   conv = "cmfmc_matrix"
+│   panel = 2
+│   max_abs = 24.0f0
+└   max_rel = 1.7355991f-7
+┌ Info: CS file-boundary comparison
+│   adv = "ppm"
+│   conv = "cmfmc_matrix"
+│   panel = 3
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "ppm"
+│   conv = "cmfmc_matrix"
+│   panel = 4
+│   max_abs = 8.0f0
+└   max_rel = 5.7853303f-8
+┌ Info: CS file-boundary comparison
+│   adv = "ppm"
+│   conv = "cmfmc_matrix"
+│   panel = 5
+│   max_abs = 8.0f0
+└   max_rel = 5.7853303f-8
+┌ Info: CS file-boundary comparison
+│   adv = "ppm"
+│   conv = "cmfmc_matrix"
+│   panel = 6
+│   max_abs = 8.0f0
+└   max_rel = 5.7853303f-8
+┌ Info: CS file-boundary comparison
+│   adv = "linrood"
+│   conv = "tm5"
+│   panel = 1
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "linrood"
+│   conv = "tm5"
+│   panel = 2
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "linrood"
+│   conv = "tm5"
+│   panel = 3
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "linrood"
+│   conv = "tm5"
+│   panel = 4
+│   max_abs = 16.0f0
+└   max_rel = 1.071713f-7
+┌ Info: CS file-boundary comparison
+│   adv = "linrood"
+│   conv = "tm5"
+│   panel = 5
+│   max_abs = 16.0f0
+└   max_rel = 1.071713f-7
+┌ Info: CS file-boundary comparison
+│   adv = "linrood"
+│   conv = "tm5"
+│   panel = 6
+│   max_abs = 16.0f0
+└   max_rel = 1.071713f-7

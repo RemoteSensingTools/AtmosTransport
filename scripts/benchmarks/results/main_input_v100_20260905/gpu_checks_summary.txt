@@ -1,0 +1,6 @@
+Test Summary:                                                | Pass  Total   Time
+GPU startup reads once and owns independent prefetch storage |  140    140  14.8s
+Test Summary:                                            | Pass  Total  Time
+Failed prefetch is consumed once before resource cleanup |    8      8  1.2s
+Test Summary:                              | Pass  Total     Time
+CS multifile GPU physics and CPU reference |   75     75  2m42.2s

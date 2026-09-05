@@ -71,10 +71,16 @@ ported, retaining main's signed-total and ATMSNAP contracts. The
 and the real-input before/after measurements. Remaining whole-run allocation
 is predominantly outside snapshot capture.
 
+## Input integration
+
+Input ownership, startup loading, cache handoff, and cubed-sphere workspace
+reuse are ported to main's APIs. The [input integration report](2026-09-05_main_input_port.md)
+records the lifetime and continuous/split-file regression checks.
+
 ## Remaining integration work
 
-- Finish input-resource ownership, staging, startup loading, and cache handoff
-  improvements on the current reader/model APIs.
+- Port staging ownership and source-identity checks.
+- Reduce transient CPU workspace allocation before GPU adaptation.
 - Retain current signed-tracer conservation and output-total contracts.
 - Reconcile scientific documentation and package-loading improvements.
 - Repeat CPU and GPU runtime validation after the remaining I/O ports. Compare

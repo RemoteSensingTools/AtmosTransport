@@ -168,3 +168,17 @@ _advection_label(::SlopesScheme) = "Slopes"
 _advection_label(::UpwindScheme) = "Upwind"
 
 _diffusion_label(op) = String(nameof(typeof(op)))
+
+# A partial window range across files skips forcing between handoffs while
+# carrying tracer state forward. Restrict these ranges to single-file debugging.
+function _check_multifile_window_range(driver, start_window, stop_window, file_count)
+    file_count <= 1 && return nothing
+    last_window = total_windows(driver)
+    if start_window != 1 || (stop_window !== nothing && Int(stop_window) < last_window)
+        throw(ArgumentError(
+            "Partial window ranges with multiple input files would skip forcing " *
+            "between files. Use one input file for a partial-window run, or " *
+            "start_window=1 and the full window range for every file."))
+    end
+    return nothing
+end

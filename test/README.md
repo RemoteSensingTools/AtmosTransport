@@ -58,3 +58,7 @@ main's signed-total and ATMSNAP-header checks alongside the new selected-capture
 streaming, and asynchronous write-lifetime suites. The opt-in
 `diagnostic/test_snapshot_totals_gpu.jl` checks signed cancellation on the
 explicitly selected CUDA device (including V100 with CUDA runtime 12.6).
+
+Shared synthetic runtime inputs live in `test/fixtures/`. The window-prefetch
+and cubed-sphere file-handoff fixtures are used by both CPU core tests and
+explicitly enabled GPU diagnostics. They need no external meteorology files.

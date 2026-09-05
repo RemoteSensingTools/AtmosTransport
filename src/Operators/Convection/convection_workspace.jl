@@ -259,7 +259,7 @@ end
     TM5Workspace(air_mass; tile_columns = …,
                             tile_workspace_gib = nothing,
                             cell_metrics = nothing,
-                      defer_scratch::Bool = false) -> TM5Workspace
+                            defer_scratch = false) -> TM5Workspace
 
 Construct a fresh workspace from an air-mass payload. `air_mass`
 may be a single array (structured `(Nx, Ny, Nz)` or face-indexed
@@ -282,12 +282,16 @@ The per-launch column count `B` is set by exactly one of:
   `_convection_workspace_for(::TM5Convection, ...)` supplies this;
   leaving it `nothing` is only for unit-area solver tests.
 
-Specifying both is an error.
+Specifying both tile settings is an error. `defer_scratch=true` retains the
+configured tile size but allocates no legacy matrix payload until a legacy
+solve actually needs it. Adaptation drops this recomputable scratch while
+preserving cell metrics; each backend allocates its own tile on demand.
 """
 function TM5Workspace(air_mass;
                       tile_columns::Union{Integer, Nothing} = nothing,
                       tile_workspace_gib::Union{Real, Nothing} = nothing,
-                      cell_metrics = nothing)
+                      cell_metrics = nothing,
+                      defer_scratch::Bool = false)
     Nz          = _tm5_extract_Nz(air_mass)
     template    = _tm5_template(air_mass)
     FT          = eltype(template)

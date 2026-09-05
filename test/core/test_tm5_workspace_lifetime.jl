@@ -71,13 +71,10 @@ end
 @testset "Deferred adaptation preserves persistent convection data" begin
     mass = zeros(Float32, 2, 3, 8)
     ws = C.CMFMCMatrixWorkspace(mass; tile_columns=5, defer_scratch=true,
-                               cache_columns=6, cell_metrics=ones(Float32,3))
+                               cell_metrics=ones(Float32,3))
     ws.derived_entu .= 0.03f0
     ws.derived_detu .= 0.02f0
     ws.derived_valid[] = true
-    ws.tm5_workspace.cache_A .= 2f0
-    ws.tm5_workspace.cache_pivots .= 1
-    ws.tm5_workspace.cache_valid[] = true
     C._ensure_tm5_scratch!(ws.tm5_workspace)
     adapted = Adapt.adapt(Array, ws)
     @test isempty(adapted.tm5_workspace.conv1)
@@ -87,12 +84,8 @@ end
     @test adapted.derived_valid[]
     @test all(iszero, adapted.zero_entd)
     @test all(iszero, adapted.zero_detd)
-    @test adapted.tm5_workspace.cache_A == ws.tm5_workspace.cache_A
-    @test adapted.tm5_workspace.cache_pivots == ws.tm5_workspace.cache_pivots
-    @test adapted.tm5_workspace.cache_valid[]
     C.invalidate_cmfmc_matrix_cache!(adapted)
     @test ws.derived_valid[] # Sentinel ownership is independent after adaptation.
-    @test ws.tm5_workspace.cache_valid[]
 end
 
 @testset "C180 L85 collaborative workspace omits legacy matrix payload" begin
@@ -102,7 +95,7 @@ end
     @test ws.scratch_columns == 180^2
     @test sum(sizeof, (ws.conv1, ws.pivots, ws.cloud_dims,
                        ws.amu_scratch, ws.amd_scratch)) == 0
-    # The deferred payload, excluding metrics and optional persistent caches.
+    # The deferred payload, excluding cell metrics.
     per_column = sizeof(Float32)*(85^2+2*86) + sizeof(Int)*(85+3)
     @test per_column * ws.scratch_columns > 0.9 * 2.0^30
 end

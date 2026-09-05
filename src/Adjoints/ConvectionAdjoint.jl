@@ -106,7 +106,7 @@ function _tm5_solve_column_vector!(rm_col, m_col,
                       icltop, icllfs, FT(dt), Nz;
                       cell_area = FT(cell_area),
                       f = f_buf, amu = amu_buf, amd = amd_buf)
-    _tm5_lu!(conv1_buf, pivots_buf, Nz; icltop_eff = icltop_eff)
+    _tm5_factorize!(conv1_buf, pivots_buf, Nz, icllfs; icltop_eff = icltop_eff)
     _tm5_solve_vector!(rm_col, conv1_buf, pivots_buf, Nz;
                        icltop_eff = icltop_eff)
     return nothing
@@ -134,7 +134,7 @@ function _tm5_solve_column_vector_adjoint!(lambda_col, m_col,
                       icltop, icllfs, FT(dt), Nz;
                       cell_area = FT(cell_area),
                       f = f_buf, amu = amu_buf, amd = amd_buf)
-    _tm5_lu!(conv1_buf, pivots_buf, Nz; icltop_eff = icltop_eff)
+    _tm5_factorize!(conv1_buf, pivots_buf, Nz, icllfs; icltop_eff = icltop_eff)
     _tm5_solve_vector_transpose!(lambda_col, conv1_buf, pivots_buf, Nz;
                                  icltop_eff = icltop_eff)
     return nothing

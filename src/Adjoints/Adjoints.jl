@@ -42,7 +42,7 @@ using ..Operators.Convection: CMFMCConvection, CMFMCWorkspace,
     CMFMCMatrixConvection, CMFMCMatrixWorkspace,
     invalidate_cmfmc_cache!, invalidate_cmfmc_matrix_cache!,
     _get_or_compute_n_sub!, _ensure_tm5_scratch!,
-    _tm5_diagnose_cloud_dims, _tm5_build_conv1!, _tm5_lu!,
+    _tm5_diagnose_cloud_dims, _tm5_build_conv1!, _tm5_lu!, _tm5_factorize!,
     _launch_cmfmc_matrix_derivation!
 using ..State: AbstractCubedSphereField,
     LocalHoltslagBovilleKzField, PrecomputedCSDkgField,

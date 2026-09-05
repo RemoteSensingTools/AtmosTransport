@@ -93,6 +93,6 @@ runs on the host and may refresh caches before an operator launch.
   this directory's field implementations and
   [`../../MetDrivers/README.md`](../../MetDrivers/README.md)
 - Tests:
-  - [`../../../test/test_fields.jl`](../../../test/test_fields.jl)
-  - [`../../../test/test_diffusion_operator.jl`](../../../test/test_diffusion_operator.jl)
-  - [`../../../test/test_current_time.jl`](../../../test/test_current_time.jl)
+  - [`test_fields.jl`](../../../test/orphan/test_fields.jl) (opt-in)
+  - [`test_diffusion_operator.jl`](../../../test/orphan/test_diffusion_operator.jl) (opt-in)
+  - [`test_current_time.jl`](../../../test/orphan/test_current_time.jl) (opt-in)

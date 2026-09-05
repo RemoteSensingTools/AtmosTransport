@@ -1,69 +1,50 @@
 # Convection
 
-Convective transport operators and workspaces.
+Convective transport on latitude–longitude, reduced-Gaussian, and cubed-sphere
+columns. All three active schemes run through the convection block in
+`TransportModel`; `NoConvection` leaves the state unchanged.
 
-This folder owns the convection operator hierarchy. As of plan 22D,
-the convection block is live in `TransportModel.step!` and
-`CMFMCConvection` supports all three topologies: structured LatLon,
-face-indexed reduced Gaussian, and panel-native cubed sphere.
-`TM5Convection` lands via plan 23 — Commit 1 ships the struct +
-workspace + dispatch stubs; Commit 4 lands the real kernels on all
-three topologies. See
-[`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md) for the canonical
-operator × topology matrix.
+## Scientific contract
 
-## Entry Points
+Let `m` be air mass and `q` mixing ratio on the state's declared basis. The
+transported tracer quantity is `s = m*q`, not physical species mass. Level 1
+is the top of the atmosphere and level `Nz` is the surface. Convective rates
+are in kg/m²/s on the same basis as `m`; the solver normalizes air mass by
+cell area internally.
 
-- Type hierarchy:
-  [`operators.jl`](operators.jl)
-  defines `AbstractConvection`, `NoConvection`, and
-  `apply_convection!`
-- Concrete structured operator:
-  [`CMFMCConvection.jl`](CMFMCConvection.jl)
-  defines `CMFMCConvection` and its `apply!` methods
-- TM5 operator (in progress, plan 23):
-  [`TM5Convection.jl`](TM5Convection.jl)
-  defines `TM5Convection` — four-field Tiedtke 1989 with in-kernel
-  partial-pivot LU solve. Commit 1 ships the struct + dispatch
-  stubs; Commits 2 + 4 ship the column solver and per-topology
-  kernels.
-- Workspace:
-  [`convection_workspace.jl`](convection_workspace.jl)
-  defines `CMFMCWorkspace`, `TM5Workspace`, and
-  `invalidate_cmfmc_cache!`
-- Kernel implementation:
-  [`cmfmc_kernels.jl`](cmfmc_kernels.jl)
-- Forcing contract:
-  `ConvectionForcing` lives in [`../../MetDrivers/`](../../MetDrivers/)
+| Scheme | Input | Numerical treatment |
+| --- | --- | --- |
+| `CMFMCConvection` | Interface CMFMC and optional center DTRAIN | Two-pass cloud/environment transport with internal CFL subcycling. |
+| `TM5Convection` | Center `entu`, `detu`, `entd`, `detd` | Backward-Euler column matrix with partial-pivot LU. |
+| `CMFMCMatrixConvection` | Interface CMFMC and center DTRAIN, both required | Derives closed updraft rates and uses the same TM5 matrix solve. |
 
-## Current Status
+The two CMFMC schemes are different numerical formulations. The matrix variant
+preserves column tracer storage for closed exchange; it is GEOS forcing through
+TM5 numerics, not a reproduction of the GCHP RAS update. The two-pass variant
+retains its distinct cloud/environment treatment and conservation behavior.
 
-- `CMFMCConvection` runs on all three topologies via dedicated
-  `apply!` methods in [`CMFMCConvection.jl`](CMFMCConvection.jl):
-  - LatLon (rank-4 `tracers_raw`)
-  - reduced Gaussian (rank-3 face-indexed `tracers_raw`)
-  - cubed sphere (`NTuple{6}` panel storage)
-- `TM5Convection` is live on all three topologies (LatLon,
-  ReducedGaussian, CubedSphere) as of plan 23 Commit 4. The struct
-  is stateless; forcing comes via `ConvectionForcing.tm5_fields`.
-  Implementation: `_tm5_solve_column!` builds and solves the
-  `conv1 = I - dt·D` backward-Euler matrix with partial-pivot LU
-  per column; `tm5_kernels.jl` ships the three topology KA kernels;
-  `TM5Convection.jl` has the `apply!` / `apply_convection!` dispatch
-  that launches them. Mass conservation to F64 machine precision
-  via the TM5 matrix column-sum-is-1 invariant.
-- `TransportModel.step!` executes a convection block when the model
-  carries a non-`NoConvection` operator; wiring landed as plan 22D
-- `NoConvection` is a no-op (compile-time dead branch in `step!`)
-- `DrivenSimulation` refreshes `model.convection_forcing` each substep
-  from `sim.window.convection`; plan 23 Commit 1 refactored the
-  per-operator validator (`_validate_convection_window!`) into
-  dispatch so adding operators does not re-edit the old if/elseif
-  chain
+For the matrix schemes, `(I - dt*D) s_new = s_old`. Closed exchange gives unit
+column sums in `I - dt*D`, so summing the solved equation preserves total column
+storage to floating-point precision. Every tracer uses the same matrix; only
+its right-hand side differs.
 
-If you are extending convection behavior, read the existing topology
-dispatches in [`CMFMCConvection.jl`](CMFMCConvection.jl) first — they
-are genuine fast-path implementations, not generic wrappers.
+Forcing layouts are `(Nx,Ny,Nz)` on LL, `(Ncell,Nz)` on RG, and six interior
+`(Nc,Nc,Nz)` arrays on CS. CMFMC has `Nz+1` interfaces. CS tracer state includes
+halos, but forcing arrays and cell areas do not. See
+[`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md) for runtime support.
+
+## Runtime and workspaces
+
+`DrivenSimulation` refreshes forcing from the current meteorological window.
+Binary-scheduled runs apply convection once at the end of that window;
+`step!(model, dt)` applies it once for the supplied interval. The diagnostic
+`ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1` override changes this cadence.
+
+`CMFMCWorkspace` caches its subcycle count. `CMFMCMatrixWorkspace` caches the
+rates derived from CMFMC/DTRAIN. Window advancement invalidates these caches.
+Matrix factors are reused across tracers within a call; persistent LU cache
+fields are not an enabled across-window factor cache. Factors also depend on
+air mass and timestep, so forcing identity alone would not justify reuse.
 
 ## File Map
 
@@ -179,6 +160,7 @@ The opt-in CUDA regression defaults to an A100; set
   [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl) and
   [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Tests:
-  - [`../../../test/test_convection_types.jl`](../../../test/test_convection_types.jl)
-  - [`../../../test/test_convection_forcing.jl`](../../../test/test_convection_forcing.jl)
-  - [`../../../test/test_cmfmc_convection.jl`](../../../test/test_cmfmc_convection.jl)
+  - [`test_tm5_convection.jl`](../../../test/core/test_tm5_convection.jl)
+  - [`test_cmfmc_matrix_convection.jl`](../../../test/core/test_cmfmc_matrix_convection.jl)
+  - [`test_transport_model_convection.jl`](../../../test/core/test_transport_model_convection.jl)
+  - [`test_tm5_tracer_batching_gpu.jl`](../../../test/diagnostic/test_tm5_tracer_batching_gpu.jl) (opt-in)

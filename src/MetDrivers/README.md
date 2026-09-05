@@ -110,9 +110,9 @@ cubed-sphere-specific data paths.
 - Runtime flow:
   [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)
 - Tests:
-  - [`../../test/test_transport_binary_reader.jl`](../../test/test_transport_binary_reader.jl)
-  - [`../../test/test_run_transport_binary_recipe.jl`](../../test/test_run_transport_binary_recipe.jl)
-  - [`../../test/test_binary_path_expander.jl`](../../test/test_binary_path_expander.jl)
-  - [`../../test/test_dry_flux_interface.jl`](../../test/test_dry_flux_interface.jl)
-  - [`../../test/test_current_time.jl`](../../test/test_current_time.jl)
-  - [`../../test/test_cubed_sphere_runtime.jl`](../../test/test_cubed_sphere_runtime.jl)
+  - [`../../test/test_transport_binary_reader.jl`](../../test/real_data/test_transport_binary_reader.jl)
+  - [`test_run_transport_binary_recipe.jl`](../../test/orphan/test_run_transport_binary_recipe.jl) (opt-in)
+  - [`test_binary_path_expander.jl`](../../test/core/test_binary_path_expander.jl)
+  - [`../../test/test_dry_flux_interface.jl`](../../test/real_data/test_dry_flux_interface.jl)
+  - [`test_current_time.jl`](../../test/orphan/test_current_time.jl) (opt-in)
+  - [`test_cubed_sphere_runtime.jl`](../../test/orphan/test_cubed_sphere_runtime.jl) (opt-in)

@@ -107,8 +107,8 @@ the model-facing `apply!` entrypoints that the transport block calls.
 - Runtime walkthrough:
   [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Tests:
-  - [`../../../test/test_advection_kernels.jl`](../../../test/test_advection_kernels.jl)
-  - [`../../../test/test_cubed_sphere_advection.jl`](../../../test/test_cubed_sphere_advection.jl)
-  - [`../../../test/test_basis_explicit_core.jl`](../../../test/test_basis_explicit_core.jl)
-  - [`../../../test/test_emissions_palindrome.jl`](../../../test/test_emissions_palindrome.jl)
-  - [`../../../test/test_diffusion_palindrome.jl`](../../../test/test_diffusion_palindrome.jl)
+  - [`test_advection_kernels.jl`](../../../test/core/test_advection_kernels.jl)
+  - [`test_cubed_sphere_advection.jl`](../../../test/core/test_cubed_sphere_advection.jl)
+  - [`test_basis_explicit_core.jl`](../../../test/core/test_basis_explicit_core.jl)
+  - [`test_emissions_palindrome.jl`](../../../test/orphan/test_emissions_palindrome.jl) (opt-in)
+  - [`test_diffusion_palindrome.jl`](../../../test/orphan/test_diffusion_palindrome.jl) (opt-in)

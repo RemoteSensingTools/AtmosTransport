@@ -84,9 +84,9 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
 - Topology status:
   [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)
 - Tests:
-  - [`../../../test/test_diffusion_kernels.jl`](../../../test/test_diffusion_kernels.jl)
-  - [`../../../test/test_diffusion_operator.jl`](../../../test/test_diffusion_operator.jl)
-  - [`../../../test/test_transport_model_diffusion.jl`](../../../test/test_transport_model_diffusion.jl)
-  - [`../../../test/test_diffusion_palindrome.jl`](../../../test/test_diffusion_palindrome.jl)
-  - [`../../../test/test_driven_simulation.jl`](../../../test/test_driven_simulation.jl)
-  - [`../../../test/test_cubed_sphere_runtime.jl`](../../../test/test_cubed_sphere_runtime.jl)
+  - [`test_diffusion_kernels.jl`](../../../test/orphan/test_diffusion_kernels.jl) (opt-in)
+  - [`test_diffusion_operator.jl`](../../../test/orphan/test_diffusion_operator.jl) (opt-in)
+  - [`test_transport_model_diffusion.jl`](../../../test/orphan/test_transport_model_diffusion.jl) (opt-in)
+  - [`test_diffusion_palindrome.jl`](../../../test/orphan/test_diffusion_palindrome.jl) (opt-in)
+  - [`test_driven_simulation.jl`](../../../test/core/test_driven_simulation.jl)
+  - [`test_cubed_sphere_runtime.jl`](../../../test/orphan/test_cubed_sphere_runtime.jl) (opt-in)

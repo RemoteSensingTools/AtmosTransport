@@ -4,15 +4,20 @@ Canonical source of truth for which operators support which
 topologies. Module READMEs reference this file rather than
 duplicating coverage claims.
 
-**Last verified:** 2026-05-16 (Plan 41 CS packed split-sweep follow-up)
+**Updated:** 2026-09-05. This table describes runtime dispatch support;
+device-specific numerical and performance evidence is recorded separately in
+the tests and benchmark reports.
 
 ## Topologies
 
 | Symbol | State type | Storage | Flux state |
 |--------|-----------|---------|------------|
-| **LatLon** | `CellState` | rank-4 `tracers_raw::Array{FT, 4}` | `StructuredFaceFluxState{Basis}` |
-| **RG** (reduced Gaussian) | `CellState` | rank-3 face-indexed `tracers_raw::Array{FT, 3}` | `FaceIndexedFluxState{Basis}` |
-| **CS** (cubed sphere) | `CubedSphereState` | `NTuple{6, Array{FT, 4}}` panel-native | `CubedSphereFaceFluxState{Basis}` |
+| **LatLon** | `CellState` | rank-4 packed tracers | `StructuredFaceFluxState{Basis}` |
+| **RG** (reduced Gaussian) | `CellState` | rank-3 face-indexed packed tracers | `FaceIndexedFluxState{Basis}` |
+| **CS** (cubed sphere) | `CubedSphereState` | six rank-4 halo-padded tracer panels | `CubedSphereFaceFluxState{Basis}` |
+
+Storage adapts to the backend (`Array`, `CuArray`, or another supported array
+type); shape and basis contracts remain the same.
 
 ## Matrix
 
@@ -20,13 +25,22 @@ duplicating coverage claims.
 |----------|:------:|:--:|:--:|
 | `UpwindScheme` | ✅ | ✅ | ✅ |
 | `SlopesScheme` / `PPMScheme` | ✅ | ❌ | ✅ |
+| `LinRoodPPMScheme` (ORD=5/7) | ❌ | ❌ | ✅ |
+| `NoAdvection` | ✅ | ✅ | ✅ |
 | `ImplicitVerticalDiffusion` | ✅ | ✅ | ✅ |
 | `SurfaceFluxOperator` | ✅ | ✅ | ✅ |
 | `CMFMCConvection` | ✅ | ✅ | ✅ |
+| `TM5Convection` | ✅ | ✅ | ✅ |
+| `CMFMCMatrixConvection` | ✅ | ✅ | ✅ |
 | `ExponentialDecay` / `CompositeChemistry` | ✅ | ✅ | ✅ |
 
 ✅ = dedicated `apply!` or `apply_*!` dispatch exists, tested and live through `TransportModel.step!`.
-❌ = no dispatch; operator rejects or (for CS chemistry) is not yet wired.
+❌ = unsupported combination, rejected during configuration or dispatch.
+
+`NoAdvection` supports diffusion-only runs; combining it with surface emissions
+is currently rejected. Matrix convection's collaborative path requires Float32
+GPU storage and an effective depth of at most 85 levels. Its six-slot tracer
+buffer is reused across batches and does not limit the total tracer count.
 
 ## Evidence anchors
 
@@ -69,6 +83,16 @@ Three valid `apply!` methods + one rejection in
 - `apply!(::CubedSphereState, ::ConvectionForcing, ::AtmosGrid{<:CubedSphereMesh}, ::CMFMCConvection, dt)`
 - A fourth dispatch rejects face-indexed state on non-RG grids to
   catch configuration mistakes.
+
+### Matrix convection (TM5 and CMFMC-derived)
+
+- [`Convection/TM5Convection.jl`](Convection/TM5Convection.jl) provides the
+  LL/RG/CS array and state dispatches for both legacy and collaborative solves.
+- [`Convection/CMFMCMatrixConvection.jl`](Convection/CMFMCMatrixConvection.jl)
+  derives cached rates from CMFMC/DTRAIN and delegates to those same solvers.
+- [`Convection/tm5_kernels.jl`](Convection/tm5_kernels.jl) contains the three
+  collaborative kernels; [`Convection/README.md`](Convection/README.md)
+  describes their depth, tracer, and validation contracts.
 
 ### Chemistry
 

@@ -21,15 +21,28 @@ read.
   [`DrivenSimulation.jl`](DrivenSimulation.jl)
   defines `DrivenSimulation`, window progression, forcing refresh, and
   runtime validation
+- Scientist-facing TOML entry point:
+  [`DrivenRunner.jl`](DrivenRunner.jl) defines `run_driven_simulation`, called
+  by `scripts/run_transport.jl`. It validates configuration and binary
+  capabilities before constructing the model.
 
 ## Runtime Composition Today
 
 - `TransportModel.step!` runs:
   - transport block (advection, with diffusion and surface flux at
     the Strang midpoint)
-  - convection block (`CMFMCConvection` live on LatLon, RG, CS via
-    plan 22D; `TM5Convection` in progress under plan 23)
+  - convection block (`CMFMCConvection`, `TM5Convection`, or
+    `CMFMCMatrixConvection`, each supporting LL/RG/CS)
   - chemistry block
+
+For binary-scheduled `DrivenSimulation` runs, each stored substep executes
+the transport block. Convection and chemistry execute once at the end of
+the meteorological window. Forcing refresh and physics execution are separate
+operations; a refreshed field does not imply that its operator ran that substep.
+
+Advection, diffusion, and convection own typed reusable workspaces. A
+diffusion-only model needs no advection workspace. Collaborative convection
+defers legacy matrix scratch until a fallback or supported adjoint needs it.
 
 ## File Map
 
@@ -56,15 +69,13 @@ read.
 - [`InitialConditionIO.jl`](InitialConditionIO.jl) — topology-dispatched
   VMR builder (`build_initial_mixing_ratio` on LL/RG/CS),
   basis-aware VMR → tracer-mass packer (`pack_initial_tracer_mass`),
-  surface-flux loader + LL/RG/CS `build_surface_flux_source` builders
-  with conservative regrid + cell-area integration,
-  `FileInitialConditionSource` / `FileSurfaceFluxField` containers
-  (plan 40 Commits 1b–1d + 2)
+  and the `initial_conditions/` files for cubed-sphere mapping, surface-flux
+  loading, unit conversion, and conservative regridding
 - [`BinaryPathExpander.jl`](BinaryPathExpander.jl) —
   `expand_binary_paths(input_cfg)` resolves either an explicit
   `binary_paths = [...]` list or a `folder + start_date + end_date
   (+ file_pattern)` shape to a sorted `Vector{String}`; continuity
-  check on the closed date range (plan 40 Commit 4)
+  check on the closed date range
 - [`DrivenRunner.jl`](DrivenRunner.jl) — library-level
   `run_driven_simulation(cfg)` entry point for all driven runs. Owns the
   runtime flow behind `scripts/run_transport.jl`: first-driver
@@ -73,6 +84,11 @@ read.
   `pack_initial_tracer_mass`, surface-source wiring, GPU-residency
   assertion (`feedback_verify_gpu_runs_on_gpu`), per-window loop,
   and snapshot NetCDF output
+- [`runner/configuration.jl`](runner/configuration.jl),
+  [`runner/model_setup.jl`](runner/model_setup.jl),
+  [`runner/output.jl`](runner/output.jl), and
+  [`runner/progress.jl`](runner/progress.jl) separate validation, construction,
+  output ownership, and progress reporting from the topology execution loops.
 - [`InputStaging.jl`](InputStaging.jl) — opt-in rolling NVMe input staging
   (`InputStager`, `staged_path_for!`, `cleanup_staging!`) for the per-day
   binary loop: copies upcoming days NAS→local NVMe ahead of the GPU loop and
@@ -112,7 +128,7 @@ read.
   [`TransportModel.jl`](TransportModel.jl) and
   [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)
 - Tests:
-  - [`../../test/test_driven_simulation.jl`](../../test/test_driven_simulation.jl)
-  - [`../../test/test_transport_model_diffusion.jl`](../../test/test_transport_model_diffusion.jl)
-  - [`../../test/test_transport_model_emissions.jl`](../../test/test_transport_model_emissions.jl)
-  - [`../../test/test_current_time.jl`](../../test/test_current_time.jl)
+  - [`test_driven_simulation.jl`](../../test/core/test_driven_simulation.jl)
+  - [`test_transport_model_diffusion.jl`](../../test/orphan/test_transport_model_diffusion.jl) (opt-in)
+  - [`test_transport_model_emissions.jl`](../../test/orphan/test_transport_model_emissions.jl) (opt-in)
+  - [`test_current_time.jl`](../../test/orphan/test_current_time.jl) (opt-in)

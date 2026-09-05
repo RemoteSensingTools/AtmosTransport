@@ -2,11 +2,11 @@
 
 Every physics process in AtmosTransport is implemented behind an
 **abstract operator type** with a `No<Operator>` no-op default. The
-runtime composes operators through a fixed Strang palindrome; users
+runtime composes a transport block with separate physics blocks; users
 swap implementations by changing one field in the TOML config (or by
 implementing a new subtype and registering it).
 
-## The four operator families
+## The five operator families
 
 ```mermaid
 classDiagram
@@ -15,6 +15,7 @@ classDiagram
     class AbstractDiffusion
     class AbstractConvection
     class AbstractSurfaceFluxOperator
+    class AbstractChemistryOperator
     class UpwindScheme
     class SlopesScheme
     class PPMScheme
@@ -24,8 +25,12 @@ classDiagram
     class NoConvection
     class CMFMCConvection
     class TM5Convection
+    class CMFMCMatrixConvection
     class NoSurfaceFlux
     class SurfaceFluxOperator
+    class NoChemistry
+    class ExponentialDecay
+    class CompositeChemistry
 
     AbstractOperator <|-- AbstractDiffusion
     AbstractOperator <|-- AbstractConvection
@@ -38,11 +43,15 @@ classDiagram
     AbstractConvection <|-- NoConvection
     AbstractConvection <|-- CMFMCConvection
     AbstractConvection <|-- TM5Convection
+    AbstractConvection <|-- CMFMCMatrixConvection
     AbstractSurfaceFluxOperator <|-- NoSurfaceFlux
     AbstractSurfaceFluxOperator <|-- SurfaceFluxOperator
+    AbstractChemistryOperator <|-- NoChemistry
+    AbstractChemistryOperator <|-- ExponentialDecay
+    AbstractChemistryOperator <|-- CompositeChemistry
 ```
 
-`AbstractAdvectionScheme` and `AbstractSurfaceFluxOperator` are
+`AbstractAdvectionScheme`, `AbstractSurfaceFluxOperator`, and `AbstractChemistryOperator` are
 parallel roots that don't share `AbstractOperator`'s ancestry, but
 they follow the same composition pattern (concrete subtype +
 `No<Operator>` default + `apply!` method).
@@ -59,6 +68,7 @@ that family needs:
 | Diffusion | `apply!(state, meteo, grid, op::AbstractDiffusion, dt; workspace)` |
 | Convection | `apply!(state, forcing::ConvectionForcing, grid, op::AbstractConvection, dt; workspace)` |
 | Surface flux | `apply!(state, meteo, grid, op::AbstractSurfaceFluxOperator, dt; workspace = nothing)` |
+| Chemistry | `apply!(state, meteo, grid, op::AbstractChemistryOperator, dt; workspace)` |
 
 Every method mutates `state` in place and returns `state` (or
 `nothing`). Workspaces retain numerical scratch buffers across calls;
@@ -149,8 +159,9 @@ Profile / derived / precomputed Kz fields exist in `src/State/Fields/` — see
 | `NoConvection()` | — | Identity no-op; default. |
 | `CMFMCConvection()` | `ConvectionForcing.{cmfmc, dtrain}` | GCHP-style upwind moist convection; mass flux + optional detrainment. |
 | `TM5Convection{FT}()` | `ConvectionForcing.tm5_fields.{entu, detu, entd, detd}` | TM5 Tiedtke-1989 four-field entrainment / detrainment with an implicit column solve. Parametric on `FT`. |
+| `CMFMCMatrixConvection()` | `ConvectionForcing.{cmfmc, dtrain}` | Derives updraft exchange rates from GEOS fields and applies the conservative TM5 matrix solve. |
 
-Both real subtypes consume a `ConvectionForcing` carrier (declared in
+All three active schemes consume a `ConvectionForcing` carrier (declared in
 `src/MetDrivers/ConvectionForcing.jl`) — different physics, identical
 plumbing. `_refresh_forcing!` populates `model.convection_forcing`
 each substep by copying from the current met window; the operator
@@ -160,7 +171,7 @@ does not call `current_time` itself.
 
 ```toml
 [convection]
-kind = "cmfmc"     # or "tm5" / "none"
+kind = "cmfmc_matrix"     # or "cmfmc" / "tm5" / "none"
 ```
 
 The runtime picks `:cmfmc` only against binaries whose header carries
@@ -168,6 +179,29 @@ the `:cmfmc` payload section (and `:dtrain` if requested); similarly
 for `:tm5` requiring `:entu / :detu / :entd / :detd`. Asking for a
 convection scheme the binary does not support is a **load-time
 error**, not a silent fallback.
+
+`CMFMCMatrixConvection` requires both CMFMC and DTRAIN. It uses GEOS-derived
+rates with TM5 transport numerics; it does not reproduce the GCHP RAS update.
+`CMFMCConvection` retains the separate two-pass cloud/environment treatment.
+Its standalone conservation behavior differs from the matrix formulation.
+Changing between these schemes is a scientific choice, not a performance flag.
+
+For both matrix schemes, the column update solves
+`(I - dt D) s_new = s_old`, where `s = m*q` is tracer storage and the exchange
+operator `D` has units s⁻¹. Column sums of `I - dt D` equal one for closed
+exchange, preserving the column sum of `s` to floating-point precision. The
+matrix is factored once and reused for every tracer in that column.
+
+`use_collab_lu = true` selects shared-memory matrix kernels on Float32 GPUs.
+They process tracers in internal batches of six; six is not a total-tracer
+limit. The effective matrix depth must fit 1–85 levels. CPU and Float64 runs
+use the serial column solver. Explicit `lmax_conv` truncation and `n_merge`
+aggregation change the represented vertical exchange and require a justified
+choice based on the forcing. They are not needed to support more tracers.
+
+CMFMC matrix columns have no downdrafts and admit quadratic Hessenberg LU.
+TM5 columns without diagnosed downdrafts use the same factorization; columns
+with downdrafts retain general LU. Partial pivoting is retained in both.
 
 ## Surface flux (sources)
 
@@ -178,10 +212,10 @@ error**, not a silent fallback.
 | `NoSurfaceFlux()` | Identity no-op; default. |
 | `SurfaceFluxOperator{M}` | Applies a `PerTracerFluxMap` of `SurfaceFluxSource`s to the bottom-most layer (`k = Nz`). |
 
-`SurfaceFluxOperator` is built **programmatically**, not from the
-TOML, and is the path for emissions inventories (EDGAR, GFED,
-GridFED, LMDz, …). The `[tracers.<name>.emission]` block in run
-configs drives this construction; see the worked CATRINE configs
+The runner builds `SurfaceFluxOperator` from the
+`[tracers.<name>.emission]` blocks for emissions inventories (EDGAR, GFED,
+GridFED, LMDz, …). Programmatic runs may also construct it directly.
+See the worked CATRINE configs
 (`config/runs/catrine_*.toml`) for examples.
 
 ## Scientific quantities and layouts
@@ -202,16 +236,24 @@ have `Nz + 1` interfaces.
 | Surface flux | A species flux in kg/m²/s is converted using cell area and molecular weights into a bottom-layer increment of `s`. | Between diffusion half-steps, or at the configured implicit lower boundary. |
 | Chemistry | Local sources and sinks modify tracer storage; for example, `dq/dt = -λq` uses a decay rate `λ` in s⁻¹. | After convection in the separate chemistry block. |
 
+All convection mass fluxes are expressed in kg/m²/s on the same air-mass
+basis as the state. CMFMC is stored on interfaces; DTRAIN and the four TM5
+entrainment/detrainment fields are stored at layer centers. Surface-source
+operators receive already area-integrated, molecular-weight-converted
+storage rates per cell per second; the kernel must not multiply by area again.
+
 Chemistry uses `AbstractChemistryOperator` and `chemistry_block!`; the
 executable `examples/custom_loss.jl` demonstrates its mutating `apply!`
 interface and analytic decay check. Driven runs schedule the separate
-physics blocks at met-window cadence; a direct `step!` call executes them
-once for the supplied interval.
+physics blocks at met-window cadence for binary-scheduled runs; a direct
+`step!(model, dt)` executes them once for the supplied interval. The diagnostic
+override `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1` changes this cadence and should
+be recorded when comparing experiments.
 
 ## Strang palindrome
 
-The transport step is composed as a **time-symmetric Strang
-palindrome**:
+For structured and split-sweep cubed-sphere advection, the transport block
+uses a **time-symmetric Strang palindrome**:
 
 ```text
 forward:   X → Y → Z   (each direction CFL-subcycled)
@@ -219,8 +261,6 @@ center:    V(dt/2) → S(dt) → V(dt/2)   (only when surface flux is on)
            [otherwise the center is a single V(dt) — and a NoDiffusion
             V is a literal dead branch]
 reverse:   Z → Y → X   (same subcycle counts)
-post:      apply!(convection)   (convection is outside the palindrome)
-           apply!(chemistry)    (chemistry is outside the palindrome)
 ```
 
 `V` is `apply_vertical_diffusion!` and `S` is `apply_surface_flux!`.
@@ -229,10 +269,16 @@ than emitting before or after the palindrome) is necessary to keep
 the operator second-order accurate and to allow the bottom-layer
 mass increment to diffuse upward symmetrically.
 
-Convection and chemistry sit **outside** the palindrome for the same
-reason: they are not commutative with advection at the per-substep
-level, and their natural cadence is the met window rather than the
-advection sub-step.
+The alternative configured lower-boundary treatment uses `S(dt) → V(dt)`.
+Reduced-Gaussian advection uses its face-indexed sweep, and Lin–Rood uses
+its own horizontal update; their dispatches still provide the diffusion/source
+midpoint hooks.
+
+Convection followed by chemistry runs **outside** this transport palindrome.
+In a binary-scheduled driven run, it executes once after the final transport
+substep of each meteorological window. The symmetric transport split does not
+by itself make this complete transport–convection–chemistry composition
+second-order accurate in time.
 
 ## Adding a new operator
 

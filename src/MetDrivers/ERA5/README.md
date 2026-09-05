@@ -65,8 +65,8 @@ vertical-flux diagnosis, and ERA5-specific dry-flux preparation.
   - [`../../../docs/reference/BINARY_FORMAT_V5.md`](../../../docs/reference/BINARY_FORMAT_V5.md)
   - [`../../../docs/reference/GRID_TYPES.md`](../../../docs/reference/GRID_TYPES.md)
 - Tests:
-  - [`../../../test/test_transport_binary_reader.jl`](../../../test/test_transport_binary_reader.jl)
-  - [`../../../test/test_dry_flux_interface.jl`](../../../test/test_dry_flux_interface.jl)
-  - [`../../../test/test_era5_latlon_e2e.jl`](../../../test/test_era5_latlon_e2e.jl)
-  - [`../../../test/test_real_era5_direct_dry_binary.jl`](../../../test/test_real_era5_direct_dry_binary.jl)
-  - [`../../../test/test_real_era5_dry_conversion.jl`](../../../test/test_real_era5_dry_conversion.jl)
+  - [`../../../test/test_transport_binary_reader.jl`](../../../test/real_data/test_transport_binary_reader.jl)
+  - [`../../../test/test_dry_flux_interface.jl`](../../../test/real_data/test_dry_flux_interface.jl)
+  - [`../../../test/test_era5_latlon_e2e.jl`](../../../test/real_data/test_era5_latlon_e2e.jl)
+  - [`../../../test/test_real_era5_direct_dry_binary.jl`](../../../test/real_data/test_real_era5_direct_dry_binary.jl)
+  - [`../../../test/test_real_era5_dry_conversion.jl`](../../../test/real_data/test_real_era5_dry_conversion.jl)

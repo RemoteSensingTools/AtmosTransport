@@ -174,13 +174,11 @@ function run_driven_simulation(cfg::AbstractDict)
     stager = InputStager(binary_paths, get(input_cfg, "staging", Dict{String, Any}()))
     output_resources = RunSnapshotOutput()
     result = try
-        _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg, stager, output_resources)
-    finally
-        try
-            close(output_resources)
-        finally
-            cleanup_staging!(stager)
+        _with_snapshot_output(output_resources) do
+            _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg, stager, output_resources)
         end
+    finally
+        cleanup_staging!(stager)
     end
     if timers_on
         SectionTimer.disable!()
@@ -310,9 +308,6 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
     snapshot_count = Ref(0)
     snap_idx = 1
     total_elapsed_hours = 0.0
-    # In-flight async daily write (one at a time); kept off the GPU loop so the
-    # disk write overlaps the next day's transport. `nothing` until first flush.
-    pending_write = nothing
 
     # Estimate total windows for the progress bar. Each daily binary has
     # the same window count for a homogeneous run; multiplying gives a
@@ -450,15 +445,12 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
             # `copy` + `empty!` lets `capture_structured!` keep pushing into the
             # same `day_snapshots` binding (no closure rebox) while the spawned
             # task owns the previous day's frames.
-            pending_write !== nothing && wait(pending_write)
-            frames_to_write = copy(day_snapshots)
-            empty!(day_snapshots)
             out_path = _output_path_for_partition(output_spec, output_spec.partition,
                                                    _binary_date_label(path), idx)
             grid_ref = driver_grid(first_driver)
             mb = air_mass_basis(first_driver)
-            pending_write = Threads.@spawn _write_frames_to_disk(output_spec, out_path,
-                                                                 frames_to_write, grid_ref, mb)
+            _start_daily_output!(output_resources, output_spec, out_path,
+                                 day_snapshots, grid_ref, mb)
             set_progress_status!(timer;
                                  detail = @sprintf("async write %s", basename(out_path)),
                                  redraw = true)
@@ -468,7 +460,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
 
     # Drain the last in-flight async daily write before the final flush / mass
     # accounting, so the run never returns with a write still pending.
-    pending_write !== nothing && wait(pending_write)
+    _wait_pending_output!(output_resources)
 
     if do_snapshots
         # `air_mass_basis(driver)` already returns the Symbol and has been
@@ -684,9 +676,6 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
     end
 
     t0 = time()
-    # In-flight async daily write (one at a time); kept off the GPU loop so the
-    # disk write overlaps the next day's transport. `nothing` until first flush.
-    pending_write = nothing
     for (driver_idx, path) in enumerate(binary_paths)
         # `path` (NAS) kept for labels/logging; driver opens the staged local
         # copy when staging is enabled (driver_idx==1 already staged above).
@@ -789,15 +778,12 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
             # caps extra host memory at ~one day of frames. The shallow `copy` +
             # `empty!` lets `capture_structured!` keep pushing into the same
             # `day_snapshots` binding while the spawned task owns the prior frames.
-            pending_write !== nothing && wait(pending_write)
-            frames_to_write = copy(day_snapshots)
-            empty!(day_snapshots)
             out_path = _output_path_for_partition(output_spec, output_spec.partition,
                                                    _binary_date_label(path), driver_idx)
             grid_ref = grid
             mb = BasisT === DryBasis ? :dry : :moist
-            pending_write = Threads.@spawn _write_frames_to_disk(output_spec, out_path,
-                                                                 frames_to_write, grid_ref, mb)
+            _start_daily_output!(output_resources, output_spec, out_path,
+                                 day_snapshots, grid_ref, mb)
             set_progress_status!(timer;
                                  detail = @sprintf("async write %s", basename(out_path)),
                                  redraw = true)
@@ -812,7 +798,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
 
     # Drain the last in-flight async daily write before the final mass accounting,
     # so the run never returns with a write still pending.
-    pending_write !== nothing && wait(pending_write)
+    _wait_pending_output!(output_resources)
 
     @info @sprintf("Done: %.1fs  (%d snapshots, final t=%.1fh)",
                    time() - t0, snapshot_count[], total_hour)

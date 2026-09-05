@@ -103,12 +103,46 @@ end
 # The outer run owns this resource, including exceptional exits from either topology.
 mutable struct RunSnapshotOutput
     stream::Union{Nothing,NetCDFSnapshotStream}
+    pending_write::Union{Nothing,Task}
 end
-RunSnapshotOutput() = RunSnapshotOutput(nothing)
-function Base.close(output::RunSnapshotOutput)
-    stream = output.stream
-    stream === nothing || close(stream)
+RunSnapshotOutput() = RunSnapshotOutput(nothing, nothing)
+
+function _wait_pending_output!(output::RunSnapshotOutput)
+    task = output.pending_write
+    task === nothing && return nothing
+    try
+        wait(task)
+    finally
+        # Release the task and its captured frames even if the write failed.
+        output.pending_write = nothing
+    end
     return nothing
+end
+
+function Base.close(output::RunSnapshotOutput)
+    try
+        _wait_pending_output!(output)
+    finally
+        stream = output.stream
+        stream === nothing || close(stream)
+    end
+    return nothing
+end
+
+function _with_snapshot_output(f, output::RunSnapshotOutput)
+    result = try
+        f()
+    catch run_error
+        try
+            close(output)
+        catch output_error
+            # A concurrent write failure must not hide the transport failure.
+            throw(CompositeException(Any[run_error, output_error]))
+        end
+        rethrow()
+    end
+    close(output)
+    return result
 end
 
 function _single_netcdf_stream(output::RunSnapshotOutput, spec::RuntimeOutputSpec, grid; mass_basis)
@@ -172,6 +206,18 @@ function _write_frames_to_disk(spec::RuntimeOutputSpec, path::AbstractString,
                               options = spec.options, fields = spec.fields)
     end
     return path
+end
+
+function _start_daily_output!(output::RunSnapshotOutput, spec::RuntimeOutputSpec,
+                              path::AbstractString, frames, grid, mass_basis::Symbol)
+    # Only one background write may own frames at a time. The enclosing run
+    # drains it on both successful and exceptional exits through close(output).
+    _wait_pending_output!(output)
+    owned_frames = copy(frames)
+    empty!(frames)
+    output.pending_write = Threads.@spawn _write_frames_to_disk(
+        spec, path, owned_frames, grid, mass_basis)
+    return nothing
 end
 
 _flush_daily_output!(::SingleOutputFile, timer, spec, frames, grid;

@@ -177,8 +177,8 @@ end
 # Float32 GPU requests outside that envelope error in the host dispatcher;
 # CPU and Float64 use the legacy solver with a warning.
 #
-# Matrix construction and pivot search still run in thread 1. Their runtime
-# contribution needs profiling independently of the parallel LU updates.
+# Plume recurrences and pivot search still run in thread 1. Matrix columns
+# independently form I - dt*D across the workgroup, preserving level order.
 # A_loc aliases the build's intermediate flux matrix.
 # ---------------------------------------------------------------------------
 
@@ -404,18 +404,22 @@ end
                 A_loc[k, k - 1] -= amu_loc[k] / bmass_above
                 A_loc[k, k]     -= amd_loc[k] / bmass_k
             end
-            # Final f -> conv1 = I - dt·(f_below - f).
-            @inbounds for k in 1:LMAX_CONV
-                for kk in 1:LMAX_CONV
-                    if k < k_lo || kk < k_lo
-                        A_loc[k, kk] = (k == kk) ? 1f0 : 0f0
-                        continue
-                    end
+        end
+        @synchronize
+        # Columns are independent. Ascending levels preserve the original
+        # f below each row until it is consumed by the in-place difference.
+        @inbounds for kk in t:_TM5_COLLAB_WG_SIZE:LMAX_CONV
+            for k in 1:LMAX_CONV
+                if k < k_lo || kk < k_lo
+                    A_loc[k, kk] = (k == kk) ? 1f0 : 0f0
+                else
                     f_below = k == LMAX_CONV ? 0f0 : A_loc[k + 1, kk]
                     fdiff = f_below - A_loc[k, kk]
                     A_loc[k, kk] = -dt * fdiff
                 end
-                A_loc[k, k] += 1f0
+                if k == kk
+                    A_loc[k, kk] += 1f0
+                end
             end
         end
     end
@@ -642,17 +646,22 @@ end
                 A_loc[k, k - 1] -= amu_loc[k] / bmass_above
                 A_loc[k, k]     -= amd_loc[k] / bmass_k
             end
-            @inbounds for k in 1:LMAX_CONV
-                for kk in 1:LMAX_CONV
-                    if k < k_lo || kk < k_lo
-                        A_loc[k, kk] = (k == kk) ? 1f0 : 0f0
-                        continue
-                    end
+        end
+        @synchronize
+        # Columns are independent. Ascending levels preserve the original
+        # f below each row until it is consumed by the in-place difference.
+        @inbounds for kk in t:_TM5_COLLAB_WG_SIZE:LMAX_CONV
+            for k in 1:LMAX_CONV
+                if k < k_lo || kk < k_lo
+                    A_loc[k, kk] = (k == kk) ? 1f0 : 0f0
+                else
                     f_below = k == LMAX_CONV ? 0f0 : A_loc[k + 1, kk]
                     fdiff = f_below - A_loc[k, kk]
                     A_loc[k, kk] = -dt * fdiff
                 end
-                A_loc[k, k] += 1f0
+                if k == kk
+                    A_loc[k, kk] += 1f0
+                end
             end
         end
     end
@@ -881,17 +890,22 @@ end
                 A_loc[k, k - 1] -= amu_loc[k] / bmass_above
                 A_loc[k, k]     -= amd_loc[k] / bmass_k
             end
-            @inbounds for k in 1:LMAX_CONV
-                for kk in 1:LMAX_CONV
-                    if k < k_lo || kk < k_lo
-                        A_loc[k, kk] = (k == kk) ? 1f0 : 0f0
-                        continue
-                    end
+        end
+        @synchronize
+        # Columns are independent. Ascending levels preserve the original
+        # f below each row until it is consumed by the in-place difference.
+        @inbounds for kk in t:_TM5_COLLAB_WG_SIZE:LMAX_CONV
+            for k in 1:LMAX_CONV
+                if k < k_lo || kk < k_lo
+                    A_loc[k, kk] = (k == kk) ? 1f0 : 0f0
+                else
                     f_below = k == LMAX_CONV ? 0f0 : A_loc[k + 1, kk]
                     fdiff = f_below - A_loc[k, kk]
                     A_loc[k, kk] = -dt * fdiff
                 end
-                A_loc[k, k] += 1f0
+                if k == kk
+                    A_loc[k, kk] += 1f0
+                end
             end
         end
     end

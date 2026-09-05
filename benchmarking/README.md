@@ -62,9 +62,23 @@ julia --project=benchmarking benchmarking/run_pipeline_benchmarks.jl cpu pipelin
 CUDA_VISIBLE_DEVICES=0 julia --project=benchmarking benchmarking/run_pipeline_benchmarks.jl cuda pipeline_a100.json
 ```
 
-The CUDA command verifies an A100. `ATMOSTR_BENCH_NC`, `ATMOSTR_BENCH_NZ`, and
-`ATMOSTR_BENCH_REPEATS` control horizontal size, levels, and repeat count (defaults
-12, 16, 3). Results record elapsed time, host allocations, input/output bytes,
-tracer count, selected fields, and device. A warmup precedes measurement. These
-are warm OS page-cache timings, not cold NAS throughput or device-memory peaks.
-Fixtures use synthetic forcing and do not establish campaign-scale throughput.
+The CUDA command verifies an A100 by default. Set
+`ATMOSTR_BENCH_GPU_NAME=V100` for an explicitly authorized V100 run. The V100
+measurements used CUDA.jl 5.11.3 with runtime 12.6; a CUDA 13.2 runtime rejected
+that device. Runtime selection belongs to the isolated benchmark environment.
+
+| Environment variable | Default | Meaning |
+| --- | --- | --- |
+| `ATMOSTR_BENCH_NC` | `12` | CS panel width; LL/RG synthetic resolution uses the same size parameter. |
+| `ATMOSTR_BENCH_NZ` | `16` | Vertical levels. |
+| `ATMOSTR_BENCH_REPEATS` | `3` | Measured repetitions after warmup. |
+| `ATMOSTR_BENCH_TRACERS` | `1,4` | Comma-separated positive tracer counts. |
+| `ATMOSTR_BENCH_TOPOLOGIES` | `ll,rg,cs` | Grid layouts to measure. |
+| `ATMOSTR_BENCH_FILES` | `1` | Repeated input files, each containing two one-hour windows. |
+| `ATMOSTR_BENCH_REVISION` | `unspecified` | Revision label recorded with the measurement. |
+
+Results record elapsed-time samples, host allocations, input/output bytes,
+tracer count, selected fields, Julia/CUDA versions, and device. Every tracer
+and output time is read back and checked. These are warm OS page-cache timings,
+not cold NAS throughput or device-memory peaks. Fixtures use synthetic forcing
+and do not establish campaign-scale throughput.

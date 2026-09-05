@@ -1,0 +1,1 @@
+(arrays = 36, bitwise_equal = 21, maximum_relative_difference = 1.735599113317221e-7)

@@ -43,6 +43,9 @@ operations; a refreshed field does not imply that its operator ran that substep.
 Advection, diffusion, and convection own typed reusable workspaces. A
 diffusion-only model needs no advection workspace. Collaborative convection
 defers legacy matrix scratch until a fallback or supported adjoint needs it.
+The CS daily loop retains its flux arrays and numerical workspaces across
+files. New simulations refresh forcing and invalidate convection caches at
+handoff.
 
 ## File Map
 

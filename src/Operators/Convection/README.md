@@ -41,7 +41,8 @@ Binary-scheduled runs apply convection once at the end of that window;
 `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1` override changes this cadence.
 
 `CMFMCWorkspace` caches its subcycle count. `CMFMCMatrixWorkspace` caches the
-rates derived from CMFMC/DTRAIN. Window advancement invalidates these caches.
+rates derived from CMFMC/DTRAIN. Window advancement and installation of a new
+driver's first window invalidate these caches while retaining their arrays.
 Matrix factors are reused across tracers within a call; persistent LU cache
 fields are not an enabled across-window factor cache. Factors also depend on
 air mass and timestep, so forcing identity alone would not justify reuse.

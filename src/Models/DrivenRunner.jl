@@ -644,8 +644,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
                          binary_count = length(binary_paths),
                          snapshot_file = _output_display_path(output_spec))
 
-    # Snapshot storage is full-state and topology-native; Output handles halo
-    # stripping and NetCDF diagnostics.
+    # Capture retains the requested NetCDF fields in topology-native storage;
+    # Output handles halo stripping and diagnostics.
     snapshots = AbstractSnapshotFrame[]
     day_snapshots = AbstractSnapshotFrame[]
     snapshot_stream = _single_netcdf_stream(output_resources, output_spec, grid;
@@ -698,24 +698,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
                       min(Int(stop_window_override), total_windows(driver))
         window_hours = window_dt(driver) / 3600.0
 
-        # There is no window-boundary air_mass reset, so the cross-day
-        # handoff is continuity-consistent. We rebuild the
-        # sim around each day's driver; state + physics carry over.
-        if driver_idx != 1
-            fluxes_d = _allocate_cs_runner_fluxes(mesh, Nz, FT, BasisT)
-            # Match the device of the already-adapted `state`: on GPU runs
-            # the freshly-allocated fluxes start as CPU Arrays and would
-            # mix types with GPU tracers otherwise. `invokelatest` guards
-            # the same dynamic-load world-age issue as the initial adapt.
-            adaptor !== Array &&
-                (fluxes_d = Base.invokelatest(Adapt.adapt, adaptor, fluxes_d))
-            model = TransportModel(state, fluxes_d, grid, recipe.advection;
-                                    diffusion  = recipe.diffusion,
-                                    convection = recipe.convection,
-                                    chemistry  = recipe.chemistry)
-            adaptor !== Array &&
-                (model = Base.invokelatest(Adapt.adapt, adaptor, model))
-        end
+        # Retain the state, flux arrays, and numerical workspaces across files.
+        # The new simulation refreshes window forcing, diffusion geometry, and
+        # convection caches while carrying the configured air-mass reset mode.
         initialize_air_mass = driver_idx == 1
         sim = timed_io_read!(timer,
             () -> DrivenSimulation(model, driver;

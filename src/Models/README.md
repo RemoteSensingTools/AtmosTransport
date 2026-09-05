@@ -86,9 +86,12 @@ defers legacy matrix scratch until a fallback or supported adjoint needs it.
   and snapshot NetCDF output
 - [`runner/configuration.jl`](runner/configuration.jl),
   [`runner/model_setup.jl`](runner/model_setup.jl),
-  [`runner/output.jl`](runner/output.jl), and
+  [`runner/output.jl`](runner/output.jl),
+  [`runner/resources.jl`](runner/resources.jl), and
   [`runner/progress.jl`](runner/progress.jl) separate validation, construction,
-  output ownership, and progress reporting from the topology execution loops.
+  output handling, resource ownership, and progress reporting from the topology
+  execution loops. Driver cleanup drains pending window prefetch before closing
+  the reader, including when setup or stepping fails.
 - [`InputStaging.jl`](InputStaging.jl) — opt-in rolling NVMe input staging
   (`InputStager`, `staged_path_for!`, `cleanup_staging!`) for the per-day
   binary loop: copies upcoming days NAS→local NVMe ahead of the GPU loop and

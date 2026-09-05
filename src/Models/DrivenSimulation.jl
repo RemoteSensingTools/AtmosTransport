@@ -447,6 +447,19 @@ function _start_window_prefetch!(sim::DrivenSimulation, target_window::Int)
     return nothing
 end
 
+# The runner calls this on normal and exceptional file exits. An unscheduled
+# placeholder Task must not be waited on; a nonzero index owns a real prefetch.
+function _finish_window_prefetch!(sim::DrivenSimulation)
+    sim.prefetch_window_index == 0 && return nothing
+    try
+        wait(sim.prefetch_task)
+    finally
+        sim.prefetch_task = _empty_prefetch_task()
+        sim.prefetch_window_index = 0
+    end
+    return nothing
+end
+
 function _take_prefetched_window!(sim::DrivenSimulation, next_window::Int)
     if _prefetch_enabled(sim.model.state.air_mass) &&
        sim.prefetch_window_index == next_window

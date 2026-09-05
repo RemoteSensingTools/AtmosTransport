@@ -234,9 +234,14 @@ function CubedSphereTransportDriver(path::AbstractString;
                                     Hp::Int = 1,
                                     validate_replay::Bool = false)
     reader = CubedSphereBinaryReader(String(path); FT=FT)
-    replay_on = validate_replay || get(ENV, "ATMOSTR_REPLAY_CHECK", "0") == "1"
-    replay_on && _validate_replay_consistency_cs(reader)
-    return CubedSphereTransportDriver(reader; arch=arch, Hp=Hp)
+    try
+        replay_on = validate_replay || get(ENV, "ATMOSTR_REPLAY_CHECK", "0") == "1"
+        replay_on && _validate_replay_consistency_cs(reader)
+        return CubedSphereTransportDriver(reader; arch=arch, Hp=Hp)
+    catch
+        close(reader)
+        rethrow()
+    end
 end
 
 total_windows(driver::CubedSphereTransportDriver) = window_count(driver.reader)

@@ -91,7 +91,7 @@ using ..Architectures: CPU, GPU,
                        backend_label, backend_device_name, backend_name,
                        synchronize_backend!, assert_backend_residency!,
                        assert_backend_float_type!
-using ..MetDrivers: TransportBinaryDriver, CubedSphereTransportDriver,
+using ..MetDrivers: AbstractMetDriver, TransportBinaryDriver, CubedSphereTransportDriver,
                      load_transport_window, driver_grid, air_mass_basis,
                      total_windows, window_dt, binary_capabilities,
                      inspect_binary, steps_per_window,
@@ -109,7 +109,8 @@ using ..Output: AbstractSnapshotFrame, SnapshotFrame, NetCDFSnapshotStream, appe
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.
 using ..Models: TransportModel
-import ..Models: DrivenSimulation, run_window!, run!, step!, allocate_face_fluxes
+import ..Models: DrivenSimulation, run_window!, run!, step!, allocate_face_fluxes,
+                  _finish_window_prefetch!
 # Physics-recipe helpers: `build_runtime_physics_recipe` /
 # `validate_runtime_physics_recipe` are defined in `CSPhysicsRecipe.jl`
 # (loaded before us in Models). Pull them in so we don't have to stutter
@@ -122,6 +123,8 @@ export run_driven_simulation, validate_config, TransportTracerSpec
 include("runner/progress.jl")
 
 include("runner/configuration.jl")
+
+include("runner/resources.jl")
 
 include("runner/output.jl")
 
@@ -172,10 +175,14 @@ function run_driven_simulation(cfg::AbstractDict)
     # here and torn down in `finally` so staged multi-GB files are always
     # cleaned up, even if the run throws partway through.
     stager = InputStager(binary_paths, get(input_cfg, "staging", Dict{String, Any}()))
+    input_resources = RunInputResources()
     output_resources = RunSnapshotOutput()
     result = try
-        _with_snapshot_output(output_resources) do
-            _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg, stager, output_resources)
+        _with_run_resource(output_resources) do
+            _with_run_resource(input_resources) do
+                _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg,
+                                           stager, output_resources, input_resources)
+            end
         end
     finally
         cleanup_staging!(stager)
@@ -196,13 +203,13 @@ function run_driven_simulation(cfg::AbstractDict)
     return result
 end
 
-_run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput) =
-    _run_driven_simulation_structured(binary_paths, cfg, stager, output_resources)
-_run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput) =
-    _run_driven_simulation_structured(binary_paths, cfg, stager, output_resources)
-_run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput) =
-    _run_driven_simulation_cs(binary_paths, cfg, stager, output_resources)
-function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String}, _cfg, _stager::InputStager, _output_resources::RunSnapshotOutput) where grid_type
+_run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput, input_resources::RunInputResources) =
+    _run_driven_simulation_structured(binary_paths, cfg, stager, output_resources, input_resources)
+_run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput, input_resources::RunInputResources) =
+    _run_driven_simulation_structured(binary_paths, cfg, stager, output_resources, input_resources)
+_run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput, input_resources::RunInputResources) =
+    _run_driven_simulation_cs(binary_paths, cfg, stager, output_resources, input_resources)
+function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String}, _cfg, _stager::InputStager, _output_resources::RunSnapshotOutput, _input_resources::RunInputResources) where grid_type
     throw(ArgumentError("Unsupported transport-binary grid_type=$(grid_type)."))
 end
 
@@ -230,7 +237,7 @@ function _surface_source_total_rate(source)
     end
 end
 
-function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput)
+function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput, input_resources::RunInputResources)
     FT = _cfg_float_type(cfg)
     assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
     run_cfg = get(cfg, "run", Dict{String, Any}())
@@ -253,7 +260,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
     # `stager` (rolling NVMe input staging) is created + torn down by the caller
     # `run_driven_simulation`; here we just route driver opens through it.
     # Open first driver, build recipe, validate capability, build model
-    first_driver = TransportBinaryDriver(staged_path_for!(stager, 1);
+    first_driver = input_resources.driver = TransportBinaryDriver(staged_path_for!(stager, 1);
                                           FT = FT,
                                           arch = CPU())
     output_cfg = get(cfg, "output", Dict{String, Any}())
@@ -346,6 +353,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
                  timed_io_read!(timer,
                      () -> TransportBinaryDriver(staged_path_for!(stager, idx);
                                                  FT = FT, arch = CPU()))
+        input_resources.driver = driver
         validate_runtime_physics_recipe(recipe, driver)
         stop_window = stop_window_override === nothing ?
                       total_windows(driver) : Int(stop_window_override)
@@ -362,6 +370,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
                                     # note: per-binary clock restarts replay
                                     # day-1 time-varying fluxes
                                     start_time = run_time_seconds))
+        input_resources.simulation = sim
         model = sim.model
         if !initialize_air_mass
             boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) /
@@ -455,7 +464,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
                                  detail = @sprintf("async write %s", basename(out_path)),
                                  redraw = true)
         end
-        close(driver)
+        close(input_resources)
     end
 
     # Drain the last in-flight async daily write before the final flush / mass
@@ -504,7 +513,7 @@ function _cfg_architecture(cfg)
     return CPU()
 end
 
-function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput)
+function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::InputStager, output_resources::RunSnapshotOutput, input_resources::RunInputResources)
     FT   = _cfg_float_type(cfg)
     assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
     arch = _cfg_architecture(cfg)
@@ -533,7 +542,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
     # `stager` (rolling NVMe input staging) is created + torn down by the caller
     # `run_driven_simulation`; here we just route driver opens through it.
     # First driver + model (reuses air_mass from window 1)
-    driver1 = CubedSphereTransportDriver(staged_path_for!(stager, 1);
+    driver1 = input_resources.driver = CubedSphereTransportDriver(staged_path_for!(stager, 1);
                                           FT = FT, arch = arch, Hp = Hp)
     output_cfg = get(cfg, "output", Dict{String, Any}())
     output_spec = runtime_output_spec(output_cfg, FT;
@@ -544,7 +553,6 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
     do_snapshots = output_enabled(output_spec)
     if stop_window_override !== nothing && length(binary_paths) > 1 &&
        Int(stop_window_override) < total_windows(driver1)
-        close(driver1)
         throw(ArgumentError(
             "[run] stop_window=$(stop_window_override) with multiple cubed-sphere " *
             "daily binaries would carry state from a partial day into the next " *
@@ -683,6 +691,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
                  timed_io_read!(timer,
                      () -> CubedSphereTransportDriver(staged_path_for!(stager, driver_idx);
                                                        FT = FT, arch = arch, Hp = Hp))
+        input_resources.driver = driver
         validate_runtime_physics_recipe(recipe, driver; halo_width = Hp)
         stop_window = stop_window_override === nothing ?
                       total_windows(driver) :
@@ -725,6 +734,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
                                     start_time = total_hour * 3600.0))
         # `DrivenSimulation` may wrap `model` with a surface-flux operator;
         # keep snapshots and the return value aligned with the stepped model.
+        input_resources.simulation = sim
         model = sim.model
 
         day_t0 = time()
@@ -788,12 +798,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
                                  detail = @sprintf("async write %s", basename(out_path)),
                                  redraw = true)
         end
-        close(driver)
-        # Drop this day's memory-mapped payload from the page cache now (it is
-        # not read again). Otherwise each day's mmap lingers as cgroup-charged
-        # file cache for the whole run, starving the user's other processes on a
-        # per-user cgroup. madvise(DONTNEED) is safe here (re-faults on access).
-        release_payload!(driver)
+        close(input_resources)
     end
 
     # Drain the last in-flight async daily write before the final mass accounting,

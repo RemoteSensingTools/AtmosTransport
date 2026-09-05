@@ -437,25 +437,30 @@ function TransportBinaryDriver(path::AbstractString;
                                validate_replay::Bool = false,
                                max_rel_cm::Real = 1.0)
     reader = TransportBinaryReader(String(path); FT=FT)
-    _validate_runtime_semantics(reader)
-    validate_windows && _validate_window_cm_sanity(reader; max_rel_cm=max_rel_cm)
-    grid = load_grid(reader; FT=FT, arch=arch)
-    # Load-time replay-consistency gate. Opt-in because the write-time
-    # gate already guarantees continuity for
-    # binaries we produce; the load-time gate is for suspect binaries
-    # (manual imports, file corruption, older preprocessor versions).
-    # Set `validate_replay=true` or `ENV["ATMOSTR_REPLAY_CHECK"]="1"` to
-    # enable; disable the in-flight check with `ATMOSTR_NO_REPLAY_CHECK=1`.
-    replay_on = validate_replay || get(ENV, "ATMOSTR_REPLAY_CHECK", "0") == "1"
-    if replay_on
-        topo = horizontal_topology(reader)
-        if topo === :structureddirectional
-            _validate_replay_consistency_ll(reader)
-        elseif topo === :faceindexed
-            _validate_replay_consistency_rg(reader, grid)
+    try
+        _validate_runtime_semantics(reader)
+        validate_windows && _validate_window_cm_sanity(reader; max_rel_cm=max_rel_cm)
+        grid = load_grid(reader; FT=FT, arch=arch)
+        # Load-time replay-consistency gate. Opt-in because the write-time
+        # gate already guarantees continuity for
+        # binaries we produce; the load-time gate is for suspect binaries
+        # (manual imports, file corruption, older preprocessor versions).
+        # Set `validate_replay=true` or `ENV["ATMOSTR_REPLAY_CHECK"]="1"` to
+        # enable; disable the in-flight check with `ATMOSTR_NO_REPLAY_CHECK=1`.
+        replay_on = validate_replay || get(ENV, "ATMOSTR_REPLAY_CHECK", "0") == "1"
+        if replay_on
+            topo = horizontal_topology(reader)
+            if topo === :structureddirectional
+                _validate_replay_consistency_ll(reader)
+            elseif topo === :faceindexed
+                _validate_replay_consistency_rg(reader, grid)
+            end
         end
+        return TransportBinaryDriver{FT, typeof(reader), typeof(grid)}(reader, grid)
+    catch
+        close(reader)
+        rethrow()
     end
-    return TransportBinaryDriver{FT, typeof(reader), typeof(grid)}(reader, grid)
 end
 
 Base.close(driver::TransportBinaryDriver) = close(driver.reader)

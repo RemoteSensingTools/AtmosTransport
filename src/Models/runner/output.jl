@@ -129,22 +129,6 @@ function Base.close(output::RunSnapshotOutput)
     return nothing
 end
 
-function _with_snapshot_output(f, output::RunSnapshotOutput)
-    result = try
-        f()
-    catch run_error
-        try
-            close(output)
-        catch output_error
-            # A concurrent write failure must not hide the transport failure.
-            throw(CompositeException(Any[run_error, output_error]))
-        end
-        rethrow()
-    end
-    close(output)
-    return result
-end
-
 function _single_netcdf_stream(output::RunSnapshotOutput, spec::RuntimeOutputSpec, grid; mass_basis)
     output_enabled(spec) && spec.format === :netcdf && spec.partition isa SingleOutputFile ||
         return nothing

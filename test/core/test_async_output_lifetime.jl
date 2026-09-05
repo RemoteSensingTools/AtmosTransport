@@ -12,7 +12,7 @@ const O = AtmosTransport.Output
     end
     take!(started)
     runner = @async try
-        R._with_snapshot_output(output) do
+        R._with_run_resource(output) do
             error("transport failed after a daily write started")
         end
     catch e
@@ -35,7 +35,7 @@ end
     output = R.RunSnapshotOutput()
     output.pending_write = Threads.@spawn error("daily output failed")
     failure = try
-        R._with_snapshot_output(output) do
+        R._with_run_resource(output) do
             error("transport also failed")
         end
     catch e
@@ -49,9 +49,9 @@ end
     @test close(output) === nothing
 
     output.pending_write = Threads.@spawn error("write failed after successful transport")
-    @test_throws TaskFailedException R._with_snapshot_output(() -> :done,output)
+    @test_throws TaskFailedException R._with_run_resource(() -> :done,output)
     @test output.pending_write === nothing
-    @test R._with_snapshot_output(() -> :done,output) === :done
+    @test R._with_run_resource(() -> :done,output) === :done
 end
 
 @testset "Daily output owns frames and closes other resources on write failure" begin

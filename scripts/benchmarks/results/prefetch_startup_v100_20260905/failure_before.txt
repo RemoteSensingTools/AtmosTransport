@@ -1,0 +1,60 @@
+ERROR: LoadError: Some tests did not pass: 3 passed, 2 failed, 1 errored, 0 broken.
+in expression starting at /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_failure_gpu.jl:3
+Failed prefetch is consumed once before resource cleanup: Test Failed at /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_failure_gpu.jl:25
+  Expression: sim.prefetch_window_index == 0
+   Evaluated: 2 == 0
+
+Stacktrace:
+ [1] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+ [2] (::var"#3#4")()
+   @ Main /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_failure_gpu.jl:25
+ [3] withenv(f::var"#3#4", keyvals::Pair{String, String})
+   @ Base ./env.jl:265
+ [4] top-level scope
+   @ /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_failure_gpu.jl:15
+ [5] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+ [6] macro expansion
+   @ /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_failure_gpu.jl:15 [inlined]
+Failed prefetch is consumed once before resource cleanup: Test Failed at /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_failure_gpu.jl:26
+  Expression: !(istaskstarted(sim.prefetch_task))
+
+Stacktrace:
+ [1] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+ [2] (::var"#3#4")()
+   @ Main /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_failure_gpu.jl:26
+ [3] withenv(f::var"#3#4", keyvals::Pair{String, String})
+   @ Base ./env.jl:265
+ [4] top-level scope
+   @ /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_failure_gpu.jl:15
+ [5] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+ [6] macro expansion
+   @ /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_failure_gpu.jl:15 [inlined]
+Failed prefetch is consumed once before resource cleanup: Error During Test at /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_failure_gpu.jl:27
+  Test threw exception
+  Expression: M._finish_window_prefetch!(sim) === nothing
+  TaskFailedException
+  Stacktrace:
+   [1] #wait#582
+     @ ./task.jl:363 [inlined]
+   [2] wait
+     @ ./task.jl:360 [inlined]
+   [3] _finish_window_prefetch!(sim::AtmosTransport.Models.DrivenSimulation{AtmosTransport.Models.TransportModel{AtmosTransport.State.DryCellState{CuArray{Float32, 3, CUDA.DeviceMemory}, CuArray{Float32, 4, CUDA.DeviceMemory}, Tuple{Symbol}}, AtmosTransport.State.DryStructuredFluxState{CuArray{Float32, 3, CUDA.DeviceMemory}, CuArray{Float32, 3, CUDA.DeviceMemory}, CuArray{Float32, 3, CUDA.DeviceMemory}}, AtmosTransport.Grids.AtmosGrid{AtmosTransport.Grids.LatLonMesh{Float32}, AtmosTransport.Grids.HybridSigmaPressure{Float32}, AtmosTransport.Architectures.CPU, AtmosTransport.Parameters.PlanetParameters{Float32}, Float32}, AtmosTransport.Operators.Advection.UpwindScheme, AtmosTransport.Models.TransportModelWorkspace{AtmosTransport.Operators.Advection.AdvectionWorkspace{Float32, CuArray{Float32, 3, CUDA.DeviceMemory}, CuArray{Int32, 1, CUDA.DeviceMemory}, CuArray{Float32, 4, CUDA.DeviceMemory}}, Nothing, Nothing}, AtmosTransport.Operators.Chemistry.NoChemistry, AtmosTransport.Operators.Diffusion.NoDiffusion, AtmosTransport.Operators.SurfaceFlux.NoSurfaceFlux, AtmosTransport.Operators.Convection.NoConvection, AtmosTransport.MetDrivers.ConvectionForcing{Nothing, Nothing, Nothing}}, Main.WindowPrefetchFixtures.CountedWindowDriver{AtmosTransport.Grids.AtmosGrid{AtmosTransport.Grids.LatLonMesh{Float32}, AtmosTransport.Grids.HybridSigmaPressure{Float32}, AtmosTransport.Architectures.CPU, AtmosTransport.Parameters.PlanetParameters{Float32}, Float32}, Vector{AtmosTransport.MetDrivers.StructuredTransportWindow{AtmosTransport.State.DryBasis, Array{Float32, 3}, Matrix{Float32}, AtmosTransport.State.DryStructuredFluxState{Array{Float32, 3}, Array{Float32, 3}, Array{Float32, 3}}, Array{Float32, 3}, AtmosTransport.MetDrivers.StructuredFluxDeltas{Array{Float32, 3}, Array{Float32, 3}, Array{Float32, 3}, Array{Float32, 3}}, AtmosTransport.MetDrivers.ConvectionForcing{Nothing, Nothing, @NamedTuple{entu::Array{Float32, 3}, detu::Array{Float32, 3}, entd::Array{Float32, 3}, detd::Array{Float32, 3}}}}}}, AtmosTransport.MetDrivers.StructuredTransportWindow{AtmosTransport.State.DryBasis, CuArray{Float32, 3, CUDA.DeviceMemory}, CuArray{Float32, 2, CUDA.DeviceMemory}, AtmosTransport.State.DryStructuredFluxState{CuArray{Float32, 3, CUDA.DeviceMemory}, CuArray{Float32, 3, CUDA.DeviceMemory}, CuArray{Float32, 3, CUDA.DeviceMemory}}, CuArray{Float32, 3, CUDA.DeviceMemory}, AtmosTransport.MetDrivers.StructuredFluxDeltas{CuArray{Float32, 3, CUDA.DeviceMemory}, CuArray{Float32, 3, CUDA.DeviceMemory}, CuArray{Float32, 3, CUDA.DeviceMemory}, CuArray{Float32, 3, CUDA.DeviceMemory}}, AtmosTransport.MetDrivers.ConvectionForcing{Nothing, Nothing, @NamedTuple{entu::CuArray{Float32, 3, CUDA.DeviceMemory}, detu::CuArray{Float32, 3, CUDA.DeviceMemory}, entd::CuArray{Float32, 3, CUDA.DeviceMemory}, detd::CuArray{Float32, 3, CUDA.DeviceMemory}}}}, CuArray{Float32, 3, CUDA.DeviceMemory}, CuArray{Float32, 3, CUDA.DeviceMemory}, Float32, @NamedTuple{}, Tuple{}, AtmosTransport.Operators.Chemistry.NoChemistry, Task})
+     @ AtmosTransport.Models /tmp/atmos-v100-prefetch-review/src/Models/DrivenSimulation.jl:455
+   [4] macro expansion
+     @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:677 [inlined]
+   [5] (::var"#3#4")()
+     @ Main /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_failure_gpu.jl:27
+
+      nested task error: prefetch input failed
+      Stacktrace:
+       [1] error(s::String)
+         @ Base ./error.jl:44
+       [2] (::var"#5#6")()
+         @ Main /tmp/atmos-v100-prefetch-review/test/diagnostic/test_window_prefetch_failure_gpu.jl:21
+Test Summary:                                            | Pass  Fail  Error  Total   Time
+Failed prefetch is consumed once before resource cleanup |    3     2      1      6  12.4s
+RNG of the outermost testset: Random.Xoshiro(0xf5fde57dd674daa9, 0x6b000e8a524424d0, 0x35d7785ed41315e6, 0x329aab06035fb941, 0xa66e1821093ec75e)

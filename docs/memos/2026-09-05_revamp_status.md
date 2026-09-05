@@ -61,6 +61,10 @@ edits already present in the workspace remain separate from these commits.
   The V100 startup suite passes 140 checks. In the three-file C48/L40 pipeline,
   cumulative host allocations fall by about 56.4 MB; column-only median time
   falls from 0.219 s to 0.183 s across five warm-cache samples.
+- [Failed prefetch consumption](2026-09-05_prefetch_failure_consumption.md)
+  prevents input cleanup from reporting an already observed task failure a
+  second time. An interrupted window-boundary fetch retains its unfinished
+  task for cleanup; eight failure checks and 140 startup checks pass on V100.
 - [Runtime flow](../20_RUNTIME_FLOW.md) now follows current function signatures,
   prefetch ownership, forcing fields, and transport/window physics cadence.
 
@@ -71,7 +75,9 @@ suite (113 files total, 81,817 passed checks summed from emitted test summaries)
 Subsequent import/window-bound changes pass focused tests and final Aqua/JET
 checks; Aqua passes all ten checks and JET reports 180 against the unchanged
 181-report threshold. The continued runtime changes also pass a fresh clean export with
-226 focused checks, including Aqua and JET (180/181). Julia 1.10.12 and 1.12.6 cover the new resource, staging, cache-handoff,
+226 focused checks, including Aqua and JET (180/181). The subsequent failed-
+prefetch cleanup change repeats the 58 resource checks and JET successfully;
+every committed Julia source file matches that final clean export. Julia 1.10.12 and 1.12.6 cover the new resource, staging, cache-handoff,
 and CS multifile behavior. Documentation builds execute the tutorial, doctests,
 cross-references, and VitePress rendering with deployment explicitly disabled.
 

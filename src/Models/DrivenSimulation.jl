@@ -463,16 +463,24 @@ end
 function _take_prefetched_window!(sim::DrivenSimulation, next_window::Int)
     if _prefetch_enabled(sim.model.state.air_mass) &&
        sim.prefetch_window_index == next_window
-        fetched = SectionTimer.time_section(:prefetch_fetch_wait) do
-            fetch(sim.prefetch_task)
+        task = sim.prefetch_task
+        fetched = try
+            SectionTimer.time_section(:prefetch_fetch_wait) do
+                fetch(task)
+            end
+        finally
+            # A completed task's failure has now been observed. Keep ownership
+            # if the wait was interrupted while the task was still reading.
+            if istaskdone(task)
+                sim.prefetch_task = _empty_prefetch_task()
+                sim.prefetch_window_index = 0
+            end
         end
         fetched === sim.prefetch_window ||
             throw(ArgumentError("prefetched transport window identity changed unexpectedly"))
         old_current = sim.window
         sim.window = sim.prefetch_window
         sim.prefetch_window = old_current
-        sim.prefetch_task = _empty_prefetch_task()
-        sim.prefetch_window_index = 0
         return nothing
     end
     sim.window = SectionTimer.time_section(:window_sync_load_total) do

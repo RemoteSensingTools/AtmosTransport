@@ -42,7 +42,8 @@ runner retains model state and numerical workspaces across compatible input
 files while advancing the run clock continuously.
 
 The runner drains prefetch before closing its input reader, including on
-failure. Users who construct a `DrivenSimulation` directly must keep its driver
+failure. A prefetch failure already observed at the window boundary is consumed
+once, so cleanup does not report the same task error again. Users who construct a `DrivenSimulation` directly must keep its driver
 open while it is running.
 
 ## One simulation step

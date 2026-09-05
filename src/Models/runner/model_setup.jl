@@ -146,4 +146,3 @@ function _validate_convection_capability(op::AbstractConvection, _caps)
         "add a dispatch in DrivenRunner.jl when introducing a new convection " *
         "operator type."))
 end
-

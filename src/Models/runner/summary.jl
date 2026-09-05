@@ -45,4 +45,3 @@ function _log_runtime_summary(; topology, mesh_label, levels, halo_width,
                                    binary_count, snapshot_file)
     @info "Driven runtime\n" * join(lines, "\n")
 end
-

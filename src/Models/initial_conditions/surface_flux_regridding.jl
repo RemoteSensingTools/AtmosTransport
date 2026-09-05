@@ -71,4 +71,3 @@ function _conservative_surface_flux_rate(source::FileSurfaceFluxField,
     regridder = _build_surface_flux_regridder(source.lon, source.lat, dst_mesh, FT)
     return _apply_surface_flux_regridder(regridder, source.raw, FT)
 end
-

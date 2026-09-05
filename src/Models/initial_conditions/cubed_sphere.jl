@@ -418,4 +418,3 @@ function _cs_pack_interior_into_halo(grid::AtmosGrid{<:CubedSphereMesh},
     end
     return out
 end
-

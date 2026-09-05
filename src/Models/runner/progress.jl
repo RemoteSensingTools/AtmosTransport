@@ -92,4 +92,3 @@ function summarize_progress!(timer::RunProgressTimer)
     @info msg
     return timer
 end
-

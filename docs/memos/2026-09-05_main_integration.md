@@ -33,8 +33,8 @@ original measured commits; full runtime timings are separate from kernel tests.
 ## Readability and test loading
 
 The runner helpers and initial-condition/surface-inventory helpers are extracted
-from main verbatim. Reassembling the extracted files reproduces the original
-source exactly. In particular, main's signed native initialization, physical
+from main without changes to their implementations. Reassembling the extracted
+files reproduces the original source apart from file-boundary whitespace. In particular, main's signed native initialization, physical
 inventory-to-storage conversion, and time-varying sources remain intact. Core
 tests share the cached package while isolating their test helpers per module.
 
@@ -55,8 +55,8 @@ pass; maximum relative total-storage drift is 2.572e-6. See the complete
 
 ## Main-based validation
 
-The complete Julia 1.12.6 CPU baseline (`--startup-file=no --project=test
- test/runtests.jl`, four Julia threads, GPUs hidden) passes 80,136 checks across
+The complete Julia 1.12.6 CPU baseline (`julia --startup-file=no --project=test test/runtests.jl`, four Julia threads,
+GPUs hidden) passes 80,136 checks across
 108 core files plus the regridding runner. There are 22 existing skips or
 expected-broken checks and no failures. Aqua passes; JET reports 142 findings
 against main's unchanged 144-report allowance. The run includes signed

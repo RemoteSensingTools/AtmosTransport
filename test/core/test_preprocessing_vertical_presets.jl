@@ -1,7 +1,7 @@
 using Test
 using TOML
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using AtmosTransport
 using .AtmosTransport.Grids: HybridSigmaPressure, n_levels
 using .AtmosTransport.Preprocessing:
     ECHLEVS_ML137_CFL94,

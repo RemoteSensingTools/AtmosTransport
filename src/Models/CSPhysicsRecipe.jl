@@ -51,7 +51,7 @@ function _advection_section(cfg)
         end
         return cfg["advection"]
     end
-    return run
+    return Dict(k => run[k] for k in ("scheme", "ppm_order") if haskey(run, k))
 end
 @inline _diffusion_section(cfg) = get(cfg, "diffusion", Dict{String,Any}())
 @inline _convection_section(cfg) = get(cfg, "convection", Dict{String,Any}())

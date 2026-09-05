@@ -3,7 +3,7 @@
 using Test
 using Dates
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using AtmosTransport
 const AT = AtmosTransport
 const Prep = AtmosTransport.Preprocessing
 

@@ -44,10 +44,11 @@ overhead entirely; pair with `scripts/postprocess/binary_to_netcdf.jl` for the
 offline conversion. Throws if `grid.horizontal` is not a `CubedSphereMesh`.
 """
 function write_snapshot_binary(path::AbstractString,
-                                frames::AbstractVector{<:SnapshotFrame},
+                                frames::AbstractVector{<:AbstractSnapshotFrame},
                                 grid::AtmosGrid;
                                 mass_basis::Symbol = :dry,
                                 options::SnapshotWriteOptions = SnapshotWriteOptions())
+    all(f -> f isa SnapshotFrame, frames) || throw(ArgumentError("binary output requires full snapshots"))
     mesh = grid.horizontal
     mesh isa CubedSphereMesh || throw(ArgumentError(
         "write_snapshot_binary currently supports cubed-sphere grids only; got $(typeof(mesh))"))

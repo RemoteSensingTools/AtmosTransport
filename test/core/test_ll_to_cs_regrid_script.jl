@@ -20,8 +20,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Preprocessing: regrid_ll_binary_to_cs, build_target_geometry,
                                       PreprocessorRunCache, CubedSphereTargetGeometry
 using .AtmosTransport.MetDrivers: load_cs_window, has_surface

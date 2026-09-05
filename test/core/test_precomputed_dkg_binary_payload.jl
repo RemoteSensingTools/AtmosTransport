@@ -5,8 +5,7 @@ using Random
 using LinearAlgebra: dot
 using KernelAbstractions: get_backend, synchronize
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Operators: ImplicitVerticalDiffusion
 using .AtmosTransport.Operators.Diffusion: apply_vertical_diffusion_vmr!
 using .AtmosTransport.State: PrecomputedCSDkgField, panel_field

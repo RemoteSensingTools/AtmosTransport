@@ -6,8 +6,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 
 @testset "Precomputed Kz CS binary payload roundtrips" begin
     FT = Float32

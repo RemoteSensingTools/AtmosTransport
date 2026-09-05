@@ -10,8 +10,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Preprocessing: verify_window_continuity_ll,
                                        verify_window_continuity_rg,
                                        verify_window_continuity_cs,

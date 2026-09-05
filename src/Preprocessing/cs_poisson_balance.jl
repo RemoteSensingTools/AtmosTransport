@@ -291,6 +291,7 @@ struct CSPoissonScratch
     Ap  :: Vector{Float64}
     z   :: Vector{Float64}
     div :: Vector{Float64}
+    thread_scratch :: Vector{CSPoissonScratch}
 end
 
 function CSPoissonScratch(nc::Int)
@@ -298,8 +299,17 @@ function CSPoissonScratch(nc::Int)
         zeros(Float64, nc), zeros(Float64, nc),
         zeros(Float64, nc), zeros(Float64, nc),
         zeros(Float64, nc), zeros(Float64, nc),
-        zeros(Float64, nc),
+        zeros(Float64, nc), CSPoissonScratch[],
     )
+end
+
+# Not reentrant: callers must give concurrent preprocessing runs separate scratch.
+function _cs_thread_scratches!(scratch::CSPoissonScratch)
+    slots = scratch.thread_scratch
+    while length(slots) < Threads.maxthreadid()
+        push!(slots, CSPoissonScratch(length(scratch.psi)))
+    end
+    return slots
 end
 
 """
@@ -809,12 +819,7 @@ function balance_cs_global_mass_fluxes!(
     nc = ft.nc
     inv_scale = 1.0 / (2.0 * steps_per_window)
 
-    nthread = Threads.maxthreadid()
-    scratches = Vector{CSPoissonScratch}(undef, nthread)
-    scratches[1] = scratch
-    for t in 2:nthread
-        scratches[t] = CSPoissonScratch(nc)
-    end
+    scratches = _cs_thread_scratches!(scratch)
 
     pre_by_level = zeros(Float64, Nz)
     post_by_level = zeros(Float64, Nz)

@@ -1,0 +1,66 @@
+[
+    {
+        "mad_seconds": 0.0031594470000000027,
+        "phase_times_seconds": {
+            "io": 0.076630588
+        },
+        "cell_tracer_updates_per_second": 10022.107621045529,
+        "host_allocated_bytes": 889276,
+        "name": "Synthetic CS Sweep / C4 L4 io 1tr / CPU-Intel / Float32",
+        "backend": "cpu",
+        "backend_class": "CPU-Intel",
+        "scheme": "ppm",
+        "levels": 4,
+        "tracers": 1,
+        "device_name": "CPU",
+        "bytes_per_second": 1.381510996627091e6,
+        "operator": "io",
+        "float_type": "Float32",
+        "grid": "C4",
+        "group": "Synthetic CS Sweep",
+        "time_per_step_seconds": 0.038315294,
+        "repeats": 2,
+        "io_format": "netcdf",
+        "steps_per_second": 26.09923859647273,
+        "metadata": {
+            "timestamp_utc": "2026-09-05T01:15:31.309",
+            "julia_version": "1.12.6",
+            "commit": "4fd402c0efd11d5a14ff53b3340a1723b29e2b75",
+            "backend_label": "CPU"
+        },
+        "warmup_steps": 2,
+        "steps_per_repeat": 1
+    },
+    {
+        "mad_seconds": 0.005506987999999997,
+        "phase_times_seconds": {
+            "io": 0.130540428
+        },
+        "cell_tracer_updates_per_second": 23532.939542683285,
+        "host_allocated_bytes": 1835552,
+        "name": "Synthetic CS Sweep / C4 L4 io 4tr / CPU-Intel / Float32",
+        "backend": "cpu",
+        "backend_class": "CPU-Intel",
+        "scheme": "ppm",
+        "levels": 4,
+        "tracers": 4,
+        "device_name": "CPU",
+        "bytes_per_second": 1.34493200834304e6,
+        "operator": "io",
+        "float_type": "Float32",
+        "grid": "C4",
+        "group": "Synthetic CS Sweep",
+        "time_per_step_seconds": 0.065270214,
+        "repeats": 2,
+        "io_format": "netcdf",
+        "steps_per_second": 15.32092418143443,
+        "metadata": {
+            "timestamp_utc": "2026-09-05T01:15:32.301",
+            "julia_version": "1.12.6",
+            "commit": "4fd402c0efd11d5a14ff53b3340a1723b29e2b75",
+            "backend_label": "CPU"
+        },
+        "warmup_steps": 2,
+        "steps_per_repeat": 1
+    }
+]

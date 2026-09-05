@@ -23,8 +23,7 @@ step.
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 
 using .AtmosTransport.Preprocessing: tm5_native_fields_for_hour!,
                                        merge_tm5_field_3d!,

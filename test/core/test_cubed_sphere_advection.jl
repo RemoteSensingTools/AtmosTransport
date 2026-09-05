@@ -3,8 +3,7 @@
 using Test
 using Logging
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Grids: reciprocal_edge
 using .AtmosTransport.Operators: MonotoneLimiter, required_halo_width
 using .AtmosTransport.Operators.Advection: fill_panel_halos!, strang_split_cs!,

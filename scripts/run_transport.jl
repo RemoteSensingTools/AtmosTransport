@@ -88,8 +88,7 @@ if !isempty(ARGS)
     end
 end
 
-include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 
 function _quickstart_configs()
     dir = joinpath(@__DIR__, "..", "config", "runs", "quickstart")

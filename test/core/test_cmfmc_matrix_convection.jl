@@ -23,8 +23,7 @@ using Test
 using Random
 using LinearAlgebra: dot
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Operators: CMFMCMatrixConvection, CMFMCMatrixWorkspace,
                                   TM5Convection, TM5Workspace,
                                   invalidate_cmfmc_cache!, invalidate_cmfmc_matrix_cache!

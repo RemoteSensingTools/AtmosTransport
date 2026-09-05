@@ -165,6 +165,8 @@ export verify_substep_positivity_rg!, verify_rg_window_contract!,
        summarize_rg_positivity_status
 
 # Met source abstraction (AbstractMetSettings + RawWindow)
+using ..Regridding: CS_PANEL_COUNT, unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!, pack_panels_3d_to_flat!
+
 include("met_sources.jl")
 
 # Physical constants

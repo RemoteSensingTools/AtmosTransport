@@ -26,8 +26,7 @@ ships.
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 
 using .AtmosTransport.State: CellState, DryBasis, allocate_face_fluxes
 using .AtmosTransport.Grids: AtmosGrid, LatLonMesh, HybridSigmaPressure,

@@ -1,0 +1,90 @@
+[
+    {
+        "FT": "Float32",
+        "Nc": 12,
+        "Nz": 32,
+        "order": 5,
+        "old_seconds": 0.0013737525,
+        "new_seconds": 0.0013031595,
+        "speedup": 1.0541706521726617,
+        "bitwise_equal": true,
+        "device": "NVIDIA A100-PCIE-40GB"
+    },
+    {
+        "FT": "Float32",
+        "Nc": 12,
+        "Nz": 32,
+        "order": 7,
+        "old_seconds": 0.001467258,
+        "new_seconds": 0.001408002,
+        "speedup": 1.0420851674926597,
+        "bitwise_equal": true,
+        "device": "NVIDIA A100-PCIE-40GB"
+    },
+    {
+        "FT": "Float32",
+        "Nc": 90,
+        "Nz": 32,
+        "order": 5,
+        "old_seconds": 0.0022110719999999997,
+        "new_seconds": 0.0021460945,
+        "speedup": 1.0302770917124104,
+        "bitwise_equal": true,
+        "device": "NVIDIA A100-PCIE-40GB"
+    },
+    {
+        "FT": "Float32",
+        "Nc": 90,
+        "Nz": 32,
+        "order": 7,
+        "old_seconds": 0.0022958105,
+        "new_seconds": 0.0021791915,
+        "speedup": 1.0535148012462419,
+        "bitwise_equal": true,
+        "device": "NVIDIA A100-PCIE-40GB"
+    },
+    {
+        "FT": "Float64",
+        "Nc": 12,
+        "Nz": 32,
+        "order": 5,
+        "old_seconds": 0.0014051665,
+        "new_seconds": 0.001318243,
+        "speedup": 1.0659389050425452,
+        "bitwise_equal": true,
+        "device": "NVIDIA A100-PCIE-40GB"
+    },
+    {
+        "FT": "Float64",
+        "Nc": 12,
+        "Nz": 32,
+        "order": 7,
+        "old_seconds": 0.0015306625,
+        "new_seconds": 0.001467308,
+        "speedup": 1.0431773697137887,
+        "bitwise_equal": true,
+        "device": "NVIDIA A100-PCIE-40GB"
+    },
+    {
+        "FT": "Float64",
+        "Nc": 90,
+        "Nz": 32,
+        "order": 5,
+        "old_seconds": 0.0025530045,
+        "new_seconds": 0.0024419905,
+        "speedup": 1.0454604553129916,
+        "bitwise_equal": true,
+        "device": "NVIDIA A100-PCIE-40GB"
+    },
+    {
+        "FT": "Float64",
+        "Nc": 90,
+        "Nz": 32,
+        "order": 7,
+        "old_seconds": 0.0022888375,
+        "new_seconds": 0.0022190710000000004,
+        "speedup": 1.031439507794027,
+        "bitwise_equal": true,
+        "device": "NVIDIA A100-PCIE-40GB"
+    }
+]

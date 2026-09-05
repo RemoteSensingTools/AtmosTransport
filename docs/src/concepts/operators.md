@@ -61,7 +61,8 @@ that family needs:
 | Surface flux | `apply!(state, meteo, grid, op::AbstractSurfaceFluxOperator, dt; workspace = nothing)` |
 
 Every method mutates `state` in place and returns `state` (or
-`nothing`); none allocates per call (workspaces hold scratch buffers).
+`nothing`). Workspaces retain numerical scratch buffers across calls;
+allocation measurements should distinguish setup from warmed stepping.
 The `No<Operator>` variant is a literal dead branch — calling it
 costs nothing, so leaving an unused operator slot wired in is free.
 
@@ -78,7 +79,7 @@ specialized kernels via Julia's multiple dispatch on the grid type.
 | --- | --- | --- |
 | `UpwindScheme` | 1 | Donor-cell; cheap, very diffusive. |
 | `SlopesScheme{L}` | 2 | Russell-Lerner slopes (TM5 `sl_advection` port). Limiter parameter `L`. |
-| `PPMScheme{L}` | 3 in smooth regions | Putman-Lin Piecewise Parabolic. Limiter parameter `L`. Multi-tracer fused on LL/RG/CS split-sweep. |
+| `PPMScheme{L}` | 3 in smooth regions | Putman-Lin Piecewise Parabolic. Limiter parameter `L`. Multi-tracer fused on LL/CS split-sweep; RG is unsupported. |
 | `LinRoodPPMScheme` | 5 or 7 | FV3 Lin-Rood PPM with cross-term advection (CS only); ORD=7 adds a panel-boundary correction. Selectable `ppm_order ∈ {5, 7}`. |
 
 Limiter parameter `L` ranges over `NoLimiter`, `MonotoneLimiter`,
@@ -103,12 +104,9 @@ scheme = "slopes"     # "upwind" | "slopes" | "ppm" | "linrood"
 
 A `NoAdvection` identity operator is available for isolating other
 operators (e.g. convection-only timing, regression). Select with
-`[advection] scheme = "none"`. It is incompatible with non-`NoDiffusion`
-/ non-`NoSurfaceFlux` companion operators (both are integrated at the
-Strang-split palindrome center of the advection block) — the `apply!`
-dispatch hard-rejects those combinations with a pointer to the right
-TOML knob. For "near-zero" transport instead of identity, set `dt` very
-small or use an identity binary (mass fluxes ≡ 0).
+`[advection] scheme = "none"`. Diffusion still runs using its own column
+workspace, including on reduced-Gaussian and cubed-sphere grids. Surface
+emissions with `NoAdvection` remain unsupported and raise an error.
 
 ## Diffusion
 
@@ -150,7 +148,7 @@ Profile / derived / precomputed Kz fields exist in `src/State/Fields/` — see
 | --- | --- | --- |
 | `NoConvection()` | — | Identity no-op; default. |
 | `CMFMCConvection()` | `ConvectionForcing.{cmfmc, dtrain}` | GCHP-style upwind moist convection; mass flux + optional detrainment. |
-| `TM5Convection{FT}()` | `ConvectionForcing.tm5_fields.{entu, detu, detu, detd}` | TM5 Tiedtke-1989 four-field entrainment / detrainment with an implicit column solve. Parametric on `FT`. |
+| `TM5Convection{FT}()` | `ConvectionForcing.tm5_fields.{entu, detu, entd, detd}` | TM5 Tiedtke-1989 four-field entrainment / detrainment with an implicit column solve. Parametric on `FT`. |
 
 Both real subtypes consume a `ConvectionForcing` carrier (declared in
 `src/MetDrivers/ConvectionForcing.jl`) — different physics, identical
@@ -185,6 +183,30 @@ TOML, and is the path for emissions inventories (EDGAR, GFED,
 GridFED, LMDz, …). The `[tracers.<name>.emission]` block in run
 configs drives this construction; see the worked CATRINE configs
 (`config/runs/catrine_*.toml`) for examples.
+
+## Scientific quantities and layouts
+
+Let `q` be dry volume mixing ratio, `m` dry-air mass in kg, and `s = m*q`
+the stored tracer quantity. `s` is not physical species mass: converting to
+kg species also requires the species/air molecular-weight ratio.
+Cell fields use `(Nx, Ny, Nz)` on LL, `(Ncell, Nz)` on RG, and six
+`(Nc + 2H, Nc + 2H, Nz)` panels on CS. The vertical index runs from the
+top of atmosphere (`k = 1`) to the surface (`k = Nz`); vertical face fields
+have `Nz + 1` interfaces.
+
+| Process | Scientific update and units | Execution |
+| --- | --- | --- |
+| Advection | Conservative face-flux divergence updates `m` and `s`; face air-mass transfers are integrated over the transport interval, in kg. Reconstruction estimates face `q`. | Directional sweeps and CFL subcycles inside the transport block. |
+| Diffusion | Vertical mixing represents `∂q/∂t = (1/ρ) ∂z(ρ Kz ∂z q)`, with `Kz` in m²/s, using an implicit column solve. | At the transport palindrome center; with its own workspace even when advection is off. |
+| Convection | Column exchange transports `q` using the supplied mass fluxes and entrainment/detrainment. TM5 four-field input uses kg/m²/s. | A separate physics block, refreshed from the current meteorological window. |
+| Surface flux | A species flux in kg/m²/s is converted using cell area and molecular weights into a bottom-layer increment of `s`. | Between diffusion half-steps, or at the configured implicit lower boundary. |
+| Chemistry | Local sources and sinks modify tracer storage; for example, `dq/dt = -λq` uses a decay rate `λ` in s⁻¹. | After convection in the separate chemistry block. |
+
+Chemistry uses `AbstractChemistryOperator` and `chemistry_block!`; the
+executable `examples/custom_loss.jl` demonstrates its mutating `apply!`
+interface and analytic decay check. Driven runs schedule the separate
+physics blocks at met-window cadence; a direct `step!` call executes them
+once for the supplied interval.
 
 ## Strang palindrome
 

@@ -18,8 +18,7 @@ panel independently, respecting the plan-14 accessor-API discipline.
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 
 # -------------------------------------------------------------------------
 # Tiny CubedSphere test problem

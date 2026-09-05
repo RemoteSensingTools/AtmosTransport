@@ -2,8 +2,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 
 const Arch = AtmosTransport.Architectures
 const Runner = AtmosTransport.Models.DrivenRunner

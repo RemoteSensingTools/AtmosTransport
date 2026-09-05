@@ -9,7 +9,7 @@ telescoping).
 | Scheme | Order | Stencil | Monotone | CS panels | GPU | Best for |
 |--------|-------|---------|----------|-----------|-----|----------|
 | Upwind | 1st | 1 cell | Yes (positive-definite) | Yes | Yes | Debugging, baseline |
-| Slopes | 2nd | 2 cells | Yes (van Leer limiter) | Yes (Hp>=2) | Yes | Production LL/RG |
+| Slopes | 2nd | 2 cells | Yes (van Leer limiter) | Yes (Hp>=2) | Yes | Production LL/CS |
 | PPM | 3rd | 3 cells | Configurable (ORD 4-7) | Yes (Hp>=3) | Yes | Low-diffusion transport |
 | LinRood | 3rd | 3 cells | Configurable | CS only (Hp>=3) | Yes | CS production (eliminates splitting error) |
 

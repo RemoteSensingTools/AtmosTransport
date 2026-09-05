@@ -31,7 +31,7 @@ using Test
 using Dates: DateTime
 using NCDatasets: NCDataset, defDim, defVar
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using AtmosTransport
 const AT = AtmosTransport
 
 const FT_TEST = Float64

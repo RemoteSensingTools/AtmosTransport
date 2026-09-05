@@ -22,8 +22,7 @@ using Test
 using Random
 using LinearAlgebra: dot
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Operators: ImplicitVerticalDiffusion, NoSurfaceFlux
 using .AtmosTransport.Operators.Diffusion: apply_vertical_diffusion_vmr!,
                                             _cs_scale_tracer_mass_to_vmr!,

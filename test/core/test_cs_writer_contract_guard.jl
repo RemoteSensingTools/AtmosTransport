@@ -13,7 +13,7 @@
 using Test
 using JSON3
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using AtmosTransport
 using .AtmosTransport.MetDrivers: validate_cs_writer_contract!
 
 const _PATCH_TOOL = joinpath(@__DIR__, "..", "..", "scripts", "diagnostics",

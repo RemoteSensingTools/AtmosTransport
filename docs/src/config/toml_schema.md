@@ -495,3 +495,9 @@ it drift by tens of Pa per window.
 - [Data sources](@ref) — ERA5 / GEOS access, credentials, recommended
   local layout, and the quickstart bundle.
 - [First run](@ref) — the smallest end-to-end invocation pattern.
+
+Preflight validation rejects unknown top-level tables, misspelled architecture,
+numerics and run options, and unknown physics keys or kinds before allocating
+model state. For example, `[advection] scheem = "ppm"` fails instead of silently
+selecting upwind. Topology and payload checks follow when the binary header is
+available; reduced-Gaussian slopes/PPM requests fail during recipe construction.

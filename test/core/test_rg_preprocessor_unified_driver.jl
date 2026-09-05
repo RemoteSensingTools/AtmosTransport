@@ -5,8 +5,7 @@ using Test
 using Dates
 using JSON3
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Preprocessing: build_target_geometry, process_day,
                                       ERA5SpectralSettings
 

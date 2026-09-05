@@ -168,41 +168,43 @@ function Adapt.adapt_structure(to, ws::LinRoodWorkspace{FT}) where FT
     return LinRoodWorkspace(q_buf, fx_in, fx_out, fy_in, fy_out, q_out, dp_out)
 end
 
-struct CSLinRoodAdvectionWorkspace{CSW, LRW}
+struct CSLinRoodAdvectionWorkspace{CSW, LRW, M}
     cs      :: CSW
     linrood :: LRW
+    m_initial :: M
 end
 
 function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
                                      FT::Type{<:AbstractFloat} = Float64,
-                                     array_type::Type{<:AbstractArray} = Array)
+                                     array_type::Type{<:AbstractArray} = Array,
+                                     n_tracers::Integer = 0)
     cs = CSAdvectionWorkspace(mesh, Nz; FT = FT, array_type = array_type)
     lr = LinRoodWorkspace(mesh; FT = FT, Nz = Nz, array_type = array_type)
-    return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(lr)}(cs, lr)
+    return CSLinRoodAdvectionWorkspace(cs, lr, ntuple(_ -> n_tracers == 1 ? similar(cs.m_A, 0, 0, 0) : similar(cs.m_A), 6))
 end
 
 function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh,
-                                     prototype::AbstractArray{FT, 3}) where {FT <: AbstractFloat}
+                                     prototype::AbstractArray{FT, 3}; n_tracers::Integer = 0) where {FT <: AbstractFloat}
     cs = CSAdvectionWorkspace(mesh, prototype)
     lr = LinRoodWorkspace(mesh, prototype)
-    return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(lr)}(cs, lr)
+    return CSLinRoodAdvectionWorkspace(cs, lr, ntuple(_ -> n_tracers == 1 ? similar(cs.m_A, 0, 0, 0) : similar(cs.m_A), 6))
 end
 
 function Base.getproperty(workspace::CSLinRoodAdvectionWorkspace, name::Symbol)
-    if name === :cs || name === :linrood
+    if name === :cs || name === :linrood || name === :m_initial
         return getfield(workspace, name)
     end
     return getproperty(getfield(workspace, :cs), name)
 end
 
 function Base.propertynames(workspace::CSLinRoodAdvectionWorkspace, private::Bool = false)
-    return (:cs, :linrood, propertynames(getfield(workspace, :cs), private)...)
+    return (:cs, :linrood, :m_initial, propertynames(getfield(workspace, :cs), private)...)
 end
 
 function Adapt.adapt_structure(to, workspace::CSLinRoodAdvectionWorkspace)
     cs = Adapt.adapt(to, workspace.cs)
     linrood = Adapt.adapt(to, workspace.linrood)
-    return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(linrood)}(cs, linrood)
+    return CSLinRoodAdvectionWorkspace(cs, linrood, Adapt.adapt(to, workspace.m_initial))
 end
 
 # ---------------------------------------------------------------------------
@@ -814,13 +816,17 @@ function fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
     for p in eachindex(ws_lr.fx_in)
         yq_face_k!(ws_lr.fy_out[p], ws_lr.q_buf[p], bm_panels[p], m_panels[p],
                    Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
-        update_k!(ws.rm_A, ws.m_A,
+        update_k!(ws_lr.q_out[p], ws_lr.dp_out[p],
                   rm_panels[p], m_panels[p], am_panels[p], bm_panels[p],
                   ws_lr.fx_in[p], ws_lr.fx_out[p], ws_lr.fy_in[p], ws_lr.fy_out[p],
                   Hp; ndrange=(Nc, Nc, Nz))
-        synchronize(backend)  # required: ws.rm_A/m_A reused across panels
-        _copy_interior!(rm_panels[p], ws.rm_A, Nc, Hp, Nz)
-        _copy_interior!(m_panels[p], ws.m_A, Nc, Hp, Nz)
+    end
+    # Per-panel outputs already belong to the Lin–Rood workspace. Finish all
+    # six updates together before copying back, avoiding five host barriers.
+    synchronize(backend)
+    for p in eachindex(rm_panels)
+        _copy_interior!(rm_panels[p], ws_lr.q_out[p], Nc, Hp, Nz)
+        _copy_interior!(m_panels[p], ws_lr.dp_out[p], Nc, Hp, Nz)
     end
 
     return nothing

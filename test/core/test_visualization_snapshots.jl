@@ -1,7 +1,7 @@
 using Test
 using NCDatasets
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using AtmosTransport
 
 using .AtmosTransport.Visualization
 

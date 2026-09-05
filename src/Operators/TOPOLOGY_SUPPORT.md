@@ -18,7 +18,8 @@ duplicating coverage claims.
 
 | Operator | LatLon | RG | CS |
 |----------|:------:|:--:|:--:|
-| `UpwindScheme` / `SlopesScheme` / `PPMScheme` | ✅ | ✅ | ✅ |
+| `UpwindScheme` | ✅ | ✅ | ✅ |
+| `SlopesScheme` / `PPMScheme` | ✅ | ❌ | ✅ |
 | `ImplicitVerticalDiffusion` | ✅ | ✅ | ✅ |
 | `SurfaceFluxOperator` | ✅ | ✅ | ✅ |
 | `CMFMCConvection` | ✅ | ✅ | ✅ |

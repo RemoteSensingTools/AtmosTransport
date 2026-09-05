@@ -23,7 +23,14 @@ julia --project=test test/runtests.jl --diagnostic   # default + diagnostic
 julia --project=test test/runtests.jl --real-data    # default + real data
 julia --project=test test/runtests.jl --orphan       # default + orphan watchlist
 julia --project=test test/runtests.jl --tiers=core,orphan # only listed tiers
+julia --project=test/atmoschemistry test/atmoschemistry/runtests.jl # CPU/CUDA chemistry extension
 ```
+
+`test/atmoschemistry/` is a dedicated weak-dependency integration
+environment. It makes both `AtmosChemistry` and CUDA available without adding
+either package to the CPU-only default test target. The extension test must be
+run in this environment; a skip in the ordinary core environment is not a
+substitute for this gate.
 
 ## Adding a new test
 
@@ -31,11 +38,9 @@ julia --project=test test/runtests.jl --tiers=core,orphan # only listed tiers
    doesn't need external data and is part of a production code path.
 2. Drop the file into the matching folder. The orchestrator picks up
    anything matching `test_*.jl` automatically — no manual roster edit.
-3. Test files are included into anonymous modules, so they can `using
-   .AtmosTransport` freely without polluting each other.
-4. Use `joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl")` (note
-   the **two** `..`) when including `AtmosTransport.jl` directly — the
-   extra hop accounts for the tier subfolder.
+3. Test files run in anonymous modules, keeping fixture names isolated.
+4. Use `using AtmosTransport`; share the precompiled package instead of
+   including its entire source separately in each test file.
 
 ## Promotion / retirement workflow
 
@@ -46,3 +51,17 @@ julia --project=test test/runtests.jl --tiers=core,orphan # only listed tiers
 - A `core/` file becomes archivable when the code path it tests is
   deleted or has been fully subsumed by a newer test. Move it into
   `archived/` with a note in `archived/legacy_README.md`.
+
+The NetCDF output contract suite was promoted from `orphan/` to `core/` on
+2026-09-04, alongside selected-capture parity tests for LL, RG, and CS.
+
+A dedicated A100 regression is available outside the automatic tiers:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 julia --project=benchmarking test/a100/test_review_a100.jl
+```
+
+It requires the A100 and checks Float32/Float64 CPU-CUDA transport parity and
+selected snapshot capture with GPU scalar indexing disabled. For a strictly
+CPU local suite, set `CUDA_VISIBLE_DEVICES=''` so optional CUDA tests cannot
+select another GPU through the global Julia environment.

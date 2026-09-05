@@ -3,7 +3,7 @@
 using Test
 using Adapt
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using AtmosTransport
 const AT = AtmosTransport
 
 function _derived_field_fixture(::Type{FT}=Float32) where FT

@@ -19,8 +19,7 @@ all three sweep directions with non-trivial Courant numbers.
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport: Operators, Grids
 using .AtmosTransport.Grids: cell_areas_by_latitude
 using .AtmosTransport.Operators: MonotoneLimiter, strang_split!, strang_split_mt!

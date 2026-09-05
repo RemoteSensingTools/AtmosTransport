@@ -11,12 +11,10 @@ using ..SectionTimer
 using ..State
 using ..Grids
 using ..Operators
+using ..Operators.Diffusion: ColumnDiffusionWorkspace
 using ..MetDrivers
-# Bring Regridding + Preprocessing into Models' namespace
-# so the nested `InitialConditionIO` submodule can `using ..Regridding` etc.
-# Regridding + Preprocessing are loaded before Models in AtmosTransport.jl.
+# Initial conditions and emissions share geometry adapters with preprocessing.
 using ..Regridding
-using ..Preprocessing
 # Output writers (SnapshotFrame / capture_snapshot / write_snapshot_netcdf)
 # loaded by AtmosTransport.jl before Models — pull into Models' namespace
 # so the nested DrivenRunner submodule can `using ..Output: …`.

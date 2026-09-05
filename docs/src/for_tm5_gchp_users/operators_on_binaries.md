@@ -73,8 +73,8 @@ flowchart LR
 | Scheme | What TM5/GCHP user it maps to | Grids | Multi-tracer fusion |
 | --- | --- | --- | --- |
 | `UpwindScheme` | First-order upwind (debugging only) | LL, RG, CS | yes |
-| `SlopesScheme` | Russell-Lerner slopes / "TM5 sl_advection" | LL, RG, CS | yes |
-| `PPMScheme` | PPM with Colella-Woodward monotonicity (GCHP PPM-NV5) | LL, RG, CS split-sweep | yes |
+| `SlopesScheme` | Russell-Lerner slopes / "TM5 sl_advection" | LL, CS | yes |
+| `PPMScheme` | PPM with Colella-Woodward monotonicity (GCHP PPM-NV5) | LL, CS split-sweep | yes |
 | `LinRoodPPMScheme{ORD}` (ORD ∈ {5,7}) | FV3 Lin-Rood PPM (GCHP dynamics) | CS only | **no** (per-tracer loop) |
 
 The TOML `[advection].scheme` key parses to a Julia type at config

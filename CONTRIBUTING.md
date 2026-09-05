@@ -29,7 +29,7 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 
 ```bash
 julia --project=docs -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
-julia --project=docs docs/make.jl
+ATMOSTR_DOCS_BUILD_ONLY=1 julia --project=docs docs/make.jl
 # Open docs/build/index.html in your browser
 ```
 
@@ -41,48 +41,57 @@ julia --project=docs docs/make.jl
 - Keep functions short and focused; prefer composing small functions
 - Add docstrings (using `DocStringExtensions`) to all exported functions and types
 
-## Architecture Overview
+## Finding the scientific code
 
-AtmosTransport uses an Oceananigans.jl-inspired design with abstract type
-hierarchies and multiple dispatch:
+Start with `src/Models/TransportModel.jl` for operator ordering, then
+`src/Operators/<process>/` for equations and kernels. `DrivenSimulation.jl`
+refreshes meteorology; `DrivenRunner.jl` manages the binary-file/window loop.
+Its `runner/` files separate configuration, model setup, progress, and output.
+`InitialConditionIO.jl` handles initial conditions, while
+`initial_conditions/surface_flux.jl` handles emission inventories.
 
+The current interfaces are:
+
+| Process | Interface | Examples |
+| --- | --- | --- |
+| Advection | `AbstractAdvectionScheme` | `UpwindScheme`, `SlopesScheme`, `PPMScheme`, `LinRoodPPMScheme` |
+| Convection | `AbstractConvection` | `TM5Convection`, `CMFMCConvection` |
+| Diffusion | `AbstractDiffusion` | `ImplicitVerticalDiffusion` |
+| Chemistry | `AbstractChemistryOperator` | `ExponentialDecay`, `CompositeChemistry` |
+| Horizontal geometry | `AbstractHorizontalMesh` | `LatLonMesh`, `ReducedGaussianMesh`, `CubedSphereMesh` |
+
+Read [the topology support matrix](src/Operators/TOPOLOGY_SUPPORT.md) before
+adding a configuration. Reduced-Gaussian advection currently supports upwind
+and no advection; slopes and PPM are rejected at recipe construction.
+
+## Adding a physics operator
+
+[examples/custom_loss.jl](examples/custom_loss.jl) is an executable, minimal
+chemistry extension using the current `apply!(state, meteo, grid, op, dt;
+workspace)` interface:
+
+```bash
+julia --project=. examples/custom_loss.jl
 ```
-AbstractAdvection        →  SlopesAdvection, PPMAdvection, UpwindAdvection, ...
-AbstractConvection       →  TiedtkeConvection, NoConvection, ...
-AbstractDiffusion        →  BoundaryLayerDiffusion, NoDiffusion, ...
-AbstractChemistry        →  NoChemistry, RadioactiveDecay, CompositeChemistry, ...
-AbstractGrid             →  LatitudeLongitudeGrid, CubedSphereGrid
-```
 
-## Adding a New Physics Operator
+For each operator, document its equation, units, array layout, vertical
+ordering, and cadence. State whether a quantity is physical species mass or
+model tracer storage: dry-basis transport stores **dry VMR × dry-air mass**;
+converting an emission inventory in kg species/s requires molecular weights.
+Document numerical approximations and unsupported topology/backend combinations.
 
-To add a new advection scheme (for example):
+Keep scratch buffers in a typed workspace on the state backend. Use
+KernelAbstractions kernels or backend-supported array operations, and avoid
+scalar indexing of GPU arrays. Add conservation, uniform-tracer, or analytic
+solution checks in `test/core/`; include adjoint identity or finite-difference
+checks when modifying an operator used by the inverse model. Test files use
+`using AtmosTransport` and run in isolated modules, sharing the package cache.
 
-1. **Define your type** in `src/Advection/`:
-   ```julia
-   struct MyAdvection <: AbstractAdvection end
-   ```
-
-2. **Implement the interface** — dispatch on your type:
-   ```julia
-   function advect!(tracers, grid, adv::MyAdvection, mass_fluxes, dt)
-       # your implementation
-   end
-   ```
-
-3. **Add the adjoint** (if supporting 4D-Var):
-   ```julia
-   function adjoint_advect!(adj_tracers, grid, adv::MyAdvection, mass_fluxes, dt)
-       # adjoint of your implementation
-   end
-   ```
-
-4. **Export** your type from the submodule.
-
-5. **Add tests** in `test/` and verify with `Pkg.test()`.
-
-The same pattern applies to convection (`AbstractConvection`), diffusion
-(`AbstractDiffusion`), and chemistry (`AbstractChemistry`) operators.
+For performance changes, report warm timings, allocations, backend, precision,
+grid size, tracer count, and output selection. The benchmark harness lives in
+`benchmarking/`; distinguish kernel timing from binary input, host transfer,
+and actual snapshot writing. Run CUDA checks on the A100 on `curry`, selecting
+it explicitly with `CUDA_VISIBLE_DEVICES=0` and verifying the device name.
 
 ## Submitting Changes
 

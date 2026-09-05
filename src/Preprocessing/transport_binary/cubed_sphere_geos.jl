@@ -767,12 +767,7 @@ function _reconstruct_omega_target!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
     # The CG is a deterministic sequential solve on a per-level RHS, so the
     # written am/bm/cm are BIT-IDENTICAL to the serial loop regardless of the
     # thread schedule.
-    nthread = Threads.maxthreadid()
-    scratches = Vector{CSPoissonScratch}(undef, nthread)
-    scratches[1] = grid.poisson_scratch
-    for t in 2:nthread
-        scratches[t] = CSPoissonScratch(nc)
-    end
+    scratches = _cs_thread_scratches!(grid.poisson_scratch)
 
     inc_by_level = zeros(Float64, Nz)
     post_by_level = zeros(Float64, Nz)

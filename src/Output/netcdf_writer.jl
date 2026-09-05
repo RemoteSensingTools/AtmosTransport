@@ -120,7 +120,7 @@ function _ensure_selected_lev!(ds, fields::OutputFieldSpec, Nz::Integer)
                                  "positive" => "down",
                                  "selection" => "configured [output.fields].levels"))
         v[:] = Float64.(levels)
-    elseif length(ds.dim["lev_selected"]) != length(levels)
+    elseif size(ds["lev_selected"], 1) != length(levels)
         throw(ArgumentError("all selected-layer outputs must use the same [output.fields].levels"))
     end
     return levels
@@ -167,6 +167,32 @@ function _validate_snapshot_inputs(frames, mesh, mass_basis_sym::Symbol)
     return nothing
 end
 
+# HDF5 2.1's automatic error handler is thread-local. NetCDF initializes the
+# main thread quietly, but a first `nc_create` on a `Threads.@spawn` worker can
+# print an alarming H5Fis_accessible stack while probing a path that does not
+# exist yet. Silence only that expected constructor probe, then restore the
+# worker's handler before defining variables or writing payloads so genuine
+# HDF5/NetCDF failures remain visible and continue to throw normally.
+function _create_netcdf_dataset(path::AbstractString)
+    old_func = Ref{Ptr{Cvoid}}(C_NULL)
+    old_data = Ref{Ptr{Cvoid}}(C_NULL)
+    status = ccall((:H5Eget_auto2, HDF5_jll.libhdf5), Cint,
+                   (Int64, Ref{Ptr{Cvoid}}, Ref{Ptr{Cvoid}}),
+                   0, old_func, old_data)
+    status < 0 && return NCDataset(path, "c")
+
+    ccall((:H5Eset_auto2, HDF5_jll.libhdf5), Cint,
+          (Int64, Ptr{Cvoid}, Ptr{Cvoid}),
+          0, C_NULL, C_NULL)
+    try
+        return NCDataset(path, "c")
+    finally
+        ccall((:H5Eset_auto2, HDF5_jll.libhdf5), Cint,
+              (Int64, Ptr{Cvoid}, Ptr{Cvoid}),
+              0, old_func[], old_data[])
+    end
+end
+
 """
     write_snapshot_netcdf(path, frames, grid; mass_basis=:dry, options=SnapshotWriteOptions(),
                           fields=output_field_spec())
@@ -180,7 +206,7 @@ Cubed-sphere files carry panel lon/lat coordinates and a `cubed_sphere`
 grid-mapping variable modeled after GEOS-Chem diagnostics.
 """
 function write_snapshot_netcdf(path::AbstractString,
-                               frames::AbstractVector{<:SnapshotFrame},
+                               frames::AbstractVector{<:AbstractSnapshotFrame},
                                grid::AtmosGrid;
                                mass_basis::Symbol=:dry,
                                options::SnapshotWriteOptions=SnapshotWriteOptions(),
@@ -194,12 +220,15 @@ function write_snapshot_netcdf(path::AbstractString,
     times = [frame.time_hours for frame in frames]
     tracer_keys = _select_tracer_keys(_check_same_keys(frames), fields)
 
-    NCDataset(expanded, "c") do ds
+    ds = _create_netcdf_dataset(expanded)
+    try
         _define_common_attributes!(ds, mesh, frames, mass_basis; options = options)
         ds.attrib["output_fields"] = _fields_string(fields, tracer_keys)
         geometry = _define_geometry!(ds, mesh, Nz, times)
         _write_snapshot_payload!(ds, mesh, frames, tracer_keys, geometry,
                                  mass_basis, options, fields)
+    finally
+        close(ds)
     end
     @info @sprintf("Saved snapshots: %s (%d frame(s), %s, mass_basis=%s)",
                    expanded, length(frames), summary(mesh), mass_basis)
@@ -274,22 +303,21 @@ function _write_snapshot_payload!(ds, mesh::LatLonMesh, frames, tracer_keys,
     end
 
     for (t, frame) in enumerate(frames)
-        air === nothing || (air[:, :, :, t] = T.(_select_levels(frame.air_mass, air_idx)))
+        air === nothing || (air[:, :, :, t] = T.(_air_layers(frame, air_idx)))
         air_area === nothing || (air_area[:, :, :, t] =
-            T.(_select_levels(layer_mass_per_area(frame.air_mass, mesh), air_idx)))
-        col_air === nothing || (col_air[:, :, t] = T.(column_mass_per_area(frame.air_mass, mesh)))
+            T.(layer_mass_per_area(_air_layers(frame, air_idx), mesh)))
+        col_air === nothing || (col_air[:, :, t] = T.(_horizontal_per_area(_frame_column_air(frame), mesh)))
         for name in tracer_keys
             if haskey(tracer_vars, name)
                 tracer_vars[name][:, :, :, t] =
-                    T.(_select_levels(mixing_ratio_field(frame.air_mass, frame.tracers[name]),
-                                      tracer_layer_idx[name]))
+                    T.(_frame_vmr(frame, name, tracer_layer_idx[name]))
             end
             haskey(tracer_cm_vars, name) &&
                 (tracer_cm_vars[name][:, :, t] =
-                    T.(column_mean_mixing_ratio(frame.air_mass, frame.tracers[name])))
+                    T.(_frame_column_mean(frame, name)))
             haskey(tracer_col_vars, name) &&
                 (tracer_col_vars[name][:, :, t] =
-                    T.(column_mass_per_area(frame.tracers[name], mesh)))
+                    T.(_horizontal_per_area(_frame_column_tracer(frame, name), mesh)))
         end
     end
     return nothing
@@ -372,24 +400,23 @@ function _write_snapshot_payload!(ds, mesh::ReducedGaussianMesh, frames, tracer_
 
     nn_map = geometry.nn_map
     for (t, frame) in enumerate(frames)
-        air === nothing || (air[:, :, t] = T.(_select_levels(frame.air_mass, air_idx)))
+        air === nothing || (air[:, :, t] = T.(_air_layers(frame, air_idx)))
         air_area === nothing || (air_area[:, :, t] =
-            T.(_select_levels(layer_mass_per_area(frame.air_mass, mesh), air_idx)))
-        col_air === nothing || (col_air[:, t] = T.(column_mass_per_area(frame.air_mass, mesh)))
+            T.(layer_mass_per_area(_air_layers(frame, air_idx), mesh)))
+        col_air === nothing || (col_air[:, t] = T.(_horizontal_per_area(_frame_column_air(frame), mesh)))
         for name in tracer_keys
             if haskey(tracer_vars, name)
                 tracer_vars[name][:, :, t] =
-                    T.(_select_levels(mixing_ratio_field(frame.air_mass, frame.tracers[name]),
-                                      tracer_layer_idx[name]))
+                    T.(_frame_vmr(frame, name, tracer_layer_idx[name]))
             end
             if haskey(tracer_cm_native_vars, name)
-                cm = column_mean_mixing_ratio(frame.air_mass, frame.tracers[name])
+                cm = _frame_column_mean(frame, name)
                 tracer_cm_native_vars[name][:, t] = T.(cm)
                 tracer_cm_raster_vars[name][:, :, t] = T.(_rg_rasterize(cm, nn_map))
             end
             haskey(tracer_col_vars, name) &&
                 (tracer_col_vars[name][:, t] =
-                    T.(column_mass_per_area(frame.tracers[name], mesh)))
+                    T.(_horizontal_per_area(_frame_column_tracer(frame, name), mesh)))
         end
     end
     return nothing
@@ -472,24 +499,22 @@ function _write_snapshot_payload!(ds, mesh::CubedSphereMesh, frames, tracer_keys
     end
 
     for (t, frame) in enumerate(frames)
-        air === nothing || (air[:, :, :, :, t] = T.(_cs_stack3(_select_levels(frame.air_mass, air_idx))))
+        air === nothing || (air[:, :, :, :, t] = T.(_cs_stack3(_air_layers(frame, air_idx))))
         air_area === nothing || (air_area[:, :, :, :, t] =
-            T.(_cs_stack3(_select_levels(layer_mass_per_area(frame.air_mass, mesh), air_idx))))
+            T.(_cs_stack3(layer_mass_per_area(_air_layers(frame, air_idx), mesh))))
         col_air === nothing || (col_air[:, :, :, t] =
-            T.(_cs_stack2(column_mass_per_area(frame.air_mass, mesh))))
+            T.(_cs_stack2(_horizontal_per_area(_frame_column_air(frame), mesh))))
         for name in tracer_keys
             if haskey(tracer_vars, name)
                 tracer_vars[name][:, :, :, :, t] =
-                    T.(_cs_stack3(_select_levels(
-                        mixing_ratio_field(frame.air_mass, frame.tracers[name]),
-                        tracer_layer_idx[name])))
+                    T.(_cs_stack3(_frame_vmr(frame, name, tracer_layer_idx[name])))
             end
             haskey(tracer_cm_vars, name) &&
                 (tracer_cm_vars[name][:, :, :, t] =
-                    T.(_cs_stack2(column_mean_mixing_ratio(frame.air_mass, frame.tracers[name]))))
+                    T.(_cs_stack2(_frame_column_mean(frame, name))))
             haskey(tracer_col_vars, name) &&
                 (tracer_col_vars[name][:, :, :, t] =
-                    T.(_cs_stack2(column_mass_per_area(frame.tracers[name], mesh))))
+                    T.(_cs_stack2(_horizontal_per_area(_frame_column_tracer(frame, name), mesh))))
         end
     end
     return nothing

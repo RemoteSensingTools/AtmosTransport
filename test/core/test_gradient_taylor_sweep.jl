@@ -32,7 +32,7 @@ using Test
 using Random
 using Printf
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using AtmosTransport
 const AT = AtmosTransport
 const Adv = AtmosTransport.Operators.Advection
 

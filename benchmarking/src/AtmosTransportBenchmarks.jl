@@ -6,7 +6,6 @@ using Dates
 using JSON3
 using KernelAbstractions
 using Printf
-using Serialization
 using Statistics
 
 using AtmosTransport
@@ -275,7 +274,7 @@ function _build_model(case::BenchmarkCase)
     # convection cell areas live on the requested backend too.
     model = case.backend === :cpu ? model : Adapt.adapt(adapter, model)
     if !(diffusion isa NoDiffusion)
-        dz = model.workspace.advection_ws.dz_scratch
+        dz = model.workspace.diffusion_ws.dz_scratch
         if dz isa Tuple
             foreach(panel -> fill!(panel, FT(100.0)), dz)
         else
@@ -307,18 +306,6 @@ function _build_cs_payload(::Type{FT}, Nc::Int, Nz::Int, Nt::Int, backend::Symbo
             panels_am = Adapt.adapt(adapter, am_cpu),
             panels_bm = Adapt.adapt(adapter, bm_cpu),
             panels_cm = Adapt.adapt(adapter, cm_cpu))
-end
-
-_hostify(x::AbstractArray) = Array(x)
-_hostify(x::Tuple) = map(_hostify, x)
-_hostify(x::NamedTuple) = map(_hostify, x)
-_hostify(x) = x
-
-function _write_panel_payload(path::AbstractString, payload)
-    open(path, "w") do io
-        serialize(io, _hostify(payload))
-    end
-    return filesize(path)
 end
 
 function _convection_forcing(case::BenchmarkCase, mesh, adapter)
@@ -356,37 +343,40 @@ function _phase_summary_from_csv(path)
 end
 
 function _time_io_case(case::BenchmarkCase)
-    payload = _build_cs_payload(case.float_type, case.grid_nc, case.levels,
-                                case.tracers, case.backend)
+    # Real snapshot capture + NetCDF write/read, including every requested tracer.
+    model = _build_model(case)
     times = Float64[]
+    allocations = Int[]
     bytes = 0
-    tmpdir = mktempdir(; prefix = "at_bench_io_")
-    try
-        for _ in 1:case.warmup_steps
-            path = joinpath(tmpdir, "warmup.bin")
+    mktempdir(; prefix="at_bench_io_") do dir
+        path = joinpath(dir, "snapshot.nc")
+        for r in 1:(case.warmup_steps + case.repeats)
             _sync(case.backend)
-            _write_panel_payload(path, payload)
-            open(deserialize, path)
-            rm(path; force = true)
+            sample = @timed begin
+                frame = AtmosTransport.Output.capture_snapshot(model;
+                    halo_width=model.grid.horizontal.Hp)
+                AtmosTransport.Output.write_snapshot_netcdf(path, [frame], model.grid)
+                # Exercise the actual reader, not a Julia Serialization surrogate.
+                snap = AtmosTransport.Visualization.open_snapshot(path)
+                for name in AtmosTransport.State.tracer_names(model.state)
+                    AtmosTransport.Visualization.fieldview(snap, name; transform=:column_mean, time=1)
+                end
+                _sync(case.backend)
+            end
+            bytes = filesize(path)
+            if r > case.warmup_steps
+                push!(times, sample.time)
+                push!(allocations, sample.bytes)
+            end
         end
-        for r in 1:case.repeats
-            path = joinpath(tmpdir, "payload_$(r).bin")
-            _sync(case.backend)
-            t0 = time_ns()
-            bytes = _write_panel_payload(path, payload)
-            open(deserialize, path)
-            _sync(case.backend)
-            push!(times, (time_ns() - t0) / 1e9)
-            rm(path; force = true)
-        end
-    finally
-        rm(tmpdir; force = true, recursive = true)
     end
     median_s = median(times)
-    mad_s = median(abs.(times .- median_s))
-    return _result_dict(case, median_s, mad_s, Dict("io" => sum(times)),
-                        bytes / median_s;
-                        metric_name = "bytes_per_second")
+    result = _result_dict(case, median_s, median(abs.(times .- median_s)),
+                         Dict("io"=>sum(times)), bytes / median_s;
+                         metric_name="bytes_per_second")
+    result["host_allocated_bytes"] = median(allocations)
+    result["io_format"] = "netcdf"
+    return result
 end
 
 function _time_adjoint_case(case::BenchmarkCase)

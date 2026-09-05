@@ -3,8 +3,7 @@
 using Test
 using Adapt
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Grids: StructuredTopology, face_cells, face_length,
                              face_normal, n_levels, planet_parameters
 using .AtmosTransport.Operators: AbstractConstantScheme, AbstractLinearScheme,

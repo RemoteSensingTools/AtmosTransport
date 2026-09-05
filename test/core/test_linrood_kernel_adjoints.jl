@@ -18,7 +18,7 @@ using Test
 using Random
 using KernelAbstractions: get_backend, synchronize
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using AtmosTransport
 const AT = AtmosTransport
 const Adv = AtmosTransport.Operators.Advection
 

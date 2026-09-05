@@ -11,7 +11,7 @@
 using Test
 using TOML
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using AtmosTransport
 using .AtmosTransport.Preprocessing: load_met_settings, GEOSITSettings, GEOSFPSettings,
                                       AbstractGEOSSettings, AbstractMetSettings,
                                       geosfp_native_hourly_ctm_path

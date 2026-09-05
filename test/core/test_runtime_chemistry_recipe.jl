@@ -16,7 +16,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using AtmosTransport
 const AT = AtmosTransport
 using .AT.Models: build_runtime_chemistry,
     chemistry_spec, NoChemistrySpec, DecayChemistrySpec

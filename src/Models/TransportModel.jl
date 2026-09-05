@@ -37,35 +37,44 @@ Helpers `with_convection(model, op)` and
 `with_convection_forcing(model, forcing)` parallel
 `with_chemistry` / `with_diffusion` / `with_emissions`.
 """
-struct TransportModelWorkspace{AdvT, ConvT}
+struct TransportModelWorkspace{AdvT, ConvT, DiffT}
     advection_ws  :: AdvT
     convection_ws :: ConvT
+    diffusion_ws  :: DiffT
 end
 
-TransportModelWorkspace(advection_ws; convection_ws = nothing) =
-    TransportModelWorkspace{typeof(advection_ws), typeof(convection_ws)}(
-        advection_ws, convection_ws)
+TransportModelWorkspace(advection_ws; convection_ws = nothing,
+                        diffusion_ws = nothing) =
+    TransportModelWorkspace(advection_ws, convection_ws, diffusion_ws)
 
 function Base.getproperty(workspace::TransportModelWorkspace, name::Symbol)
-    if name === :advection_ws || name === :convection_ws
+    if name === :advection_ws || name === :convection_ws || name === :diffusion_ws
         return getfield(workspace, name)
     end
     return getproperty(getfield(workspace, :advection_ws), name)
 end
 
 function Base.propertynames(workspace::TransportModelWorkspace, private::Bool = false)
-    return (:advection_ws, :convection_ws, propertynames(getfield(workspace, :advection_ws), private)...)
+    return (:advection_ws, :convection_ws, :diffusion_ws,
+            propertynames(getfield(workspace, :advection_ws), private)...)
 end
 
 function Adapt.adapt_structure(to, workspace::TransportModelWorkspace)
     advection_ws = Adapt.adapt(to, workspace.advection_ws)
     convection_ws = workspace.convection_ws === nothing ? nothing :
                     Adapt.adapt(to, workspace.convection_ws)
-    return TransportModelWorkspace(advection_ws; convection_ws = convection_ws)
+    diffusion_ws = if workspace.diffusion_ws !== nothing &&
+                      workspace.advection_ws !== nothing &&
+                      workspace.diffusion_ws.w_scratch === workspace.advection_ws.w_scratch &&
+                      workspace.diffusion_ws.dz_scratch === workspace.advection_ws.dz_scratch
+        ColumnDiffusionWorkspace(advection_ws.w_scratch, advection_ws.dz_scratch)
+    else
+        Adapt.adapt(to, workspace.diffusion_ws)
+    end
+    return TransportModelWorkspace(advection_ws; convection_ws, diffusion_ws)
 end
 
 _convection_workspace_for(::NoConvection, state, grid) = nothing
-
 _cs_advection_workspace_for(::AbstractAdvectionScheme,
                             state::CubedSphereState,
                             grid::AtmosGrid{<:CubedSphereMesh}) =
@@ -75,13 +84,12 @@ _cs_advection_workspace_for(::AbstractAdvectionScheme,
 _cs_advection_workspace_for(::LinRoodPPMScheme,
                             state::CubedSphereState,
                             grid::AtmosGrid{<:CubedSphereMesh}) =
-    CSLinRoodAdvectionWorkspace(grid.horizontal, state.air_mass[1])
+    CSLinRoodAdvectionWorkspace(grid.horizontal, state.air_mass[1]; n_tracers=ntracers(state))
 
 # No advection → no scratch buffers (NoAdvection alone doesn't need any).
 # When the runtime stacks diffusion on top of NoAdvection (the
 # "diffusion-only" experiment), the model constructor below detects that
-# case and allocates a `CSAdvectionWorkspace` anyway because the
-# diffusion kernel's `w_scratch` + `dz_scratch` live on that struct.
+# case and allocates only a ColumnDiffusionWorkspace when diffusion is active.
 _cs_advection_workspace_for(::NoAdvection,
                             state::CubedSphereState,
                             grid::AtmosGrid{<:CubedSphereMesh}) = nothing
@@ -165,9 +173,30 @@ function _with_convection_workspace(workspace, convection_ws)
     if workspace isa TransportModelWorkspace
         return workspace.convection_ws === convection_ws ?
                workspace :
-               TransportModelWorkspace(workspace.advection_ws; convection_ws = convection_ws)
+               TransportModelWorkspace(workspace.advection_ws; convection_ws,
+                                       diffusion_ws = workspace.diffusion_ws)
     end
     return TransportModelWorkspace(workspace; convection_ws = convection_ws)
+end
+
+function _with_diffusion_workspace(workspace::TransportModelWorkspace, op, state, grid)
+    scratch = if op isa NoDiffusion
+        nothing
+    elseif workspace.diffusion_ws !== nothing
+        workspace.diffusion_ws
+    elseif workspace.advection_ws !== nothing
+        # Reuse legacy column buffers when supplied by an advection workspace;
+        # ownership and dispatch are explicit, without allocating duplicate arrays.
+        ColumnDiffusionWorkspace(workspace.advection_ws.w_scratch,
+                                 workspace.advection_ws.dz_scratch)
+    elseif state isa CubedSphereState
+        ColumnDiffusionWorkspace(state.air_mass, grid.horizontal.Nc)
+    else
+        ColumnDiffusionWorkspace(state.air_mass)
+    end
+    return TransportModelWorkspace(workspace.advection_ws;
+        convection_ws=workspace.convection_ws,
+        diffusion_ws=scratch)
 end
 
 struct TransportModel{StateT, FluxT, GridT, SchemeT, WorkspaceT,
@@ -196,6 +225,7 @@ function TransportModel(state::CellState{B},
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
     workspace_model = _with_convection_workspace(
         workspace, _convection_workspace_for(convection, state, grid))
+    workspace_model = _with_diffusion_workspace(workspace_model, diffusion, state, grid)
     return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
                           typeof(advection), typeof(workspace_model),
                           typeof(chemistry), typeof(diffusion), typeof(emissions),
@@ -216,6 +246,7 @@ function TransportModel(state::CellState{B},
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
     workspace_model = _with_convection_workspace(
         workspace, _convection_workspace_for(convection, state, grid))
+    workspace_model = _with_diffusion_workspace(workspace_model, diffusion, state, grid)
     return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
                           typeof(advection), typeof(workspace_model),
                           typeof(chemistry), typeof(diffusion), typeof(emissions),
@@ -247,18 +278,9 @@ function TransportModel(state::CubedSphereState{B},
                         emissions::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                         convection::AbstractConvection = NoConvection(),
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
-    # Diffusion needs a workspace with panel-native `w_scratch` / `dz_scratch`
-    # for its column kernels. When advection is NoAdvection AND diffusion is
-    # active (the "diffusion-only" experimental setup), the default
-    # `_cs_advection_workspace_for(::NoAdvection, ...)` returns `nothing` —
-    # force a `CSAdvectionWorkspace` allocation in that case so the kernel
-    # has its scratch.
-    if workspace === nothing && !(diffusion isa NoDiffusion)
-        workspace = CSAdvectionWorkspace(grid.horizontal, state.air_mass[1];
-                                          n_tracers = ntracers(state))
-    end
     workspace_model = _with_convection_workspace(
         workspace, _convection_workspace_for(convection, state, grid))
+    workspace_model = _with_diffusion_workspace(workspace_model, diffusion, state, grid)
     return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
                           typeof(advection), typeof(workspace_model),
                           typeof(chemistry), typeof(diffusion), typeof(emissions),
@@ -295,15 +317,7 @@ useful for installing a diffusion operator into a model that was
 constructed with the default `NoDiffusion()`.
 """
 function with_diffusion(model::TransportModel, diffusion::AbstractDiffusion)
-    workspace = model.workspace
-    if model.state isa CubedSphereState && !(diffusion isa NoDiffusion) &&
-       workspace.advection_ws === nothing
-        advection_ws = CSAdvectionWorkspace(
-            model.grid.horizontal, model.state.air_mass[1];
-            n_tracers = ntracers(model.state))
-        workspace = TransportModelWorkspace(
-            advection_ws; convection_ws = workspace.convection_ws)
-    end
+    workspace = _with_diffusion_workspace(model.workspace, diffusion, model.state, model.grid)
     return TransportModel{typeof(model.state), typeof(model.fluxes),
                           typeof(model.grid), typeof(model.advection),
                           typeof(workspace), typeof(model.chemistry),
@@ -422,6 +436,7 @@ function transport_step!(model::TransportModel, dt; meteo = nothing)
     SectionTimer.@section :advection apply!(model.state, model.fluxes, model.grid, model.advection, dt;
            workspace = model.workspace.advection_ws,
            diffusion_op = model.diffusion,
+           diffusion_workspace = model.workspace.diffusion_ws,
            emissions_op = model.emissions,
            meteo = meteo)
     return nothing

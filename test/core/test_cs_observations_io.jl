@@ -3,7 +3,7 @@
 using Test
 using NCDatasets: NCDataset
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using AtmosTransport
 const AT = AtmosTransport
 
 # ---------------------------------------------------------------------------

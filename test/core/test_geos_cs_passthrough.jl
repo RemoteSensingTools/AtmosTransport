@@ -17,7 +17,7 @@ using Dates
 using NCDatasets
 using TOML
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using AtmosTransport
 using .AtmosTransport.Grids: CubedSphereMesh, GEOSNativePanelConvention,
                               EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST,
                               HybridSigmaPressure, n_levels

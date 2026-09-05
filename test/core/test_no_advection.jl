@@ -150,9 +150,10 @@ end
     kz = AtmosTransport.State.CubedSphereField(
         ntuple(_ -> ConstantField{FT, 3}(one(FT)), 6))
     with_kz = with_diffusion(model, ImplicitVerticalDiffusion(; kz_field=kz))
-    @test with_kz.workspace.advection_ws isa
-          AtmosTransport.Operators.Advection.CSAdvectionWorkspace
-    @test size(with_kz.workspace.advection_ws.dz_scratch[1]) == (Nc, Nc, Nz)
+    @test with_kz.workspace.advection_ws === nothing
+    @test with_kz.workspace.diffusion_ws isa
+          AtmosTransport.Operators.Diffusion.ColumnDiffusionWorkspace
+    @test size(with_kz.workspace.diffusion_ws.dz_scratch[1]) == (Nc, Nc, Nz)
 end
 
 # ---------------------------------------------------------------------------

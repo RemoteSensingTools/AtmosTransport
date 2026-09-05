@@ -1,0 +1,46 @@
+[
+    {
+        "FT": "Float32",
+        "Nc": 90,
+        "Nz": 72,
+        "tracers": 4,
+        "old_seconds": 0.000753879,
+        "new_seconds": 0.0002499485,
+        "speedup": 3.0161373242888034,
+        "full_host_bytes": 69986776,
+        "column_host_bytes": 1948896
+    },
+    {
+        "FT": "Float32",
+        "Nc": 180,
+        "Nz": 72,
+        "tracers": 4,
+        "old_seconds": 0.00203811,
+        "new_seconds": 0.000944773,
+        "speedup": 2.1572483548958323,
+        "full_host_bytes": 279938776,
+        "column_host_bytes": 7780896
+    },
+    {
+        "FT": "Float64",
+        "Nc": 90,
+        "Nz": 72,
+        "tracers": 4,
+        "old_seconds": 0.0005018625,
+        "new_seconds": 0.000384715,
+        "speedup": 1.3045046332999755,
+        "full_host_bytes": 139970776,
+        "column_host_bytes": 1948896
+    },
+    {
+        "FT": "Float64",
+        "Nc": 180,
+        "Nz": 72,
+        "tracers": 4,
+        "old_seconds": 0.003336734,
+        "new_seconds": 0.0013762835,
+        "speedup": 2.4244525201384746,
+        "full_host_bytes": 559874776,
+        "column_host_bytes": 7780896
+    }
+]

@@ -2,7 +2,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using AtmosTransport
 const AT = AtmosTransport
 
 @testset "physical and state constructors reject ambiguous inputs" begin

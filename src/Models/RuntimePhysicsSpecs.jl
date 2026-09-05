@@ -25,6 +25,14 @@
 # MethodError/InexactError from a `Float64("1.5")`/`Int(2.0)` deep in the parser.
 # `label` is the TOML table name (e.g. "[convection]") for the error message.
 
+function _check_spec_keys(section, allowed, label)
+    section isa AbstractDict || throw(ArgumentError("$(label) must be a TOML table"))
+    unknown = sort!(String[string(k) for k in keys(section) if !(k in allowed)])
+    isempty(unknown) || throw(ArgumentError(
+        "Unknown $(label) option(s): $(join(unknown, ", ")). Supported: $(join(allowed, ", "))"))
+    return nothing
+end
+
 function _spec_bool(section, key::AbstractString, default::Bool, label::AbstractString)
     v = get(section, key, default)
     v isa Bool || throw(ArgumentError("$(label).$(key) must be true or false; got $(repr(v))"))
@@ -116,6 +124,9 @@ function _collab_lu_knobs(section)
             "remove lmax_conv/n_merge. Got lmax_conv=$(lmax_conv), n_merge=$(n_merge), " *
             "use_collab_lu=false."))
     end
+    isfinite(budget) && budget > 0 || throw(ArgumentError("[convection].tile_workspace_gib must be finite and positive"))
+    lmax_conv >= 0 || throw(ArgumentError("[convection].lmax_conv must be non-negative"))
+    n_merge >= 1 || throw(ArgumentError("[convection].n_merge must be positive"))
     # n_merge=2 is no longer rejected (2026-06-13): the multi-substep mass
     # blow-up was a CLIPPING bug (uncompensated residual updraft flux when
     # lmax_conv truncates below the cloud top), not n=2-specific — fixed by the
@@ -134,6 +145,7 @@ workgroup-collaborative kernel; the legacy per-thread path ignores them). Settin
 them without `use_collab_lu` used to be a silent no-op; it is now a hard error.
 """
 function convection_spec(section)
+    _check_spec_keys(section, ("kind", "clamp", "tile_workspace_gib", "use_collab_lu", "lmax_conv", "n_merge"), "[convection]")
     kind = _parse_convection_kind(section)
     kind === :none  && return NoConvectionSpec()
     kind === :cmfmc &&
@@ -198,7 +210,10 @@ for `scheme = "linrood"`; pairing it with `scheme = "ppm"` is rejected (the spli
 PPM path takes no order knob), matching the old builder.
 """
 function advection_spec(section)
+    _check_spec_keys(section, ("scheme", "ppm_order"), "[advection]")
     kind = _parse_advection_scheme(section)
+    haskey(section, "ppm_order") && kind !== :linrood && throw(ArgumentError(
+        "[advection] `ppm_order` is only valid with `scheme = \"linrood\"`"))
     kind === :upwind && return UpwindAdvectionSpec()
     kind === :slopes && return SlopesAdvectionSpec()
     kind === :none   && return NoAdvectionSpec()
@@ -208,7 +223,9 @@ function advection_spec(section)
             "`scheme = \"ppm\"` selects the standard split `PPMScheme()` path."))
         return PPMAdvectionSpec()
     end
-    return LinRoodAdvectionSpec(_spec_int(section, "ppm_order", 5, "[advection]"))  # :linrood
+    order = _spec_int(section, "ppm_order", 5, "[advection]")
+    order in (5, 7) || throw(ArgumentError("[advection].ppm_order must be 5 or 7"))
+    return LinRoodAdvectionSpec(order)
 end
 
 # materialize — upwind/slopes/ppm/none are topology-independent; LinRood is
@@ -217,6 +234,10 @@ end
 materialize(::UpwindAdvectionSpec, ::AbstractRuntimeRecipeStyle) = UpwindScheme()
 materialize(::SlopesAdvectionSpec, ::AbstractRuntimeRecipeStyle) = SlopesScheme()
 materialize(::PPMAdvectionSpec,    ::AbstractRuntimeRecipeStyle) = PPMScheme()
+materialize(::SlopesAdvectionSpec, ::ReducedGaussianRuntimeRecipeStyle) =
+    throw(ArgumentError("Reduced Gaussian advection supports only upwind or none; slopes is not implemented."))
+materialize(::PPMAdvectionSpec, ::ReducedGaussianRuntimeRecipeStyle) =
+    throw(ArgumentError("Reduced Gaussian advection supports only upwind or none; PPM is not implemented."))
 materialize(::NoAdvectionSpec,     ::AbstractRuntimeRecipeStyle) = NoAdvection()
 materialize(s::LinRoodAdvectionSpec, ::CubedSphereRuntimeRecipeStyle) = LinRoodPPMScheme(s.order)
 materialize(::LinRoodAdvectionSpec, ::AbstractStructuredRuntimeRecipeStyle) = throw(ArgumentError(
@@ -275,6 +296,7 @@ validated positive at parse time (the old builder silently produced an Inf/negat
 decay rate for a non-positive value).
 """
 function chemistry_spec(section)
+    _check_spec_keys(section, ("kind", "half_lives_seconds"), "[chemistry]")
     kind = _parse_chemistry_kind(section)
     kind === :none && return NoChemistrySpec()
     hl = get(section, "half_lives_seconds", Dict{String, Any}())  # :decay
@@ -371,6 +393,7 @@ empty/absent section or `kind = "none"` is explicit "no diffusion". The legacy
 with no `kind` is rejected too.
 """
 function diffusion_spec(section)
+    _check_spec_keys(section, ("kind", "type", "value", "surface_flux_boundary"), "[diffusion]")
     # Empty / absent section is explicit "no diffusion".
     isempty(section) && return NoDiffusionSpec()
     # Reject the legacy `type = "..."` schema rather than silently mapping it to
@@ -393,8 +416,11 @@ function diffusion_spec(section)
     kind = _parse_diffusion_kind(section)
     kind === :none && return NoDiffusionSpec()
     sfb = _spec_bool(section, "surface_flux_boundary", false, "[diffusion]")
-    kind === :constant &&
-        return ConstantDiffusionSpec(_spec_float64(section, "value", 1.0, "[diffusion]"), sfb)
+    if kind === :constant
+        value = _spec_float64(section, "value", 1.0, "[diffusion]")
+        isfinite(value) && value >= 0 || throw(ArgumentError("[diffusion].value must be finite and non-negative"))
+        return ConstantDiffusionSpec(value, sfb)
+    end
     kind === :pbl   && return WindowPBLKzDiffusionSpec(sfb)
     kind === :vdiff && return HoltslagBovilleVdiffDiffusionSpec(sfb)
     return PrecomputedKzDiffusionSpec(sfb)  # :precomputed_kz

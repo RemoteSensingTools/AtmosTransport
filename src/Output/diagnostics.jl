@@ -15,35 +15,14 @@ function column_mean_mixing_ratio(air_mass::AbstractArray, tracer_mass::Abstract
     size(air_mass) == size(tracer_mass) ||
         throw(DimensionMismatch("air_mass size $(size(air_mass)) and tracer_mass size $(size(tracer_mass)) differ"))
 
-    if ndims(air_mass) == 3
-        Nx, Ny, Nz = size(air_mass)
-        out = zeros(Float64, Nx, Ny)
-        @inbounds for j in 1:Ny, i in 1:Nx
-            num = 0.0
-            den = 0.0
-            for k in 1:Nz
-                m = Float64(air_mass[i, j, k])
-                num += Float64(tracer_mass[i, j, k])
-                den += m
-            end
-            out[i, j] = den > 0 ? num / den : NaN
-        end
-        return out
-    else
-        Nc, Nz = size(air_mass)
-        out = zeros(Float64, Nc)
-        @inbounds for c in 1:Nc
-            num = 0.0
-            den = 0.0
-            for k in 1:Nz
-                m = Float64(air_mass[c, k])
-                num += Float64(tracer_mass[c, k])
-                den += m
-            end
-            out[c] = den > 0 ? num / den : NaN
-        end
-        return out
+    # Julia arrays are column-major: scan contiguous horizontal cells at each
+    # level. Each column still accumulates levels in the original order.
+    num = _column_sum(tracer_mass)
+    den = _column_sum(air_mass)
+    @inbounds for i in eachindex(num, den)
+        num[i] = den[i] > 0 ? num[i] / den[i] : NaN
     end
+    return num
 end
 
 function column_mean_mixing_ratio(air_mass::NTuple{6, <:AbstractArray},
@@ -113,8 +92,7 @@ end
 Vertically integrate per-cell mass and divide by horizontal cell area.
 """
 function column_mass_per_area(field, mesh)
-    layer = layer_mass_per_area(field, mesh)
-    return _column_sum(layer)
+    return _horizontal_per_area(_column_sum(field), mesh)
 end
 
 function _column_sum(values::AbstractArray)
@@ -138,3 +116,23 @@ function _column_sum(values::AbstractArray)
 end
 
 _column_sum(values::NTuple{6, <:AbstractArray}) = ntuple(p -> _column_sum(values[p]), 6)
+
+function _horizontal_per_area(values::AbstractArray, mesh::LatLonMesh)
+    out = similar(values, Float64)
+    @inbounds for j in axes(out, 2), i in axes(out, 1)
+        out[i, j] = values[i, j] / Float64(cell_area(mesh, i, j))
+    end
+    return out
+end
+function _horizontal_per_area(values::AbstractVector, mesh::ReducedGaussianMesh)
+    return [Float64(values[c]) / Float64(cell_area(mesh, c)) for c in eachindex(values)]
+end
+function _horizontal_per_area(values::NTuple{6}, mesh::CubedSphereMesh)
+    return ntuple(6) do p
+        out = similar(values[p], Float64)
+        @inbounds for j in axes(out, 2), i in axes(out, 1)
+            out[i, j] = values[p][i, j] / Float64(cell_area(mesh, i, j))
+        end
+        out
+    end
+end

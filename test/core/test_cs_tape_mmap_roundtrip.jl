@@ -3,7 +3,7 @@
 using Test
 using TOML
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using AtmosTransport
 const AT = AtmosTransport
 const TapeMod = AtmosTransport.Tape
 

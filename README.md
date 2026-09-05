@@ -29,7 +29,7 @@ documented validation run.
 | Capability | Status | Notes |
 | --- | :---: | --- |
 | Lat-Lon (structured) | ✅ | Full operator suite, multi-tracer fused kernels |
-| Reduced Gaussian (face-indexed) | ✅ | Spectral path + ring-aware Poisson balance |
+| Reduced Gaussian (face-indexed) | ✅ | Upwind advection; spectral preprocessing + ring-aware Poisson balance |
 | Cubed-sphere (gnomonic) | ✅ | Six-panel split-sweep + Lin-Rood ORD=5/7 |
 | Cubed-sphere (GEOS-native) | ✅ | Panel-5 rotation, GEOS-IT C180 validated |
 | Hybrid σ-pressure vertical | ✅ | TOA at k=1, surface at k=Nz |
@@ -47,11 +47,11 @@ documented validation run.
 
 ### Advection schemes
 
-| Scheme | LL | RG | CS split-sweep | CS Lin-Rood | Multi-tracer fused |
+| Scheme | LL | RG | CS split-sweep | CS Lin-Rood | Multi-tracer fused (LL/CS) |
 | --- | :---: | :---: | :---: | :---: | :---: |
 | `UpwindScheme` (1st order) | ✅ | ✅ | ✅ | — | ✅ |
-| `SlopesScheme` (Russell-Lerner) | ✅ | ✅ | ✅ | — | ✅ |
-| `PPMScheme` (Putman-Lin) | ✅ | ✅ | ✅ | — | ✅ |
+| `SlopesScheme` (Russell-Lerner) | ✅ | ❌ | ✅ | — | ✅ |
+| `PPMScheme` (Putman-Lin) | ✅ | ❌ | ✅ | — | ✅ |
 | `LinRoodPPMScheme{5}` | — | — | — | ✅ | ❌ (per-tracer loop) |
 | `LinRoodPPMScheme{7}` | — | — | — | 🟡 | ❌ (per-tracer loop) |
 
@@ -320,8 +320,9 @@ this README and the reference docs under [`docs/reference/`](docs/reference/).
 
 - **Verification (synthetic-fixture suite):** the core test tier runs on
   every push and PR — uniform-tracer invariance, mass-budget conservation,
-  cross-window replay closure, conservative-regrid mass closure, CPU/GPU
-  agreement bounded by 4-16 ULP.
+  cross-window replay closure, and conservative-regrid mass closure.
+  GPU agreement checks run when CUDA hardware is available; ordinary hosted
+  CI is CPU-only. The dedicated A100 regression is documented in `test/README.md`.
 - **Cross-day continuity (real GEOS-IT data):** preprocessor closes
   write-time replay gate at machine epsilon (`5.94e-16` F64,
   `~3.5e-7` F32 measured).

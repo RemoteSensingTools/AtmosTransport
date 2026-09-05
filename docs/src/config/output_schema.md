@@ -227,3 +227,20 @@ F64.
 - [Inspecting output](@ref) — diagnostic CLI tools and quick Python
   recipes.
 - [Data sources](@ref) — where the raw met data comes from.
+
+## Capture memory
+
+NetCDF runs pass `[output.fields]` to snapshot capture. Only named tracers and
+the union of requested model levels are copied to the host. Column diagnostics
+are reduced on the model backend before transfer; column-only output stores no
+3D layers. Float64 accumulation is used on CPU and CUDA; Metal uses Float32
+arithmetic because the backend does not support Float64. The NetCDF dimensions
+and vertical level labels still describe the original model coordinate.
+
+The low-level `capture_snapshot(model)` call keeps its full-field contract.
+Use `capture_snapshot(model; fields=output_field_spec(...))` for selective
+capture. Binary snapshots continue to capture the full fields.
+
+Single-file output retains its captured frames until the run ends. For long
+campaigns, daily partitioning bounds this retention to a day plus at most one
+in-flight daily write. Column-only capture reduces memory in either mode.

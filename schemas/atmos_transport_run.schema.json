@@ -4,7 +4,7 @@
   "description": "Editor schema for TOML files consumed by scripts/run_transport.jl. Topology- and binary-capability checks are performed by the Julia runtime.",
   "type": "object",
   "required": ["input"],
-  "additionalProperties": true,
+  "additionalProperties": false,
   "properties": {
     "input": {
       "description": "Transport binaries to replay. Choose an explicit list or a folder with an inclusive date range.",
@@ -47,7 +47,7 @@
     },
     "architecture": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "use_gpu": {
           "type": "boolean",
@@ -63,7 +63,7 @@
     },
     "numerics": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "float_type": {
           "type": "string",
@@ -76,7 +76,7 @@
     "run": {
       "type": "object",
       "description": "Window bounds and state-reanchoring controls. Put advection options in [advection].",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "start_window": {"type": "integer", "minimum": 1, "default": 1},
         "stop_window": {"type": "integer", "minimum": 1},
@@ -103,7 +103,7 @@
     },
     "advection": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "scheme": {
           "type": "string",
@@ -119,7 +119,7 @@
     },
     "diffusion": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "kind": {
           "type": "string",
@@ -147,7 +147,7 @@
     },
     "convection": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "kind": {
           "type": "string",
@@ -167,7 +167,7 @@
     },
     "chemistry": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "kind": {"type": "string", "enum": ["none", "decay"], "default": "none"},
         "half_lives_seconds": {
@@ -177,6 +177,7 @@
         }
       }
     },
+    "init": {"$ref": "#/definitions/initial_condition", "description": "Legacy single-tracer initial condition; prefer tracers.<name>.init."},
     "tracers": {
       "type": "object",
       "description": "Tracer definitions keyed by the output tracer name.",

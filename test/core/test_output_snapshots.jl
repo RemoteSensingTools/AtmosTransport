@@ -1,8 +1,7 @@
 using Test
 using NCDatasets
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 # AtmosTransport re-exports only a subset of Output's names (e.g.
 # `runtime_output_spec`); the output-spec accessors used below
 # (`output_enabled`, `output_field_spec`, `snapshot_hours`, `layer_selection`,

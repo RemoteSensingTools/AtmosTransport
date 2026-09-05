@@ -15,8 +15,7 @@ Invariant preserved by every commit in plan 23: `NoConvection` and
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport: Operators, Grids, State, MetDrivers, Models
 
 using .AtmosTransport.State: DryBasis, MoistBasis, CellState, CubedSphereState,

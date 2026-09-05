@@ -17,8 +17,7 @@
 using Test
 using Random
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport: Operators, Grids, State, MetDrivers, Models
 using .AtmosTransport.State: DryBasis, CellState, CubedSphereState
 using .AtmosTransport.Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh,

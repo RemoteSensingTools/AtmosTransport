@@ -1,3 +1,5 @@
+abstract type AbstractSnapshotFrame end
+
 """
     SnapshotFrame
 
@@ -14,7 +16,7 @@ diagnostics are computed by [`write_snapshot_netcdf`](@ref), which keeps the
 runtime capture contract lossless enough for per-level extraction and
 area-normalized mass diagnostics.
 """
-struct SnapshotFrame{A}
+struct SnapshotFrame{A} <: AbstractSnapshotFrame
     time_hours::Float64
     air_mass::A
     tracers::Dict{Symbol, A}
@@ -98,7 +100,9 @@ The result is CPU-resident and topology-native. For cubed-sphere states,
 `halo_width` strips panel halos before writing. GPU-backed arrays are copied to
 host memory by `Array(...)`.
 """
-function capture_snapshot(model; time_hours::Real=0, halo_width::Integer=0)
+function capture_snapshot(model; time_hours::Real=0, halo_width::Integer=0,
+                          fields=nothing)
+    fields === nothing || return _capture_selected_snapshot(model, fields; time_hours, halo_width)
     mesh = model.grid.horizontal
     air = _extract_for_output(model.state.air_mass, mesh; halo_width=halo_width)
     names = tracer_names(model.state)
@@ -111,7 +115,7 @@ function capture_snapshot(model; time_hours::Real=0, halo_width::Integer=0)
                          _basis_symbol(mass_basis(model.state)))
 end
 
-function _frame_tracer_names(frame::SnapshotFrame)
+function _frame_tracer_names(frame::AbstractSnapshotFrame)
     return sort!(collect(keys(frame.tracers)))
 end
 

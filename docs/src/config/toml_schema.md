@@ -156,6 +156,15 @@ Initial-condition kinds (declared in `src/Models/InitialConditionIO.jl`):
 | `"pressure_layer"` | no | no | yes | `lowest_layer = true` or `psurf_fraction`; optional `total_molecules` |
 | `"cs_native"` | no | no | yes | `file`, `variable`; optional `time_index`, `vertical_order`, `clamp_negative` (default `false`) |
 
+`pressure_layer` places tracer in one level per column. With
+`lowest_layer = true`, it uses the bottom level and ignores `psurf_fraction`.
+Otherwise it chooses the level whose logarithmic pressure midpoint is nearest
+`psurf_fraction * surface_pressure`, using the binary's hybrid coefficients and
+per-column surface pressure. The fraction defaults to `0.5` and must be in
+`(0, 1]`; equal distances select the first level. One uniform dry VMR across
+the selected cells is normalized to the positive `total_molecules`
+(default `1e22`), using their summed dry-air mass. Other levels start at zero.
+
 Surface-flux emission is configured as a nested sub-table under each
 tracer. Each tracer that emits gets one `[tracers.<name>.surface_flux]`
 block with a `kind` selector and per-kind keys:

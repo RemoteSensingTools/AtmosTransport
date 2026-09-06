@@ -1,0 +1,7 @@
+PROBE (nt = 6, vmr_bytes = 242041496, pack_bytes = 120279744, state_bytes = 135468440, vmr_time = 3.412273145, pack_time = 0.28557898, state_time = 0.409726706, shape = (96, 96, 66, 6), total = 4.809508352e9)
+PROBE (nt = 6, vmr_bytes = 79327008, pack_bytes = 87592800, state_bytes = 87592912, vmr_time = 0.066930582, pack_time = 0.061568679, state_time = 0.080704623, shape = (96, 96, 66, 6), total = 4.809508352e9)
+PROBE (nt = 32, vmr_bytes = 423077600, pack_bytes = 467161600, state_bytes = 502187328, vmr_time = 0.463826425, pack_time = 0.33451599199999993, state_time = 0.884802802, shape = (96, 96, 66, 32), total = 4.809508352e9)
+PROBE (nt = 32, vmr_bytes = 423076704, pack_bytes = 467161600, state_bytes = 467178416, vmr_time = 0.4865307260000001, pack_time = 0.18825192899999998, state_time = 0.111304412, shape = (96, 96, 66, 32), total = 4.809508352e9)
+Precompiling packages...
+  13049.1 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 15 seconds. 192 already precompiled.

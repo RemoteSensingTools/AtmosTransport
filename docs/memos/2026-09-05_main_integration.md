@@ -88,6 +88,19 @@ CS workspace construction now follows the device state directly; see the
 allocation and isolated construction time without a claimed additional
 whole-run speedup.
 
+## Startup and package loading
+
+[Pressure-layer configuration typing](2026-09-05_main_pressure_initialization.md)
+removes 4.98 GB of temporary scalar allocation from 32-tracer initialization.
+The corresponding real V100 workload now takes 5.675 s versus 15.675 s at the
+preceding checkpoint; all 196 output arrays remain exactly equal. Focused
+scientific initialization and Aqua/JET checks pass. The complete CPU suite
+count above still describes the preceding device-workspace checkpoint.
+
+The maintained preprocessing, regridding, inversion, and snapshot-converter
+entry points now [reuse the compiled package](2026-09-05_main_package_loading.md).
+Their existing CLI/regridding/inversion suites and a signed converter smoke pass.
+
 ## Remaining integration work
 
 - Extend the measured CS device-allocation approach to other startup costs

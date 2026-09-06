@@ -9,9 +9,8 @@ topology-dispatched VMR builders for the unified runtime.
 - [`build_initial_mixing_ratio`](@ref) — topology-dispatched builder
   returning **dry VMR** on interior cells. Accepts `kind = uniform |
   latitude_step | gaussian_blob | file | netcdf | file_field |
-  catrine_co2` for LL/RG meshes. CS supports `uniform |
-  latitude_step | gaussian_blob | file | netcdf | file_field |
-  catrine_co2`.
+  catrine_co2` for LL/RG meshes, plus `bl_enhanced` on LL. CS supports
+  those shared kinds plus `pressure_layer` and signed `cs_native` fields.
 - [`pack_initial_tracer_mass`](@ref) — basis-aware VMR → conservative model storage
   conversion. Dispatches on `mass_basis::AbstractMassBasis`:
   - `DryBasis` (default per CLAUDE.md invariant 14): `rm = vmr .* air_mass`.
@@ -22,8 +21,9 @@ topology-dispatched VMR builders for the unified runtime.
 
 ## Contents
 
-- LL/RG and CS `build_initial_mixing_ratio` for
-  `uniform | file | catrine_co2 | netcdf | file_field`.
+- LL/RG and CS `build_initial_mixing_ratio` for the kinds above. CS
+  `pressure_layer` selects a level per column from the stored surface pressure
+  and normalizes its dry VMR to the configured global molecule count.
 - Basis-aware `pack_initial_tracer_mass` (DryBasis + MoistBasis); CS
   output is halo-padded with the halo zeroed. `_build_source_latlon_mesh`
   helper for LL→CS conservative regridding.

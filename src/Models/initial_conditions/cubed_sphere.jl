@@ -290,9 +290,11 @@ function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}}
     B    = grid.vertical.B
 
     lowest_layer = _config_bool(cfg, "lowest_layer", false, "initial-condition lowest_layer")
-    psurf_fraction = lowest_layer ? FT(NaN) :
-                     FT(get(cfg, "psurf_fraction", 0.5))
-    total_molecules = Float64(get(cfg, "total_molecules", 1.0e22))
+    # Assert the converted configuration types before entering the column loops.
+    # Values read from a heterogeneous TOML dictionary otherwise box hot-loop arithmetic.
+    psurf_fraction = (lowest_layer ? FT(NaN) :
+                      FT(get(cfg, "psurf_fraction", 0.5)))::FT
+    total_molecules = Float64(get(cfg, "total_molecules", 1.0e22))::Float64
 
     if !lowest_layer
         (FT(0) < psurf_fraction <= FT(1)) || throw(ArgumentError(

@@ -89,6 +89,14 @@ flowchart LR
     Y2 --> X2[X half-sweep]
 ```
 
+For cubed-sphere CUDA runs with Float32 PPM, packed sweeps use 32×2 thread
+blocks. This covers a C90 panel with much less padding than a 256×1 block:
+about 94% of launched threads address interior cells, compared with 35%.
+Each thread still performs the same air-mass update and tracer loop; the
+reconstruction and limiter formulas are unchanged. CPU, Metal, Float64, and
+other schemes retain their existing launch defaults. This choice was measured
+on a V100; performance on other NVIDIA architectures has not been measured.
+
 ## Matrix convection and many tracers
 
 TM5 and CMFMC-matrix convection use the same backward-Euler solve after their

@@ -36,6 +36,13 @@ the model-facing `apply!` entrypoints that the transport block calls.
 - This folder is the main place where topology-specific transport
   execution diverges while the public operator API stays uniform
 
+Packed CS sweep launch geometry is selected by
+`_cs_packed_sweep_workgroupsize`. The CUDA extension uses a 32×2 tile for
+Float32 PPM; other paths keep their existing 256-thread default. The tile
+reduces inactive threads on panel rows while retaining the same kernels,
+tracer loop, air-mass update, and copy-back/ping-pong behavior. GPU launch
+regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
+
 ## File Map
 
 - [`Advection.jl`](Advection.jl) — submodule assembly, imports, include order

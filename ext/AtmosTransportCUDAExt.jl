@@ -20,6 +20,13 @@ import AtmosTransport.Adjoints:
 using AtmosTransport.Architectures: GPU
 using CUDA: CuArray, CUDABackend
 
+# A scalar workgroup size extends to (size, 1, 1). On C90 this leaves
+# 166 of a 256-thread row inactive. A 32×2 tile keeps adjacent i cells in
+# one warp and covers panel rows with much less padding. Measured on V100.
+AtmosTransport.Operators.Advection._cs_packed_sweep_workgroupsize(
+    ::CUDABackend, ::AtmosTransport.Operators.Advection.PPMScheme,
+    ::Type{Float32}) = (32, 2)
+
 AtmosTransport.Architectures.array_type(::GPU{:cuda}) = CuArray
 AtmosTransport.Architectures.device(::GPU{:cuda})     = CUDABackend()
 AtmosTransport.Architectures.architecture(::CUDA.AbstractGPUArray) = GPU(:cuda)

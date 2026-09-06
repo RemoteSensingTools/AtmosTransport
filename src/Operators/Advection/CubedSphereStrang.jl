@@ -219,6 +219,10 @@ subcycling pilot. It's a safety net for preprocessing flux-inconsistency
     return gamma * rm_donor
 end
 
+# Backend extensions can choose a tile for the packed panel kernels without
+# changing their per-cell arithmetic or the CPU/other-scheme launch defaults.
+@inline _cs_packed_sweep_workgroupsize(backend, scheme, ::Type) = 256
+
 @inline _cs_gpu_profile_enabled() =
     SectionTimer.is_enabled() &&
     lowercase(get(ENV, "ATMOSTR_PROFILE_GPU", "")) in ("1", "true", "on", "yes")
@@ -285,7 +289,8 @@ function _sweep_x_panel_mt!(rm_4d, m, am, scheme::AbstractAdvectionScheme,
     _validate_halo_for_scheme(scheme, Hp)
     FT = eltype(m)
     backend = get_backend(rm_4d)
-    kernel! = _cs_xsweep_mt_kernel!(backend, 256)
+    workgroupsize = _cs_packed_sweep_workgroupsize(backend, scheme, FT)
+    kernel! = _cs_xsweep_mt_kernel!(backend, workgroupsize)
     _profiled_launch_and_sync!(backend, :cs_kernel_launch_x_mt, :cs_kernel_sync_x_mt) do
         kernel!(rm_4d_A, rm_4d, m_A, m, am, scheme, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
                 ndrange=(Nc, Nc, Nz))
@@ -304,7 +309,8 @@ function _sweep_x_panel_mt_pingpong!(rm_4d_out, m_out, rm_4d, m, am,
     _validate_halo_for_scheme(scheme, Hp)
     FT = eltype(m)
     backend = get_backend(rm_4d)
-    kernel! = _cs_xsweep_mt_kernel!(backend, 256)
+    workgroupsize = _cs_packed_sweep_workgroupsize(backend, scheme, FT)
+    kernel! = _cs_xsweep_mt_kernel!(backend, workgroupsize)
     _profiled_launch_and_sync!(backend, :cs_kernel_launch_x_mt, :cs_kernel_sync_x_mt) do
         kernel!(rm_4d_out, rm_4d, m_out, m, am, scheme, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
                 ndrange=(Nc, Nc, Nz))
@@ -468,7 +474,8 @@ function _sweep_y_panel_mt!(rm_4d, m, bm, scheme::AbstractAdvectionScheme,
     _validate_halo_for_scheme(scheme, Hp)
     FT = eltype(m)
     backend = get_backend(rm_4d)
-    kernel! = _cs_ysweep_mt_kernel!(backend, 256)
+    workgroupsize = _cs_packed_sweep_workgroupsize(backend, scheme, FT)
+    kernel! = _cs_ysweep_mt_kernel!(backend, workgroupsize)
     _profiled_launch_and_sync!(backend, :cs_kernel_launch_y_mt, :cs_kernel_sync_y_mt) do
         kernel!(rm_4d_A, rm_4d, m_A, m, bm, scheme, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
                 ndrange=(Nc, Nc, Nz))
@@ -487,7 +494,8 @@ function _sweep_y_panel_mt_pingpong!(rm_4d_out, m_out, rm_4d, m, bm,
     _validate_halo_for_scheme(scheme, Hp)
     FT = eltype(m)
     backend = get_backend(rm_4d)
-    kernel! = _cs_ysweep_mt_kernel!(backend, 256)
+    workgroupsize = _cs_packed_sweep_workgroupsize(backend, scheme, FT)
+    kernel! = _cs_ysweep_mt_kernel!(backend, workgroupsize)
     _profiled_launch_and_sync!(backend, :cs_kernel_launch_y_mt, :cs_kernel_sync_y_mt) do
         kernel!(rm_4d_out, rm_4d, m_out, m, bm, scheme, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
                 ndrange=(Nc, Nc, Nz))
@@ -646,7 +654,8 @@ function _sweep_z_panel_mt!(rm_4d, m, cm, scheme::AbstractAdvectionScheme,
                             flux_scale = one(eltype(m)))
     FT = eltype(m)
     backend = get_backend(rm_4d)
-    kernel! = _cs_zsweep_mt_kernel!(backend, 256)
+    workgroupsize = _cs_packed_sweep_workgroupsize(backend, scheme, FT)
+    kernel! = _cs_zsweep_mt_kernel!(backend, workgroupsize)
     _profiled_launch_and_sync!(backend, :cs_kernel_launch_z_mt, :cs_kernel_sync_z_mt) do
         kernel!(rm_4d_A, rm_4d, m_A, m, cm, scheme, Int32(Nz), Int32(Hp), Int32(Nt), FT(flux_scale);
                 ndrange=(Nc, Nc, Nz))
@@ -664,7 +673,8 @@ function _sweep_z_panel_mt_pingpong!(rm_4d_out, m_out, rm_4d, m, cm,
                                      flux_scale = one(eltype(m)))
     FT = eltype(m)
     backend = get_backend(rm_4d)
-    kernel! = _cs_zsweep_mt_kernel!(backend, 256)
+    workgroupsize = _cs_packed_sweep_workgroupsize(backend, scheme, FT)
+    kernel! = _cs_zsweep_mt_kernel!(backend, workgroupsize)
     _profiled_launch_and_sync!(backend, :cs_kernel_launch_z_mt, :cs_kernel_sync_z_mt) do
         kernel!(rm_4d_out, rm_4d, m_out, m, cm, scheme, Int32(Nz), Int32(Hp), Int32(Nt), FT(flux_scale);
                 ndrange=(Nc, Nc, Nz))

@@ -110,11 +110,22 @@ at the pressure-typing checkpoint. All 196 output arrays remain exactly equal;
 
 ## Remaining integration work
 
-- Profile the remaining initial-VMR construction and steady-state transport
-  costs before further changes. Distinguish isolated GPU work from waits for
-  earlier launches at synchronization boundaries.
+- Profile the remaining initial-VMR construction and longer steady-state
+  workloads before further changes. The sweep/halo timing ambiguity is resolved
+  by the CUDA PPM checkpoint below.
 - Retain current signed-tracer conservation and output-total contracts.
 - Reconcile scientific documentation and package-loading improvements.
 - Repeat CPU and GPU runtime validation after the remaining I/O ports. Compare
   against the real-input baseline above before promoting an adaptive tracer
   batch size. The broader revamp is not yet fully integrated.
+
+## CUDA PPM launch layout
+
+[Synchronized sweep profiling and tile selection](2026-09-05_main_ppm_launch_tiles.md)
+reduce padding in the packed Float32 CUDA PPM launch without changing kernel
+arithmetic. A 32×2 tile reduces the real V100 32-tracer workload from 5.030 to
+4.466 s median, with essentially unchanged host allocation. All 196 output
+arrays remain exactly equal. The new GPU diagnostic passes 540 checks through
+65 tracers; focused CPU advection/Aqua/JET checks pass 619 assertions. The full
+CPU suite above predates this launch-only change. Other GPU architectures and
+longer runs remain unbenchmarked.

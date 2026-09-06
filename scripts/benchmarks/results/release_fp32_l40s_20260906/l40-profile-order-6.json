@@ -1,0 +1,62 @@
+[
+  {
+    "label": "baseline",
+    "tracers": 6,
+    "sample": 0
+  },
+  {
+    "label": "current",
+    "tracers": 6,
+    "sample": 0
+  },
+  {
+    "label": "current",
+    "tracers": 6,
+    "sample": 1
+  },
+  {
+    "label": "baseline",
+    "tracers": 6,
+    "sample": 1
+  },
+  {
+    "label": "baseline",
+    "tracers": 6,
+    "sample": 2
+  },
+  {
+    "label": "current",
+    "tracers": 6,
+    "sample": 2
+  },
+  {
+    "label": "current",
+    "tracers": 6,
+    "sample": 3
+  },
+  {
+    "label": "baseline",
+    "tracers": 6,
+    "sample": 3
+  },
+  {
+    "label": "baseline",
+    "tracers": 6,
+    "sample": 4
+  },
+  {
+    "label": "current",
+    "tracers": 6,
+    "sample": 4
+  },
+  {
+    "label": "current",
+    "tracers": 6,
+    "sample": 5
+  },
+  {
+    "label": "baseline",
+    "tracers": 6,
+    "sample": 5
+  }
+]

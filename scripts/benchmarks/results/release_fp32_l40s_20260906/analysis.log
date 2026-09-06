@@ -1,0 +1,11 @@
+Test Summary:                                                    | Pass  Total  Time
+Full-day files are complete, finite, repeatable and conservative | 3750   3750  4.3s
+Test Summary:                       | Pass  Total  Time
+Current L40S and V100 outputs agree |  198    198  2.4s
+l40_baseline tracers=6 median=7.350301803 range=(7.081022319, 7.574484467)
+l40_baseline tracers=32 median=47.467991622 range=(47.054282576, 47.584112721)
+l40_current tracers=6 median=4.540828977 range=(4.470650746, 5.09700838)
+l40_current tracers=32 median=13.841094572 range=(13.738550399, 14.178290087)
+v100_current tracers=6 median=9.670475181 range=(9.348183434, 9.918558425)
+v100_current tracers=32 median=29.163502239 range=(29.055305329, 29.375604802)
+DAY_COMPARISON_PASSED tracers=[6, 32]

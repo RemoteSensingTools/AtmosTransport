@@ -1,0 +1,17 @@
+tracers = 6
+gc_seconds = 1.810604217
+device = "NVIDIA L40S"
+windows = 24
+sample = 5
+precision = "Float32"
+wall_seconds = 7.228736081
+host_allocated_bytes = 7250984128
+output_bytes = 4345288
+
+[final_totals]
+tracer02 = 4.809587712e9
+tracer04 = 4.809654272e9
+tracer06 = 4.80964608e9
+tracer03 = 4.809628672e9
+tracer01 = 4.809759232e9
+tracer05 = 4.809596416e9

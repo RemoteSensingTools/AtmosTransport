@@ -1,0 +1,1360 @@
+CUDA toolchain: 
+- runtime 12.6, artifact installation
+- driver 610.57.4 for 13.3
+- compiler 12.9, artifact installation
+
+CUDA libraries: 
+- CUBLAS: 12.6.4
+- CURAND: 10.3.7
+- CUFFT: 11.3.0
+- CUSOLVER: 11.7.1
+- CUSPARSE: 12.5.4
+- CUPTI: 2024.3.2 (API 12.6.0)
+- NVML: 13.0.0+610.57.4
+
+Julia packages: 
+- CUDA: 5.11.3
+- GPUArrays: 11.5.14
+- GPUCompiler: 1.17.1
+- KernelAbstractions: 0.9.42
+- CUDA_Driver_jll: 13.3.4+0
+- CUDA_Compiler_jll: 0.4.4+1
+- CUDA_Runtime_jll: 0.21.0+1
+
+Toolchain:
+- Julia: 1.12.6
+- LLVM: 18.1.7
+
+Preferences:
+- CUDA_Runtime_jll.version: 12.6
+
+1 device:
+  0: NVIDIA L40S (sm_89, 43.575 GiB / 44.988 GiB available)
+PROFILE_SERVER_READY
+[ Info: [binary] /home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour/era5_n320_transport_20181201_float32.bin grid=cubed_sphere levels=66 basis=dry steps/window=adaptive fields=[am,bm,cm,detd,detu,dkg,dm,entd,entu,m,pbl_hflux,pblh,ps,t2m,ustar]
+[ Info: [gpu verified] backend=cuda backing=CuArray device=NVIDIA L40S
+┌ Info: Driven runtime
+│ CubedSphere
+│ |-- grid:      C90, levels=66, Hp=3
+│ |-- numerics:  scheme=PPM, FT=Float32, backend=GPU (CUDA, NVIDIA L40S)
+│ |-- physics:   diffusion=ImplicitVerticalDiffusion, surface_flux=midpoint_split, convection=TM5Convection
+│ |-- schedule:  window_dt=3600s, steps/window=10..11, max=11, binaries=1
+│ |-- tracers:   tracer02, tracer24, tracer11, tracer12, tracer04, tracer05, tracer18, tracer17, tracer07, tracer23, tracer15, tracer20, tracer22, tracer28, tracer30, tracer14, tracer21, tracer25, tracer32, tracer08, tracer09, tracer26, tracer06, tracer16, tracer01, tracer27, tracer03, tracer29, tracer19, tracer10, tracer13, tracer31
+└ `-- output:    /tmp/atmos-l40-release-20260906/current-day/w24_tracers32_sample0.nc
+Forward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: initializing[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.0s | io_write 21.1s | wall 21.4s | snapshot 1 at t=0.0h[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: running era5_n320_transport_20181201_float32.bin (24 windows)[K
+   timing: transport 0.0s ( 0.0%) | io_read 3.3s | io_write 21.1s | wall 24.9s | schedule max=11 current=10[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   4%|█▋                                      |  ETA: 0:13:43 (35.77  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 1/24  steps/window=10[K
+   timing: transport 10.8s (30.2%) | io_read 3.3s | io_write 21.1s | wall 35.8s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   8%|███▍                                    |  ETA: 0:06:40 (18.18  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 2/24  steps/window=10[K
+   timing: transport 11.4s (31.4%) | io_read 3.3s | io_write 21.1s | wall 36.4s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  12%|█████                                   |  ETA: 0:04:19 (12.33  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 3/24  steps/window=10[K
+   timing: transport 12.0s (32.5%) | io_read 3.3s | io_write 21.1s | wall 37.0s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  17%|██████▋                                 |  ETA: 0:03:08 ( 9.40  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 4/24  steps/window=10[K
+   timing: transport 12.6s (33.6%) | io_read 3.3s | io_write 21.1s | wall 37.6s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  21%|████████▍                               |  ETA: 0:02:25 ( 7.64  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 5/24  steps/window=10[K
+   timing: transport 13.2s (34.6%) | io_read 3.3s | io_write 21.1s | wall 38.2s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  25%|██████████                              |  ETA: 0:01:56 ( 6.44  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 6/24  steps/window=10[K
+   timing: transport 13.7s (35.4%) | io_read 3.3s | io_write 21.1s | wall 38.7s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  29%|███████████▋                            |  ETA: 0:01:35 ( 5.61  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 7/24  steps/window=10[K
+   timing: transport 14.3s (36.4%) | io_read 3.3s | io_write 21.1s | wall 39.3s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  33%|█████████████▍                          |  ETA: 0:01:20 ( 4.97  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 8/24  steps/window=10[K
+   timing: transport 14.8s (37.2%) | io_read 3.3s | io_write 21.1s | wall 39.8s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  38%|███████████████                         |  ETA: 0:01:07 ( 4.49  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 9/24  steps/window=11[K
+   timing: transport 15.4s (38.2%) | io_read 3.3s | io_write 21.1s | wall 40.4s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  42%|████████████████▋                       |  ETA: 0:00:57 ( 4.10  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 10/24  steps/window=11[K
+   timing: transport 16.0s (39.1%) | io_read 3.3s | io_write 21.1s | wall 41.0s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  46%|██████████████████▍                     |  ETA: 0:00:49 ( 3.78  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 11/24  steps/window=11[K
+   timing: transport 16.5s (39.8%) | io_read 3.3s | io_write 21.1s | wall 41.5s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  50%|████████████████████                    |  ETA: 0:00:42 ( 3.51  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 12/24  steps/window=11[K
+   timing: transport 17.1s (40.7%) | io_read 3.3s | io_write 21.1s | wall 42.1s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  54%|█████████████████████▋                  |  ETA: 0:00:36 ( 3.29  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 13/24  steps/window=11[K
+   timing: transport 17.7s (41.5%) | io_read 3.3s | io_write 21.1s | wall 42.7s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  58%|███████████████████████▍                |  ETA: 0:00:31 ( 3.09  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 14/24  steps/window=11[K
+   timing: transport 18.3s (42.3%) | io_read 3.3s | io_write 21.1s | wall 43.3s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  62%|█████████████████████████               |  ETA: 0:00:26 ( 2.92  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 15/24  steps/window=11[K
+   timing: transport 18.8s (43.0%) | io_read 3.3s | io_write 21.1s | wall 43.8s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  67%|██████████████████████████▋             |  ETA: 0:00:22 ( 2.77  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 16/24  steps/window=11[K
+   timing: transport 19.4s (43.7%) | io_read 3.3s | io_write 21.1s | wall 44.4s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  71%|████████████████████████████▍           |  ETA: 0:00:19 ( 2.65  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 17/24  steps/window=11[K
+   timing: transport 20.0s (44.5%) | io_read 3.3s | io_write 21.1s | wall 45.0s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  75%|██████████████████████████████          |  ETA: 0:00:15 ( 2.53  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 18/24  steps/window=11[K
+   timing: transport 20.5s (45.1%) | io_read 3.3s | io_write 21.1s | wall 45.5s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  79%|███████████████████████████████▋        |  ETA: 0:00:12 ( 2.42  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 19/24  steps/window=11[K
+   timing: transport 21.1s (45.8%) | io_read 3.3s | io_write 21.1s | wall 46.1s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  83%|█████████████████████████████████▍      |  ETA: 0:00:09 ( 2.33  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 20/24  steps/window=11[K
+   timing: transport 21.7s (46.5%) | io_read 3.3s | io_write 21.1s | wall 46.7s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  88%|███████████████████████████████████     |  ETA: 0:00:07 ( 2.24  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 21/24  steps/window=10[K
+   timing: transport 22.1s (46.9%) | io_read 3.3s | io_write 21.1s | wall 47.1s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  92%|████████████████████████████████████▋   |  ETA: 0:00:04 ( 2.17  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 22/24  steps/window=11[K
+   timing: transport 22.7s (47.6%) | io_read 3.3s | io_write 21.1s | wall 47.7s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  96%|██████████████████████████████████████▍ |  ETA: 0:00:02 ( 2.09  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 23/24  steps/window=11[K
+   timing: transport 23.2s (48.1%) | io_read 3.3s | io_write 21.1s | wall 48.2s | snapshots=1  output=w24_tracers32_sample0.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:48 ( 2.03  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 24/24  steps/window=11[K
+   timing: transport 23.7s (48.6%) | io_read 3.3s | io_write 21.1s | wall 48.6s | snapshots=1  output=w24_tracers32_sample0.nc[K
+
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:49 ( 2.04  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 24/24  steps/window=11[K
+   timing: transport 23.7s (48.2%) | io_read 3.3s | io_write 21.4s | wall 49.1s | snapshot 2 at t=24.0h  output=w24_tracers32_sample0.nc[K
+
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:49 ( 2.04  s/it)[K
+   status: finished era5_n320_transport_20181201_float32.bin[K
+   timing: transport 23.7s (48.2%) | io_read 3.3s | io_write 21.4s | wall 49.1s | file wall 24.4s[K
+PROFILE_COMPLETED w24_tracers32_sample0 seconds=96.901082566
+[ Info: Done: 27.7s  (2 snapshots, final t=24.0h)
+[ Info:   tracer02 total mass:               4.809653e+09 kg
+[ Info:   tracer24 total mass:               4.809652e+09 kg
+[ Info:   tracer11 total mass:               4.809653e+09 kg
+[ Info:   tracer12 total mass:               4.809652e+09 kg
+[ Info:   tracer04 total mass:               4.809653e+09 kg
+[ Info:   tracer05 total mass:               4.809652e+09 kg
+[ Info:   tracer18 total mass:               4.809653e+09 kg
+[ Info:   tracer17 total mass:               4.809653e+09 kg
+[ Info:   tracer07 total mass:               4.809653e+09 kg
+[ Info:   tracer23 total mass:               4.809652e+09 kg
+[ Info:   tracer15 total mass:               4.809653e+09 kg
+[ Info:   tracer20 total mass:               4.809653e+09 kg
+[ Info:   tracer22 total mass:               4.809652e+09 kg
+[ Info:   tracer28 total mass:               4.809652e+09 kg
+[ Info:   tracer30 total mass:               4.809652e+09 kg
+[ Info:   tracer14 total mass:               4.809653e+09 kg
+[ Info:   tracer21 total mass:               4.809653e+09 kg
+[ Info:   tracer25 total mass:               4.809652e+09 kg
+[ Info:   tracer32 total mass:               4.809652e+09 kg
+[ Info:   tracer08 total mass:               4.809653e+09 kg
+[ Info:   tracer09 total mass:               4.809652e+09 kg
+[ Info:   tracer26 total mass:               4.809652e+09 kg
+[ Info:   tracer06 total mass:               4.809652e+09 kg
+[ Info:   tracer16 total mass:               4.809653e+09 kg
+[ Info:   tracer01 total mass:               4.809653e+09 kg
+[ Info:   tracer27 total mass:               4.809652e+09 kg
+[ Info:   tracer03 total mass:               4.809653e+09 kg
+[ Info:   tracer29 total mass:               4.809652e+09 kg
+[ Info:   tracer19 total mass:               4.809652e+09 kg
+[ Info:   tracer10 total mass:               4.809653e+09 kg
+[ Info:   tracer13 total mass:               4.809653e+09 kg
+[ Info:   tracer31 total mass:               4.809652e+09 kg
+[ Info: Forward run wall 50.9s   transport 23.7s (46.5%)   io_read 3.3s (6.4%)   io_write 21.4s (42.1%)   other 2.5s (5.0%)
+[SectionTimer] wall=93.36s  covered=48.92s (52.4%)
+section                         n_calls    total_s    mean_ms     p50_ms     p95_ms     max_ms    frac%
+advection                           255     13.227     51.872     36.455     74.965   2486.534    27.04
+prefetch_task_total                  23     11.912    517.898    252.923    370.426   6580.638    24.35
+cs_sweep_x                          510      5.091      9.982      7.012      9.532   1061.068    10.41
+window_load_host                     23      3.683    160.113    169.336    211.641    283.046     7.53
+cs_sweep_y                          510      3.349      6.566      4.740      6.157    582.942     6.84
+convection                           24      2.314     96.423     54.926     55.586   1051.878     4.73
+cs_halo_rm_y                        765      2.039      2.665      1.572      4.579    107.352     4.17
+diffusion                           255      1.924      7.546      5.008      6.513    493.019     3.93
+window_backend_copy                  23      1.863     81.018     80.937     92.220    117.385     3.81
+forcing_refresh                     255      1.508      5.915      0.235     34.623    335.611     3.08
+cs_halo_rm_x                        765      1.422      1.859      1.625      1.635    108.490     2.91
+cs_sweep_z                          510      0.342      0.671      0.035      0.041    324.081     0.70
+cs_halo_m_y                         765      0.103      0.135      0.132      0.151      0.173     0.21
+cs_halo_m_x                         765      0.102      0.134      0.131      0.151      0.183     0.21
+window_advance                      255      0.045      0.176      0.000      1.943      2.078     0.09
+prefetch_fetch_wait                  23      0.000      0.001      0.000      0.001      0.001     0.00
+chemistry                            24      0.000      0.000      0.000      0.000      0.000     0.00
+[ Info: Section timings → /tmp/atmos-l40-release-20260906/current-day/w24_tracers32_sample0.timings.csv
+[ Info: [binary] /home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour/era5_n320_transport_20181201_float32.bin grid=cubed_sphere levels=66 basis=dry steps/window=adaptive fields=[am,bm,cm,detd,detu,dkg,dm,entd,entu,m,pbl_hflux,pblh,ps,t2m,ustar]
+[ Info: [gpu verified] backend=cuda backing=CuArray device=NVIDIA L40S
+┌ Info: Driven runtime
+│ CubedSphere
+│ |-- grid:      C90, levels=66, Hp=3
+│ |-- numerics:  scheme=PPM, FT=Float32, backend=GPU (CUDA, NVIDIA L40S)
+│ |-- physics:   diffusion=ImplicitVerticalDiffusion, surface_flux=midpoint_split, convection=TM5Convection
+│ |-- schedule:  window_dt=3600s, steps/window=10..11, max=11, binaries=1
+│ |-- tracers:   tracer02, tracer24, tracer11, tracer12, tracer04, tracer05, tracer18, tracer17, tracer07, tracer23, tracer15, tracer20, tracer22, tracer28, tracer30, tracer14, tracer21, tracer25, tracer32, tracer08, tracer09, tracer26, tracer06, tracer16, tracer01, tracer27, tracer03, tracer29, tracer19, tracer10, tracer13, tracer31
+└ `-- output:    /tmp/atmos-l40-release-20260906/current-day/w24_tracers32_sample1.nc
+Forward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: initializing[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.0s | io_write 0.1s | wall 0.1s | snapshot 1 at t=0.0h[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: running era5_n320_transport_20181201_float32.bin (24 windows)[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.3s | io_write 0.1s | wall 0.4s | schedule max=11 current=10[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   4%|█▋                                      |  ETA: 0:00:22 ( 0.96  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 1/24  steps/window=10[K
+   timing: transport 0.5s (55.9%) | io_read 0.3s | io_write 0.1s | wall 1.0s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   8%|███▍                                    |  ETA: 0:00:18 ( 0.80  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 2/24  steps/window=10[K
+   timing: transport 1.2s (73.4%) | io_read 0.3s | io_write 0.1s | wall 1.6s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  12%|█████                                   |  ETA: 0:00:15 ( 0.70  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 3/24  steps/window=10[K
+   timing: transport 1.7s (79.9%) | io_read 0.3s | io_write 0.1s | wall 2.1s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  17%|██████▋                                 |  ETA: 0:00:13 ( 0.67  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 4/24  steps/window=10[K
+   timing: transport 2.3s (84.2%) | io_read 0.3s | io_write 0.1s | wall 2.7s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  21%|████████▍                               |  ETA: 0:00:12 ( 0.65  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 5/24  steps/window=10[K
+   timing: transport 2.9s (87.1%) | io_read 0.3s | io_write 0.1s | wall 3.3s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  25%|██████████                              |  ETA: 0:00:11 ( 0.63  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 6/24  steps/window=10[K
+   timing: transport 3.3s (88.7%) | io_read 0.3s | io_write 0.1s | wall 3.8s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  29%|███████████▋                            |  ETA: 0:00:10 ( 0.61  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 7/24  steps/window=10[K
+   timing: transport 3.9s (90.2%) | io_read 0.3s | io_write 0.1s | wall 4.3s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  33%|█████████████▍                          |  ETA: 0:00:10 ( 0.60  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 8/24  steps/window=10[K
+   timing: transport 4.3s (91.1%) | io_read 0.3s | io_write 0.1s | wall 4.8s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  38%|███████████████                         |  ETA: 0:00:09 ( 0.59  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 9/24  steps/window=11[K
+   timing: transport 4.9s (92.1%) | io_read 0.3s | io_write 0.1s | wall 5.4s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  42%|████████████████▋                       |  ETA: 0:00:08 ( 0.59  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 10/24  steps/window=11[K
+   timing: transport 5.4s (92.8%) | io_read 0.3s | io_write 0.1s | wall 5.9s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  46%|██████████████████▍                     |  ETA: 0:00:08 ( 0.58  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 11/24  steps/window=11[K
+   timing: transport 6.0s (93.4%) | io_read 0.3s | io_write 0.1s | wall 6.4s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  50%|████████████████████                    |  ETA: 0:00:07 ( 0.59  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 12/24  steps/window=11[K
+   timing: transport 6.6s (94.0%) | io_read 0.3s | io_write 0.1s | wall 7.0s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  54%|█████████████████████▋                  |  ETA: 0:00:06 ( 0.58  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 13/24  steps/window=11[K
+   timing: transport 7.1s (94.3%) | io_read 0.3s | io_write 0.1s | wall 7.5s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  58%|███████████████████████▍                |  ETA: 0:00:06 ( 0.58  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 14/24  steps/window=11[K
+   timing: transport 7.7s (94.8%) | io_read 0.3s | io_write 0.1s | wall 8.1s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  62%|█████████████████████████               |  ETA: 0:00:05 ( 0.57  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 15/24  steps/window=11[K
+   timing: transport 8.2s (95.1%) | io_read 0.3s | io_write 0.1s | wall 8.6s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  67%|██████████████████████████▋             |  ETA: 0:00:05 ( 0.57  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 16/24  steps/window=11[K
+   timing: transport 8.7s (95.4%) | io_read 0.3s | io_write 0.1s | wall 9.2s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  71%|████████████████████████████▍           |  ETA: 0:00:04 ( 0.57  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 17/24  steps/window=11[K
+   timing: transport 9.3s (95.7%) | io_read 0.3s | io_write 0.1s | wall 9.8s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  75%|██████████████████████████████          |  ETA: 0:00:03 ( 0.57  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 18/24  steps/window=11[K
+   timing: transport 9.8s (95.8%) | io_read 0.3s | io_write 0.1s | wall 10.2s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  79%|███████████████████████████████▋        |  ETA: 0:00:03 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 19/24  steps/window=11[K
+   timing: transport 10.3s (96.0%) | io_read 0.3s | io_write 0.1s | wall 10.7s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  83%|█████████████████████████████████▍      |  ETA: 0:00:02 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 20/24  steps/window=11[K
+   timing: transport 10.9s (96.2%) | io_read 0.3s | io_write 0.1s | wall 11.3s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  88%|███████████████████████████████████     |  ETA: 0:00:02 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 21/24  steps/window=10[K
+   timing: transport 11.4s (96.4%) | io_read 0.3s | io_write 0.1s | wall 11.8s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  92%|████████████████████████████████████▋   |  ETA: 0:00:01 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 22/24  steps/window=11[K
+   timing: transport 11.9s (96.6%) | io_read 0.3s | io_write 0.1s | wall 12.4s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  96%|██████████████████████████████████████▍ |  ETA: 0:00:01 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 23/24  steps/window=11[K
+   timing: transport 12.4s (96.7%) | io_read 0.3s | io_write 0.1s | wall 12.9s | snapshots=1  output=w24_tracers32_sample1.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:13 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 24/24  steps/window=11[K
+   timing: transport 12.9s (96.8%) | io_read 0.3s | io_write 0.1s | wall 13.3s | snapshots=1  output=w24_tracers32_sample1.nc[K
+
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:13 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 24/24  steps/window=11[K
+   timing: transport 12.9s (95.9%) | io_read 0.3s | io_write 0.3s | wall 13.4s | snapshot 2 at t=24.0h  output=w24_tracers32_sample1.nc[K
+
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:13 ( 0.56  s/it)[K
+   status: finished era5_n320_transport_20181201_float32.bin[K
+   timing: transport 12.9s (95.9%) | io_read 0.3s | io_write 0.3s | wall 13.4s | file wall 13.0s[K
+PROFILE_COMPLETED w24_tracers32_sample1 seconds=14.178290087
+[ Info: Done: 13.4s  (2 snapshots, final t=24.0h)
+[ Info:   tracer02 total mass:               4.809653e+09 kg
+[ Info:   tracer24 total mass:               4.809652e+09 kg
+[ Info:   tracer11 total mass:               4.809653e+09 kg
+[ Info:   tracer12 total mass:               4.809652e+09 kg
+[ Info:   tracer04 total mass:               4.809653e+09 kg
+[ Info:   tracer05 total mass:               4.809652e+09 kg
+[ Info:   tracer18 total mass:               4.809653e+09 kg
+[ Info:   tracer17 total mass:               4.809653e+09 kg
+[ Info:   tracer07 total mass:               4.809653e+09 kg
+[ Info:   tracer23 total mass:               4.809652e+09 kg
+[ Info:   tracer15 total mass:               4.809653e+09 kg
+[ Info:   tracer20 total mass:               4.809653e+09 kg
+[ Info:   tracer22 total mass:               4.809652e+09 kg
+[ Info:   tracer28 total mass:               4.809652e+09 kg
+[ Info:   tracer30 total mass:               4.809652e+09 kg
+[ Info:   tracer14 total mass:               4.809653e+09 kg
+[ Info:   tracer21 total mass:               4.809653e+09 kg
+[ Info:   tracer25 total mass:               4.809652e+09 kg
+[ Info:   tracer32 total mass:               4.809652e+09 kg
+[ Info:   tracer08 total mass:               4.809653e+09 kg
+[ Info:   tracer09 total mass:               4.809652e+09 kg
+[ Info:   tracer26 total mass:               4.809652e+09 kg
+[ Info:   tracer06 total mass:               4.809652e+09 kg
+[ Info:   tracer16 total mass:               4.809653e+09 kg
+[ Info:   tracer01 total mass:               4.809653e+09 kg
+[ Info:   tracer27 total mass:               4.809652e+09 kg
+[ Info:   tracer03 total mass:               4.809653e+09 kg
+[ Info:   tracer29 total mass:               4.809652e+09 kg
+[ Info:   tracer19 total mass:               4.809652e+09 kg
+[ Info:   tracer10 total mass:               4.809653e+09 kg
+[ Info:   tracer13 total mass:               4.809653e+09 kg
+[ Info:   tracer31 total mass:               4.809652e+09 kg
+[ Info: Forward run wall 13.5s   transport 12.9s (95.6%)   io_read 0.3s (2.1%)   io_write 0.3s (1.9%)   other 0.1s (0.4%)
+[SectionTimer] wall=14.18s  covered=34.82s (245.7%)
+section                         n_calls    total_s    mean_ms     p50_ms     p95_ms     max_ms    frac%
+advection                           255     10.402     40.791     36.455     49.847    149.796    29.87
+prefetch_task_total                  23      5.047    219.428    235.357    275.099    278.958    14.49
+cs_sweep_x                          510      4.022      7.886      7.034      9.557    113.764    11.55
+window_load_host                     23      3.037    132.048    147.756    186.307    194.766     8.72
+cs_sweep_y                          510      2.612      5.122      4.742      6.174     39.716     7.50
+cs_halo_rm_y                        765      2.113      2.762      1.571      4.565    116.299     6.07
+window_backend_copy                  23      2.009     87.355     83.563    129.612    132.676     5.77
+cs_halo_rm_x                        765      1.579      2.064      1.624      1.634    108.326     4.53
+diffusion                           255      1.325      5.197      5.003      6.482      6.810     3.81
+convection                           24      1.322     55.068     55.105     55.868     56.777     3.80
+forcing_refresh                     255      1.087      4.263      0.235      1.444    116.933     3.12
+cs_halo_m_y                         765      0.103      0.135      0.132      0.149      0.273     0.30
+cs_halo_m_x                         765      0.103      0.134      0.131      0.151      0.179     0.29
+window_advance                      255      0.045      0.175      0.000      1.942      1.957     0.13
+cs_sweep_z                          510      0.018      0.035      0.034      0.040      0.068     0.05
+prefetch_fetch_wait                  23      0.000      0.001      0.001      0.001      0.001     0.00
+chemistry                            24      0.000      0.000      0.000      0.000      0.000     0.00
+[ Info: Section timings → /tmp/atmos-l40-release-20260906/current-day/w24_tracers32_sample1.timings.csv
+[ Info: [binary] /home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour/era5_n320_transport_20181201_float32.bin grid=cubed_sphere levels=66 basis=dry steps/window=adaptive fields=[am,bm,cm,detd,detu,dkg,dm,entd,entu,m,pbl_hflux,pblh,ps,t2m,ustar]
+[ Info: [gpu verified] backend=cuda backing=CuArray device=NVIDIA L40S
+┌ Info: Driven runtime
+│ CubedSphere
+│ |-- grid:      C90, levels=66, Hp=3
+│ |-- numerics:  scheme=PPM, FT=Float32, backend=GPU (CUDA, NVIDIA L40S)
+│ |-- physics:   diffusion=ImplicitVerticalDiffusion, surface_flux=midpoint_split, convection=TM5Convection
+│ |-- schedule:  window_dt=3600s, steps/window=10..11, max=11, binaries=1
+│ |-- tracers:   tracer02, tracer24, tracer11, tracer12, tracer04, tracer05, tracer18, tracer17, tracer07, tracer23, tracer15, tracer20, tracer22, tracer28, tracer30, tracer14, tracer21, tracer25, tracer32, tracer08, tracer09, tracer26, tracer06, tracer16, tracer01, tracer27, tracer03, tracer29, tracer19, tracer10, tracer13, tracer31
+└ `-- output:    /tmp/atmos-l40-release-20260906/current-day/w24_tracers32_sample2.nc
+Forward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: initializing[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.0s | io_write 0.1s | wall 0.1s | snapshot 1 at t=0.0h[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: running era5_n320_transport_20181201_float32.bin (24 windows)[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.2s | io_write 0.1s | wall 0.4s | schedule max=11 current=10[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   4%|█▋                                      |  ETA: 0:00:21 ( 0.90  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 1/24  steps/window=10[K
+   timing: transport 0.5s (59.6%) | io_read 0.2s | io_write 0.1s | wall 0.9s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   8%|███▍                                    |  ETA: 0:00:16 ( 0.71  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 2/24  steps/window=10[K
+   timing: transport 1.1s (74.5%) | io_read 0.2s | io_write 0.1s | wall 1.4s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  12%|█████                                   |  ETA: 0:00:14 ( 0.68  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 3/24  steps/window=10[K
+   timing: transport 1.7s (82.3%) | io_read 0.2s | io_write 0.1s | wall 2.1s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  17%|██████▋                                 |  ETA: 0:00:13 ( 0.63  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 4/24  steps/window=10[K
+   timing: transport 2.2s (85.6%) | io_read 0.2s | io_write 0.1s | wall 2.5s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  21%|████████▍                               |  ETA: 0:00:11 ( 0.60  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 5/24  steps/window=10[K
+   timing: transport 2.6s (87.9%) | io_read 0.2s | io_write 0.1s | wall 3.0s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  25%|██████████                              |  ETA: 0:00:11 ( 0.60  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 6/24  steps/window=10[K
+   timing: transport 3.2s (89.8%) | io_read 0.2s | io_write 0.1s | wall 3.6s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  29%|███████████▋                            |  ETA: 0:00:10 ( 0.58  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 7/24  steps/window=10[K
+   timing: transport 3.7s (91.0%) | io_read 0.2s | io_write 0.1s | wall 4.0s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  33%|█████████████▍                          |  ETA: 0:00:09 ( 0.58  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 8/24  steps/window=10[K
+   timing: transport 4.3s (92.1%) | io_read 0.2s | io_write 0.1s | wall 4.6s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  38%|███████████████                         |  ETA: 0:00:08 ( 0.57  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 9/24  steps/window=11[K
+   timing: transport 4.7s (92.8%) | io_read 0.2s | io_write 0.1s | wall 5.1s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  42%|████████████████▋                       |  ETA: 0:00:08 ( 0.57  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 10/24  steps/window=11[K
+   timing: transport 5.3s (93.6%) | io_read 0.2s | io_write 0.1s | wall 5.7s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  46%|██████████████████▍                     |  ETA: 0:00:07 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 11/24  steps/window=11[K
+   timing: transport 5.8s (94.1%) | io_read 0.2s | io_write 0.1s | wall 6.2s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  50%|████████████████████                    |  ETA: 0:00:07 ( 0.57  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 12/24  steps/window=11[K
+   timing: transport 6.4s (94.6%) | io_read 0.2s | io_write 0.1s | wall 6.8s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  54%|█████████████████████▋                  |  ETA: 0:00:06 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 13/24  steps/window=11[K
+   timing: transport 6.9s (95.0%) | io_read 0.2s | io_write 0.1s | wall 7.3s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  58%|███████████████████████▍                |  ETA: 0:00:06 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 14/24  steps/window=11[K
+   timing: transport 7.4s (95.3%) | io_read 0.2s | io_write 0.1s | wall 7.8s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  62%|█████████████████████████               |  ETA: 0:00:05 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 15/24  steps/window=11[K
+   timing: transport 8.0s (95.6%) | io_read 0.2s | io_write 0.1s | wall 8.3s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  67%|██████████████████████████▋             |  ETA: 0:00:04 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 16/24  steps/window=11[K
+   timing: transport 8.5s (95.9%) | io_read 0.2s | io_write 0.1s | wall 8.8s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  71%|████████████████████████████▍           |  ETA: 0:00:04 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 17/24  steps/window=11[K
+   timing: transport 9.0s (96.1%) | io_read 0.2s | io_write 0.1s | wall 9.4s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  75%|██████████████████████████████          |  ETA: 0:00:03 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 18/24  steps/window=11[K
+   timing: transport 9.5s (96.3%) | io_read 0.2s | io_write 0.1s | wall 9.9s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  79%|███████████████████████████████▋        |  ETA: 0:00:03 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 19/24  steps/window=11[K
+   timing: transport 10.1s (96.5%) | io_read 0.2s | io_write 0.1s | wall 10.5s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  83%|█████████████████████████████████▍      |  ETA: 0:00:02 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 20/24  steps/window=11[K
+   timing: transport 10.6s (96.7%) | io_read 0.2s | io_write 0.1s | wall 11.0s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  88%|███████████████████████████████████     |  ETA: 0:00:02 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 21/24  steps/window=10[K
+   timing: transport 11.1s (96.8%) | io_read 0.2s | io_write 0.1s | wall 11.5s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  92%|████████████████████████████████████▋   |  ETA: 0:00:01 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 22/24  steps/window=11[K
+   timing: transport 11.6s (96.9%) | io_read 0.2s | io_write 0.1s | wall 12.0s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  96%|██████████████████████████████████████▍ |  ETA: 0:00:01 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 23/24  steps/window=11[K
+   timing: transport 12.2s (97.1%) | io_read 0.2s | io_write 0.1s | wall 12.6s | snapshots=1  output=w24_tracers32_sample2.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:13 ( 0.54  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 24/24  steps/window=11[K
+   timing: transport 12.7s (97.2%) | io_read 0.2s | io_write 0.1s | wall 13.0s | snapshots=1  output=w24_tracers32_sample2.nc[K
+
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:13 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 24/24  steps/window=11[K
+   timing: transport 12.7s (96.4%) | io_read 0.2s | io_write 0.2s | wall 13.1s | snapshot 2 at t=24.0h  output=w24_tracers32_sample2.nc[K
+
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:13 ( 0.55  s/it)[K
+   status: finished era5_n320_transport_20181201_float32.bin[K
+   timing: transport 12.7s (96.4%) | io_read 0.2s | io_write 0.2s | wall 13.1s | file wall 12.8s[K
+PROFILE_COMPLETED w24_tracers32_sample2 seconds=13.879972183
+[ Info: Done: 13.1s  (2 snapshots, final t=24.0h)
+[ Info:   tracer02 total mass:               4.809653e+09 kg
+[ Info:   tracer24 total mass:               4.809652e+09 kg
+[ Info:   tracer11 total mass:               4.809653e+09 kg
+[ Info:   tracer12 total mass:               4.809652e+09 kg
+[ Info:   tracer04 total mass:               4.809653e+09 kg
+[ Info:   tracer05 total mass:               4.809652e+09 kg
+[ Info:   tracer18 total mass:               4.809653e+09 kg
+[ Info:   tracer17 total mass:               4.809653e+09 kg
+[ Info:   tracer07 total mass:               4.809653e+09 kg
+[ Info:   tracer23 total mass:               4.809652e+09 kg
+[ Info:   tracer15 total mass:               4.809653e+09 kg
+[ Info:   tracer20 total mass:               4.809653e+09 kg
+[ Info:   tracer22 total mass:               4.809652e+09 kg
+[ Info:   tracer28 total mass:               4.809652e+09 kg
+[ Info:   tracer30 total mass:               4.809652e+09 kg
+[ Info:   tracer14 total mass:               4.809653e+09 kg
+[ Info:   tracer21 total mass:               4.809653e+09 kg
+[ Info:   tracer25 total mass:               4.809652e+09 kg
+[ Info:   tracer32 total mass:               4.809652e+09 kg
+[ Info:   tracer08 total mass:               4.809653e+09 kg
+[ Info:   tracer09 total mass:               4.809652e+09 kg
+[ Info:   tracer26 total mass:               4.809652e+09 kg
+[ Info:   tracer06 total mass:               4.809652e+09 kg
+[ Info:   tracer16 total mass:               4.809653e+09 kg
+[ Info:   tracer01 total mass:               4.809653e+09 kg
+[ Info:   tracer27 total mass:               4.809652e+09 kg
+[ Info:   tracer03 total mass:               4.809653e+09 kg
+[ Info:   tracer29 total mass:               4.809652e+09 kg
+[ Info:   tracer19 total mass:               4.809652e+09 kg
+[ Info:   tracer10 total mass:               4.809653e+09 kg
+[ Info:   tracer13 total mass:               4.809653e+09 kg
+[ Info:   tracer31 total mass:               4.809652e+09 kg
+[ Info: Forward run wall 13.2s   transport 12.7s (96.1%)   io_read 0.2s (1.7%)   io_write 0.2s (1.8%)   other 0.1s (0.4%)
+[SectionTimer] wall=13.88s  covered=33.61s (242.2%)
+section                         n_calls    total_s    mean_ms     p50_ms     p95_ms     max_ms    frac%
+advection                           255     10.544     41.350     36.624     49.313    149.583    31.37
+prefetch_task_total                  23      4.665    202.818    181.594    276.296    341.715    13.88
+cs_sweep_x                          510      3.879      7.605      7.073      9.595    111.167    11.54
+cs_sweep_y                          510      2.672      5.240      4.754      6.184    117.983     7.95
+window_load_host                     23      2.645    115.002     97.005    183.822    245.689     7.87
+cs_halo_rm_y                        765      2.217      2.898      1.574      4.634    113.601     6.60
+window_backend_copy                  23      2.019     87.792     84.974    113.046    135.322     6.01
+diffusion                           255      1.402      5.498      5.046      6.548     40.055     4.17
+convection                           24      1.332     55.486     55.312     56.336     57.287     3.96
+cs_halo_rm_x                        765      1.262      1.650      1.627      1.638     36.063     3.76
+forcing_refresh                     255      0.707      2.771      0.237      0.388    148.055     2.10
+cs_halo_m_y                         765      0.103      0.135      0.132      0.149      0.169     0.31
+cs_halo_m_x                         765      0.103      0.134      0.131      0.152      0.189     0.31
+window_advance                      255      0.045      0.177      0.000      1.946      2.268     0.13
+cs_sweep_z                          510      0.018      0.035      0.034      0.040      0.052     0.05
+prefetch_fetch_wait                  23      0.000      0.001      0.001      0.001      0.001     0.00
+chemistry                            24      0.000      0.000      0.000      0.000      0.000     0.00
+[ Info: Section timings → /tmp/atmos-l40-release-20260906/current-day/w24_tracers32_sample2.timings.csv
+[ Info: [binary] /home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour/era5_n320_transport_20181201_float32.bin grid=cubed_sphere levels=66 basis=dry steps/window=adaptive fields=[am,bm,cm,detd,detu,dkg,dm,entd,entu,m,pbl_hflux,pblh,ps,t2m,ustar]
+[ Info: [gpu verified] backend=cuda backing=CuArray device=NVIDIA L40S
+┌ Info: Driven runtime
+│ CubedSphere
+│ |-- grid:      C90, levels=66, Hp=3
+│ |-- numerics:  scheme=PPM, FT=Float32, backend=GPU (CUDA, NVIDIA L40S)
+│ |-- physics:   diffusion=ImplicitVerticalDiffusion, surface_flux=midpoint_split, convection=TM5Convection
+│ |-- schedule:  window_dt=3600s, steps/window=10..11, max=11, binaries=1
+│ |-- tracers:   tracer02, tracer24, tracer11, tracer12, tracer04, tracer05, tracer18, tracer17, tracer07, tracer23, tracer15, tracer20, tracer22, tracer28, tracer30, tracer14, tracer21, tracer25, tracer32, tracer08, tracer09, tracer26, tracer06, tracer16, tracer01, tracer27, tracer03, tracer29, tracer19, tracer10, tracer13, tracer31
+└ `-- output:    /tmp/atmos-l40-release-20260906/current-day/w24_tracers32_sample3.nc
+Forward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: initializing[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.0s | io_write 0.1s | wall 0.1s | snapshot 1 at t=0.0h[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: running era5_n320_transport_20181201_float32.bin (24 windows)[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.1s | io_write 0.1s | wall 0.3s | schedule max=11 current=10[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   4%|█▋                                      |  ETA: 0:00:19 ( 0.81  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 1/24  steps/window=10[K
+   timing: transport 0.5s (66.7%) | io_read 0.1s | io_write 0.1s | wall 0.8s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   8%|███▍                                    |  ETA: 0:00:15 ( 0.67  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 2/24  steps/window=10[K
+   timing: transport 1.1s (79.8%) | io_read 0.1s | io_write 0.1s | wall 1.3s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  12%|█████                                   |  ETA: 0:00:13 ( 0.64  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 3/24  steps/window=10[K
+   timing: transport 1.7s (86.0%) | io_read 0.1s | io_write 0.1s | wall 1.9s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  17%|██████▋                                 |  ETA: 0:00:12 ( 0.61  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 4/24  steps/window=10[K
+   timing: transport 2.2s (88.9%) | io_read 0.1s | io_write 0.1s | wall 2.4s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  21%|████████▍                               |  ETA: 0:00:11 ( 0.60  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 5/24  steps/window=10[K
+   timing: transport 2.7s (91.0%) | io_read 0.1s | io_write 0.1s | wall 3.0s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  25%|██████████                              |  ETA: 0:00:10 ( 0.58  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 6/24  steps/window=10[K
+   timing: transport 3.2s (92.2%) | io_read 0.1s | io_write 0.1s | wall 3.5s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  29%|███████████▋                            |  ETA: 0:00:10 ( 0.58  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 7/24  steps/window=10[K
+   timing: transport 3.8s (93.3%) | io_read 0.1s | io_write 0.1s | wall 4.0s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  33%|█████████████▍                          |  ETA: 0:00:09 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 8/24  steps/window=10[K
+   timing: transport 4.2s (94.0%) | io_read 0.1s | io_write 0.1s | wall 4.5s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  38%|███████████████                         |  ETA: 0:00:08 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 9/24  steps/window=11[K
+   timing: transport 4.8s (94.7%) | io_read 0.1s | io_write 0.1s | wall 5.1s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  42%|████████████████▋                       |  ETA: 0:00:08 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 10/24  steps/window=11[K
+   timing: transport 5.3s (95.1%) | io_read 0.1s | io_write 0.1s | wall 5.6s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  46%|██████████████████▍                     |  ETA: 0:00:07 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 11/24  steps/window=11[K
+   timing: transport 5.8s (95.5%) | io_read 0.1s | io_write 0.1s | wall 6.0s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  50%|████████████████████                    |  ETA: 0:00:07 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 12/24  steps/window=11[K
+   timing: transport 6.4s (95.9%) | io_read 0.1s | io_write 0.1s | wall 6.6s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  54%|█████████████████████▋                  |  ETA: 0:00:06 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 13/24  steps/window=11[K
+   timing: transport 6.9s (96.2%) | io_read 0.1s | io_write 0.1s | wall 7.1s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  58%|███████████████████████▍                |  ETA: 0:00:06 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 14/24  steps/window=11[K
+   timing: transport 7.4s (96.5%) | io_read 0.1s | io_write 0.1s | wall 7.7s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  62%|█████████████████████████               |  ETA: 0:00:05 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 15/24  steps/window=11[K
+   timing: transport 7.9s (96.7%) | io_read 0.1s | io_write 0.1s | wall 8.2s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  67%|██████████████████████████▋             |  ETA: 0:00:04 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 16/24  steps/window=11[K
+   timing: transport 8.5s (96.9%) | io_read 0.1s | io_write 0.1s | wall 8.8s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  71%|████████████████████████████▍           |  ETA: 0:00:04 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 17/24  steps/window=11[K
+   timing: transport 9.0s (97.1%) | io_read 0.1s | io_write 0.1s | wall 9.3s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  75%|██████████████████████████████          |  ETA: 0:00:03 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 18/24  steps/window=11[K
+   timing: transport 9.6s (97.2%) | io_read 0.1s | io_write 0.1s | wall 9.9s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  79%|███████████████████████████████▋        |  ETA: 0:00:03 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 19/24  steps/window=11[K
+   timing: transport 10.1s (97.4%) | io_read 0.1s | io_write 0.1s | wall 10.4s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  83%|█████████████████████████████████▍      |  ETA: 0:00:02 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 20/24  steps/window=11[K
+   timing: transport 10.7s (97.5%) | io_read 0.1s | io_write 0.1s | wall 10.9s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  88%|███████████████████████████████████     |  ETA: 0:00:02 ( 0.54  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 21/24  steps/window=10[K
+   timing: transport 11.1s (97.6%) | io_read 0.1s | io_write 0.1s | wall 11.4s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  92%|████████████████████████████████████▋   |  ETA: 0:00:01 ( 0.54  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 22/24  steps/window=11[K
+   timing: transport 11.7s (97.7%) | io_read 0.1s | io_write 0.1s | wall 12.0s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  96%|██████████████████████████████████████▍ |  ETA: 0:00:01 ( 0.54  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 23/24  steps/window=11[K
+   timing: transport 12.2s (97.8%) | io_read 0.1s | io_write 0.1s | wall 12.5s | snapshots=1  output=w24_tracers32_sample3.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:12 ( 0.54  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 24/24  steps/window=11[K
+   timing: transport 12.7s (97.9%) | io_read 0.1s | io_write 0.1s | wall 12.9s | snapshots=1  output=w24_tracers32_sample3.nc[K
+
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:13 ( 0.54  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 24/24  steps/window=11[K
+   timing: transport 12.7s (97.2%) | io_read 0.1s | io_write 0.2s | wall 13.0s | snapshot 2 at t=24.0h  output=w24_tracers32_sample3.nc[K
+
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:13 ( 0.54  s/it)[K
+   status: finished era5_n320_transport_20181201_float32.bin[K
+   timing: transport 12.7s (97.2%) | io_read 0.1s | io_write 0.2s | wall 13.0s | file wall 12.8s[K
+PROFILE_COMPLETED w24_tracers32_sample3 seconds=13.738550399
+[ Info: Done: 12.9s  (2 snapshots, final t=24.0h)
+[ Info:   tracer02 total mass:               4.809653e+09 kg
+[ Info:   tracer24 total mass:               4.809652e+09 kg
+[ Info:   tracer11 total mass:               4.809653e+09 kg
+[ Info:   tracer12 total mass:               4.809652e+09 kg
+[ Info:   tracer04 total mass:               4.809653e+09 kg
+[ Info:   tracer05 total mass:               4.809652e+09 kg
+[ Info:   tracer18 total mass:               4.809653e+09 kg
+[ Info:   tracer17 total mass:               4.809653e+09 kg
+[ Info:   tracer07 total mass:               4.809653e+09 kg
+[ Info:   tracer23 total mass:               4.809652e+09 kg
+[ Info:   tracer15 total mass:               4.809653e+09 kg
+[ Info:   tracer20 total mass:               4.809653e+09 kg
+[ Info:   tracer22 total mass:               4.809652e+09 kg
+[ Info:   tracer28 total mass:               4.809652e+09 kg
+[ Info:   tracer30 total mass:               4.809652e+09 kg
+[ Info:   tracer14 total mass:               4.809653e+09 kg
+[ Info:   tracer21 total mass:               4.809653e+09 kg
+[ Info:   tracer25 total mass:               4.809652e+09 kg
+[ Info:   tracer32 total mass:               4.809652e+09 kg
+[ Info:   tracer08 total mass:               4.809653e+09 kg
+[ Info:   tracer09 total mass:               4.809652e+09 kg
+[ Info:   tracer26 total mass:               4.809652e+09 kg
+[ Info:   tracer06 total mass:               4.809652e+09 kg
+[ Info:   tracer16 total mass:               4.809653e+09 kg
+[ Info:   tracer01 total mass:               4.809653e+09 kg
+[ Info:   tracer27 total mass:               4.809652e+09 kg
+[ Info:   tracer03 total mass:               4.809653e+09 kg
+[ Info:   tracer29 total mass:               4.809652e+09 kg
+[ Info:   tracer19 total mass:               4.809652e+09 kg
+[ Info:   tracer10 total mass:               4.809653e+09 kg
+[ Info:   tracer13 total mass:               4.809653e+09 kg
+[ Info:   tracer31 total mass:               4.809652e+09 kg
+[ Info: Forward run wall 13.1s   transport 12.7s (96.8%)   io_read 0.1s (1.0%)   io_write 0.2s (1.8%)   other 0.1s (0.4%)
+[SectionTimer] wall=13.74s  covered=33.29s (242.4%)
+section                         n_calls    total_s    mean_ms     p50_ms     p95_ms     max_ms    frac%
+advection                           255     10.482     41.104     36.733     49.253    153.591    31.48
+prefetch_task_total                  23      4.492    195.311    163.430    270.152    284.119    13.49
+cs_sweep_x                          510      3.952      7.748      7.093      9.613    118.833    11.87
+cs_sweep_y                          510      2.694      5.283      4.760      6.188    114.308     8.09
+window_load_host                     23      2.490    108.273     77.823    186.687    203.714     7.48
+window_backend_copy                  23      2.001     87.014     83.755    112.998    138.132     6.01
+cs_halo_rm_y                        765      1.903      2.487      1.574      4.587      5.868     5.71
+diffusion                           255      1.555      6.098      5.054      6.556    116.068     4.67
+cs_halo_rm_x                        765      1.332      1.741      1.628      1.639     36.393     4.00
+convection                           24      1.330     55.410     55.351     56.062     56.779     3.99
+forcing_refresh                     255      0.759      2.977      0.234      0.989    149.833     2.28
+cs_halo_m_x                         765      0.103      0.135      0.131      0.152      0.296     0.31
+cs_halo_m_y                         765      0.103      0.135      0.132      0.148      0.206     0.31
+cs_sweep_z                          510      0.053      0.104      0.035      0.040     35.066     0.16
+window_advance                      255      0.045      0.176      0.000      1.945      2.003     0.13
+prefetch_fetch_wait                  23      0.000      0.001      0.001      0.001      0.001     0.00
+chemistry                            24      0.000      0.000      0.000      0.000      0.000     0.00
+[ Info: Section timings → /tmp/atmos-l40-release-20260906/current-day/w24_tracers32_sample3.timings.csv
+[ Info: [binary] /home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour/era5_n320_transport_20181201_float32.bin grid=cubed_sphere levels=66 basis=dry steps/window=adaptive fields=[am,bm,cm,detd,detu,dkg,dm,entd,entu,m,pbl_hflux,pblh,ps,t2m,ustar]
+[ Info: [gpu verified] backend=cuda backing=CuArray device=NVIDIA L40S
+┌ Info: Driven runtime
+│ CubedSphere
+│ |-- grid:      C90, levels=66, Hp=3
+│ |-- numerics:  scheme=PPM, FT=Float32, backend=GPU (CUDA, NVIDIA L40S)
+│ |-- physics:   diffusion=ImplicitVerticalDiffusion, surface_flux=midpoint_split, convection=TM5Convection
+│ |-- schedule:  window_dt=3600s, steps/window=10..11, max=11, binaries=1
+│ |-- tracers:   tracer02, tracer24, tracer11, tracer12, tracer04, tracer05, tracer18, tracer17, tracer07, tracer23, tracer15, tracer20, tracer22, tracer28, tracer30, tracer14, tracer21, tracer25, tracer32, tracer08, tracer09, tracer26, tracer06, tracer16, tracer01, tracer27, tracer03, tracer29, tracer19, tracer10, tracer13, tracer31
+└ `-- output:    /tmp/atmos-l40-release-20260906/current-day/w24_tracers32_sample4.nc
+Forward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: initializing[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.0s | io_write 0.1s | wall 0.1s | snapshot 1 at t=0.0h[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: running era5_n320_transport_20181201_float32.bin (24 windows)[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.3s | io_write 0.1s | wall 0.4s | schedule max=11 current=10[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   4%|█▋                                      |  ETA: 0:00:21 ( 0.92  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 1/24  steps/window=10[K
+   timing: transport 0.5s (58.3%) | io_read 0.3s | io_write 0.1s | wall 0.9s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   8%|███▍                                    |  ETA: 0:00:16 ( 0.72  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 2/24  steps/window=10[K
+   timing: transport 1.1s (73.4%) | io_read 0.3s | io_write 0.1s | wall 1.4s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  12%|█████                                   |  ETA: 0:00:14 ( 0.65  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 3/24  steps/window=10[K
+   timing: transport 1.6s (80.1%) | io_read 0.3s | io_write 0.1s | wall 1.9s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  17%|██████▋                                 |  ETA: 0:00:13 ( 0.64  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 4/24  steps/window=10[K
+   timing: transport 2.2s (84.8%) | io_read 0.3s | io_write 0.1s | wall 2.5s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  21%|████████▍                               |  ETA: 0:00:11 ( 0.60  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 5/24  steps/window=10[K
+   timing: transport 2.6s (87.2%) | io_read 0.3s | io_write 0.1s | wall 3.0s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  25%|██████████                              |  ETA: 0:00:10 ( 0.58  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 6/24  steps/window=10[K
+   timing: transport 3.1s (88.9%) | io_read 0.3s | io_write 0.1s | wall 3.5s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  29%|███████████▋                            |  ETA: 0:00:10 ( 0.58  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 7/24  steps/window=10[K
+   timing: transport 3.6s (90.4%) | io_read 0.3s | io_write 0.1s | wall 4.0s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  33%|█████████████▍                          |  ETA: 0:00:09 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 8/24  steps/window=10[K
+   timing: transport 4.1s (91.4%) | io_read 0.3s | io_write 0.1s | wall 4.5s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  38%|███████████████                         |  ETA: 0:00:08 ( 0.57  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 9/24  steps/window=11[K
+   timing: transport 4.7s (92.4%) | io_read 0.3s | io_write 0.1s | wall 5.1s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  42%|████████████████▋                       |  ETA: 0:00:08 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 10/24  steps/window=11[K
+   timing: transport 5.2s (93.1%) | io_read 0.3s | io_write 0.1s | wall 5.6s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  46%|██████████████████▍                     |  ETA: 0:00:07 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 11/24  steps/window=11[K
+   timing: transport 5.8s (93.7%) | io_read 0.3s | io_write 0.1s | wall 6.2s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  50%|████████████████████                    |  ETA: 0:00:07 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 12/24  steps/window=11[K
+   timing: transport 6.3s (94.2%) | io_read 0.3s | io_write 0.1s | wall 6.7s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  54%|█████████████████████▋                  |  ETA: 0:00:06 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 13/24  steps/window=11[K
+   timing: transport 6.9s (94.7%) | io_read 0.3s | io_write 0.1s | wall 7.3s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  58%|███████████████████████▍                |  ETA: 0:00:06 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 14/24  steps/window=11[K
+   timing: transport 7.3s (95.0%) | io_read 0.3s | io_write 0.1s | wall 7.7s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  62%|█████████████████████████               |  ETA: 0:00:05 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 15/24  steps/window=11[K
+   timing: transport 7.9s (95.4%) | io_read 0.3s | io_write 0.1s | wall 8.3s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  67%|██████████████████████████▋             |  ETA: 0:00:04 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 16/24  steps/window=11[K
+   timing: transport 8.4s (95.6%) | io_read 0.3s | io_write 0.1s | wall 8.8s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  71%|████████████████████████████▍           |  ETA: 0:00:04 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 17/24  steps/window=11[K
+   timing: transport 9.0s (95.9%) | io_read 0.3s | io_write 0.1s | wall 9.4s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  75%|██████████████████████████████          |  ETA: 0:00:03 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 18/24  steps/window=11[K
+   timing: transport 9.5s (96.1%) | io_read 0.3s | io_write 0.1s | wall 9.9s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  79%|███████████████████████████████▋        |  ETA: 0:00:03 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 19/24  steps/window=11[K
+   timing: transport 10.1s (96.3%) | io_read 0.3s | io_write 0.1s | wall 10.5s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  83%|█████████████████████████████████▍      |  ETA: 0:00:02 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 20/24  steps/window=11[K
+   timing: transport 10.6s (96.5%) | io_read 0.3s | io_write 0.1s | wall 11.0s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  88%|███████████████████████████████████     |  ETA: 0:00:02 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 21/24  steps/window=10[K
+   timing: transport 11.1s (96.6%) | io_read 0.3s | io_write 0.1s | wall 11.5s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  92%|████████████████████████████████████▋   |  ETA: 0:00:01 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 22/24  steps/window=11[K
+   timing: transport 11.6s (96.8%) | io_read 0.3s | io_write 0.1s | wall 12.0s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  96%|██████████████████████████████████████▍ |  ETA: 0:00:01 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 23/24  steps/window=11[K
+   timing: transport 12.2s (96.9%) | io_read 0.3s | io_write 0.1s | wall 12.6s | snapshots=1  output=w24_tracers32_sample4.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:13 ( 0.54  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 24/24  steps/window=11[K
+   timing: transport 12.7s (97.0%) | io_read 0.3s | io_write 0.1s | wall 13.1s | snapshots=1  output=w24_tracers32_sample4.nc[K
+
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:13 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 24/24  steps/window=11[K
+   timing: transport 12.7s (96.3%) | io_read 0.3s | io_write 0.2s | wall 13.2s | snapshot 2 at t=24.0h  output=w24_tracers32_sample4.nc[K
+
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:13 ( 0.55  s/it)[K
+   status: finished era5_n320_transport_20181201_float32.bin[K
+   timing: transport 12.7s (96.3%) | io_read 0.3s | io_write 0.2s | wall 13.2s | file wall 12.8s[K
+PROFILE_COMPLETED w24_tracers32_sample4 seconds=13.838835707
+[ Info: Done: 13.1s  (2 snapshots, final t=24.0h)
+[ Info:   tracer02 total mass:               4.809653e+09 kg
+[ Info:   tracer24 total mass:               4.809652e+09 kg
+[ Info:   tracer11 total mass:               4.809653e+09 kg
+[ Info:   tracer12 total mass:               4.809652e+09 kg
+[ Info:   tracer04 total mass:               4.809653e+09 kg
+[ Info:   tracer05 total mass:               4.809652e+09 kg
+[ Info:   tracer18 total mass:               4.809653e+09 kg
+[ Info:   tracer17 total mass:               4.809653e+09 kg
+[ Info:   tracer07 total mass:               4.809653e+09 kg
+[ Info:   tracer23 total mass:               4.809652e+09 kg
+[ Info:   tracer15 total mass:               4.809653e+09 kg
+[ Info:   tracer20 total mass:               4.809653e+09 kg
+[ Info:   tracer22 total mass:               4.809652e+09 kg
+[ Info:   tracer28 total mass:               4.809652e+09 kg
+[ Info:   tracer30 total mass:               4.809652e+09 kg
+[ Info:   tracer14 total mass:               4.809653e+09 kg
+[ Info:   tracer21 total mass:               4.809653e+09 kg
+[ Info:   tracer25 total mass:               4.809652e+09 kg
+[ Info:   tracer32 total mass:               4.809652e+09 kg
+[ Info:   tracer08 total mass:               4.809653e+09 kg
+[ Info:   tracer09 total mass:               4.809652e+09 kg
+[ Info:   tracer26 total mass:               4.809652e+09 kg
+[ Info:   tracer06 total mass:               4.809652e+09 kg
+[ Info:   tracer16 total mass:               4.809653e+09 kg
+[ Info:   tracer01 total mass:               4.809653e+09 kg
+[ Info:   tracer27 total mass:               4.809652e+09 kg
+[ Info:   tracer03 total mass:               4.809653e+09 kg
+[ Info:   tracer29 total mass:               4.809652e+09 kg
+[ Info:   tracer19 total mass:               4.809652e+09 kg
+[ Info:   tracer10 total mass:               4.809653e+09 kg
+[ Info:   tracer13 total mass:               4.809653e+09 kg
+[ Info:   tracer31 total mass:               4.809652e+09 kg
+[ Info: Forward run wall 13.2s   transport 12.7s (95.9%)   io_read 0.3s (1.9%)   io_write 0.2s (1.8%)   other 0.1s (0.4%)
+[SectionTimer] wall=13.84s  covered=33.45s (241.7%)
+section                         n_calls    total_s    mean_ms     p50_ms     p95_ms     max_ms    frac%
+advection                           255     10.271     40.277     36.727     48.044    150.156    30.71
+prefetch_task_total                  23      4.636    201.584    197.837    271.344    273.165    13.86
+cs_sweep_x                          510      3.872      7.592      7.095      9.599     41.340    11.58
+window_load_host                     23      2.613    113.591    113.730    183.617    184.181     7.81
+cs_sweep_y                          510      2.552      5.003      4.759      6.150     39.215     7.63
+cs_halo_rm_y                        765      2.150      2.811      1.575      4.600    114.188     6.43
+window_backend_copy                  23      2.023     87.970     83.212    129.899    138.209     6.05
+diffusion                           255      1.487      5.830      5.069      6.527    118.888     4.44
+convection                           24      1.331     55.461     55.379     56.241     56.913     3.98
+cs_halo_rm_x                        765      1.268      1.657      1.628      1.641     35.514     3.79
+forcing_refresh                     255      0.976      3.828      0.237      0.407    143.827     2.92
+cs_halo_m_y                         765      0.103      0.135      0.132      0.149      0.174     0.31
+cs_halo_m_x                         765      0.103      0.135      0.131      0.152      0.176     0.31
+window_advance                      255      0.045      0.176      0.000      1.947      1.957     0.13
+cs_sweep_z                          510      0.018      0.035      0.034      0.041      0.055     0.05
+prefetch_fetch_wait                  23      0.000      0.001      0.001      0.001      0.001     0.00
+chemistry                            24      0.000      0.000      0.000      0.000      0.000     0.00
+[ Info: Section timings → /tmp/atmos-l40-release-20260906/current-day/w24_tracers32_sample4.timings.csv
+[ Info: [binary] /home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour/era5_n320_transport_20181201_float32.bin grid=cubed_sphere levels=66 basis=dry steps/window=adaptive fields=[am,bm,cm,detd,detu,dkg,dm,entd,entu,m,pbl_hflux,pblh,ps,t2m,ustar]
+[ Info: [gpu verified] backend=cuda backing=CuArray device=NVIDIA L40S
+┌ Info: Driven runtime
+│ CubedSphere
+│ |-- grid:      C90, levels=66, Hp=3
+│ |-- numerics:  scheme=PPM, FT=Float32, backend=GPU (CUDA, NVIDIA L40S)
+│ |-- physics:   diffusion=ImplicitVerticalDiffusion, surface_flux=midpoint_split, convection=TM5Convection
+│ |-- schedule:  window_dt=3600s, steps/window=10..11, max=11, binaries=1
+│ |-- tracers:   tracer02, tracer24, tracer11, tracer12, tracer04, tracer05, tracer18, tracer17, tracer07, tracer23, tracer15, tracer20, tracer22, tracer28, tracer30, tracer14, tracer21, tracer25, tracer32, tracer08, tracer09, tracer26, tracer06, tracer16, tracer01, tracer27, tracer03, tracer29, tracer19, tracer10, tracer13, tracer31
+└ `-- output:    /tmp/atmos-l40-release-20260906/current-day/w24_tracers32_sample5.nc
+Forward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: initializing[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.0s | io_write 0.2s | wall 0.2s | snapshot 1 at t=0.0h[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: running era5_n320_transport_20181201_float32.bin (24 windows)[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.1s | io_write 0.2s | wall 0.4s | schedule max=11 current=10[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   4%|█▋                                      |  ETA: 0:00:21 ( 0.90  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 1/24  steps/window=10[K
+   timing: transport 0.5s (59.8%) | io_read 0.1s | io_write 0.2s | wall 0.9s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   8%|███▍                                    |  ETA: 0:00:17 ( 0.77  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 2/24  steps/window=10[K
+   timing: transport 1.2s (76.4%) | io_read 0.1s | io_write 0.2s | wall 1.5s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  12%|█████                                   |  ETA: 0:00:14 ( 0.68  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 3/24  steps/window=10[K
+   timing: transport 1.7s (82.1%) | io_read 0.1s | io_write 0.2s | wall 2.0s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  17%|██████▋                                 |  ETA: 0:00:13 ( 0.66  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 4/24  steps/window=10[K
+   timing: transport 2.3s (86.2%) | io_read 0.1s | io_write 0.2s | wall 2.6s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  21%|████████▍                               |  ETA: 0:00:12 ( 0.62  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 5/24  steps/window=10[K
+   timing: transport 2.7s (88.2%) | io_read 0.1s | io_write 0.2s | wall 3.1s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  25%|██████████                              |  ETA: 0:00:11 ( 0.61  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 6/24  steps/window=10[K
+   timing: transport 3.3s (90.1%) | io_read 0.1s | io_write 0.2s | wall 3.7s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  29%|███████████▋                            |  ETA: 0:00:10 ( 0.59  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 7/24  steps/window=10[K
+   timing: transport 3.8s (91.2%) | io_read 0.1s | io_write 0.2s | wall 4.2s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  33%|█████████████▍                          |  ETA: 0:00:09 ( 0.59  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 8/24  steps/window=10[K
+   timing: transport 4.3s (92.3%) | io_read 0.1s | io_write 0.2s | wall 4.7s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  38%|███████████████                         |  ETA: 0:00:09 ( 0.58  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 9/24  steps/window=11[K
+   timing: transport 4.8s (93.0%) | io_read 0.1s | io_write 0.2s | wall 5.2s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run  42%|████████████████▋                       |  ETA: 0:00:08 ( 0.58  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 10/24  steps/window=11[K
+   timing: transport 5.4s (93.7%) | io_read 0.1s | io_write 0.2s | wall 5.8s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  46%|██████████████████▍                     |  ETA: 0:00:07 ( 0.57  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 11/24  steps/window=11[K
+   timing: transport 5.9s (94.2%) | io_read 0.1s | io_write 0.2s | wall 6.3s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  50%|████████████████████                    |  ETA: 0:00:07 ( 0.57  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 12/24  steps/window=11[K
+   timing: transport 6.5s (94.7%) | io_read 0.1s | io_write 0.2s | wall 6.9s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  54%|█████████████████████▋                  |  ETA: 0:00:06 ( 0.57  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 13/24  steps/window=11[K
+   timing: transport 7.0s (95.0%) | io_read 0.1s | io_write 0.2s | wall 7.4s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  58%|███████████████████████▍                |  ETA: 0:00:06 ( 0.57  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 14/24  steps/window=11[K
+   timing: transport 7.6s (95.4%) | io_read 0.1s | io_write 0.2s | wall 7.9s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  62%|█████████████████████████               |  ETA: 0:00:05 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 15/24  steps/window=11[K
+   timing: transport 8.1s (95.7%) | io_read 0.1s | io_write 0.2s | wall 8.4s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  67%|██████████████████████████▋             |  ETA: 0:00:05 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 16/24  steps/window=11[K
+   timing: transport 8.7s (95.9%) | io_read 0.1s | io_write 0.2s | wall 9.0s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  71%|████████████████████████████▍           |  ETA: 0:00:04 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 17/24  steps/window=11[K
+   timing: transport 9.1s (96.1%) | io_read 0.1s | io_write 0.2s | wall 9.5s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  75%|██████████████████████████████          |  ETA: 0:00:03 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 18/24  steps/window=11[K
+   timing: transport 9.7s (96.4%) | io_read 0.1s | io_write 0.2s | wall 10.1s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  79%|███████████████████████████████▋        |  ETA: 0:00:03 ( 0.56  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 19/24  steps/window=11[K
+   timing: transport 10.2s (96.5%) | io_read 0.1s | io_write 0.2s | wall 10.6s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  83%|█████████████████████████████████▍      |  ETA: 0:00:02 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 20/24  steps/window=11[K
+   timing: transport 10.7s (96.7%) | io_read 0.1s | io_write 0.2s | wall 11.0s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  88%|███████████████████████████████████     |  ETA: 0:00:02 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 21/24  steps/window=10[K
+   timing: transport 11.2s (96.8%) | io_read 0.1s | io_write 0.2s | wall 11.6s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  92%|████████████████████████████████████▋   |  ETA: 0:00:01 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 22/24  steps/window=11[K
+   timing: transport 11.7s (97.0%) | io_read 0.1s | io_write 0.2s | wall 12.1s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  96%|██████████████████████████████████████▍ |  ETA: 0:00:01 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 23/24  steps/window=11[K
+   timing: transport 12.3s (97.1%) | io_read 0.1s | io_write 0.2s | wall 12.7s | snapshots=1  output=w24_tracers32_sample5.nc[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:13 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 24/24  steps/window=11[K
+   timing: transport 12.8s (97.2%) | io_read 0.1s | io_write 0.2s | wall 13.1s | snapshots=1  output=w24_tracers32_sample5.nc[K
+
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:13 ( 0.55  s/it)[K
+   status: era5_n320_transport_20181201_float32.bin window 24/24  steps/window=11[K
+   timing: transport 12.8s (96.4%) | io_read 0.1s | io_write 0.4s | wall 13.2s | snapshot 2 at t=24.0h  output=w24_tracers32_sample5.nc[K
+
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:13 ( 0.55  s/it)[K
+   status: finished era5_n320_transport_20181201_float32.bin[K
+   timing: transport 12.8s (96.4%) | io_read 0.1s | io_write 0.4s | wall 13.2s | file wall 12.9s[K
+PROFILE_COMPLETED w24_tracers32_sample5 seconds=13.841094572
+[ Info: Done: 13.0s  (2 snapshots, final t=24.0h)
+[ Info:   tracer02 total mass:               4.809653e+09 kg
+[ Info:   tracer24 total mass:               4.809652e+09 kg
+[ Info:   tracer11 total mass:               4.809653e+09 kg
+[ Info:   tracer12 total mass:               4.809652e+09 kg
+[ Info:   tracer04 total mass:               4.809653e+09 kg
+[ Info:   tracer05 total mass:               4.809652e+09 kg
+[ Info:   tracer18 total mass:               4.809653e+09 kg
+[ Info:   tracer17 total mass:               4.809653e+09 kg
+[ Info:   tracer07 total mass:               4.809653e+09 kg
+[ Info:   tracer23 total mass:               4.809652e+09 kg
+[ Info:   tracer15 total mass:               4.809653e+09 kg
+[ Info:   tracer20 total mass:               4.809653e+09 kg
+[ Info:   tracer22 total mass:               4.809652e+09 kg
+[ Info:   tracer28 total mass:               4.809652e+09 kg
+[ Info:   tracer30 total mass:               4.809652e+09 kg
+[ Info:   tracer14 total mass:               4.809653e+09 kg
+[ Info:   tracer21 total mass:               4.809653e+09 kg
+[ Info:   tracer25 total mass:               4.809652e+09 kg
+[ Info:   tracer32 total mass:               4.809652e+09 kg
+[ Info:   tracer08 total mass:               4.809653e+09 kg
+[ Info:   tracer09 total mass:               4.809652e+09 kg
+[ Info:   tracer26 total mass:               4.809652e+09 kg
+[ Info:   tracer06 total mass:               4.809652e+09 kg
+[ Info:   tracer16 total mass:               4.809653e+09 kg
+[ Info:   tracer01 total mass:               4.809653e+09 kg
+[ Info:   tracer27 total mass:               4.809652e+09 kg
+[ Info:   tracer03 total mass:               4.809653e+09 kg
+[ Info:   tracer29 total mass:               4.809652e+09 kg
+[ Info:   tracer19 total mass:               4.809652e+09 kg
+[ Info:   tracer10 total mass:               4.809653e+09 kg
+[ Info:   tracer13 total mass:               4.809653e+09 kg
+[ Info:   tracer31 total mass:               4.809652e+09 kg
+[ Info: Forward run wall 13.3s   transport 12.8s (96.0%)   io_read 0.1s (0.9%)   io_write 0.4s (2.7%)   other 0.1s (0.4%)
+[SectionTimer] wall=13.84s  covered=34.08s (246.2%)
+section                         n_calls    total_s    mean_ms     p50_ms     p95_ms     max_ms    frac%
+advection                           255     10.572     41.460     36.719     49.219    178.069    31.03
+prefetch_task_total                  23      4.710    204.763    206.526    280.999    287.260    13.82
+cs_sweep_x                          510      3.960      7.764      7.101      9.614    123.107    11.62
+window_load_host                     23      2.675    116.309    125.915    179.326    201.932     7.85
+cs_sweep_y                          510      2.667      5.230      4.758      6.179    119.328     7.83
+cs_halo_rm_y                        765      2.270      2.968      1.576      4.630    116.329     6.66
+window_backend_copy                  23      2.034     88.430     84.274    114.130    130.265     5.97
+diffusion                           255      1.587      6.223      5.065      6.584    112.721     4.66
+convection                           24      1.331     55.447     55.383     56.189     56.899     3.91
+cs_halo_rm_x                        765      1.229      1.606      1.629      1.640      1.669     3.61
+forcing_refresh                     255      0.772      3.029      0.235      0.375    143.089     2.27
+cs_halo_m_x                         765      0.103      0.135      0.131      0.151      0.268     0.30
+cs_halo_m_y                         765      0.103      0.135      0.132      0.148      0.169     0.30
+window_advance                      255      0.045      0.176      0.000      1.948      1.968     0.13
+cs_sweep_z                          510      0.018      0.035      0.034      0.040      0.068     0.05
+prefetch_fetch_wait                  23      0.000      0.001      0.001      0.001      0.001     0.00
+chemistry                            24      0.000      0.000      0.000      0.000      0.000     0.00
+[ Info: Section timings → /tmp/atmos-l40-release-20260906/current-day/w24_tracers32_sample5.timings.csv
+PROFILE_SERVER_PASSED

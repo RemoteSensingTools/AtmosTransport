@@ -1,0 +1,202 @@
+{
+    "timings": [
+        {
+            "label": "l40_baseline",
+            "tracers": 6,
+            "min_seconds": 7.081022319,
+            "median_gc_seconds": 1.941551425,
+            "phases": {
+                "diffusion": 0.939259,
+                "convection": 0.999187,
+                "advection": 3.522051,
+                "window_backend_copy": 0.92862,
+                "prefetch_fetch_wait": 0.001763,
+                "window_load_host": 2.251961
+            },
+            "max_seconds": 7.574484467,
+            "median_host_allocated_bytes": 7250984128,
+            "median_seconds": 7.350301803,
+            "samples_seconds": [
+                7.574484467,
+                7.350301803,
+                7.374681159,
+                7.081022319,
+                7.228736081
+            ]
+        },
+        {
+            "label": "l40_baseline",
+            "tracers": 32,
+            "min_seconds": 47.054282576,
+            "median_gc_seconds": 2.888345713,
+            "phases": {
+                "diffusion": 4.117995,
+                "convection": 24.567071,
+                "advection": 13.959723,
+                "window_backend_copy": 3.467186,
+                "prefetch_fetch_wait": 1.2e-5,
+                "window_load_host": 2.346815
+            },
+            "max_seconds": 47.584112721,
+            "median_host_allocated_bytes": 13613446264,
+            "median_seconds": 47.467991622,
+            "samples_seconds": [
+                47.054282576,
+                47.584112721,
+                47.221103063,
+                47.496004551,
+                47.467991622
+            ]
+        },
+        {
+            "label": "l40_current",
+            "tracers": 6,
+            "min_seconds": 4.470650746,
+            "median_gc_seconds": 1.355912675,
+            "phases": {
+                "diffusion": 0.467881,
+                "convection": 0.732563,
+                "advection": 2.85408,
+                "window_backend_copy": 0.682832,
+                "prefetch_fetch_wait": 8.0e-6,
+                "window_load_host": 2.274902
+            },
+            "max_seconds": 5.09700838,
+            "median_host_allocated_bytes": 5486972136,
+            "median_seconds": 4.540828977,
+            "samples_seconds": [
+                5.09700838,
+                4.692484671,
+                4.540828977,
+                4.470650746,
+                4.50493514
+            ]
+        },
+        {
+            "label": "l40_current",
+            "tracers": 32,
+            "min_seconds": 13.738550399,
+            "median_gc_seconds": 1.808348342,
+            "phases": {
+                "diffusion": 1.486621,
+                "convection": 1.330738,
+                "advection": 10.481514,
+                "window_backend_copy": 2.019208,
+                "prefetch_fetch_wait": 1.3e-5,
+                "window_load_host": 2.645042
+            },
+            "max_seconds": 14.178290087,
+            "median_host_allocated_bytes": 6019004504,
+            "median_seconds": 13.841094572,
+            "samples_seconds": [
+                14.178290087,
+                13.879972183,
+                13.738550399,
+                13.838835707,
+                13.841094572
+            ]
+        },
+        {
+            "label": "v100_current",
+            "tracers": 6,
+            "min_seconds": 9.348183434,
+            "median_gc_seconds": 1.835569153,
+            "phases": {
+                "diffusion": 0.924833,
+                "convection": 2.036159,
+                "advection": 5.418306,
+                "window_backend_copy": 1.801142,
+                "prefetch_fetch_wait": 0.017929,
+                "window_load_host": 3.515062
+            },
+            "max_seconds": 9.918558425,
+            "median_host_allocated_bytes": 5484746392,
+            "median_seconds": 9.670475181,
+            "samples_seconds": [
+                9.918558425,
+                9.708418885,
+                9.348183434,
+                9.508863667,
+                9.670475181
+            ]
+        },
+        {
+            "label": "v100_current",
+            "tracers": 32,
+            "min_seconds": 29.055305329,
+            "median_gc_seconds": 2.440207271,
+            "phases": {
+                "diffusion": 3.906523,
+                "convection": 3.682152,
+                "advection": 21.775852,
+                "window_backend_copy": 5.251442,
+                "prefetch_fetch_wait": 9.0e-6,
+                "window_load_host": 3.775988
+            },
+            "max_seconds": 29.375604802,
+            "median_host_allocated_bytes": 6016675584,
+            "median_seconds": 29.163502239,
+            "samples_seconds": [
+                29.163502239,
+                29.067445205,
+                29.19510847,
+                29.375604802,
+                29.055305329
+            ]
+        }
+    ],
+    "correctness": [
+        {
+            "label": "l40_baseline",
+            "tracers": 6,
+            "max_final_mass_drift": 2.2388955649787152e-5
+        },
+        {
+            "label": "l40_baseline",
+            "tracers": 32,
+            "max_final_mass_drift": 2.565640367777619e-5
+        },
+        {
+            "label": "l40_current",
+            "tracers": 6,
+            "max_final_mass_drift": 3.138139946426091e-7
+        },
+        {
+            "label": "l40_current",
+            "tracers": 32,
+            "max_final_mass_drift": 3.138139946426091e-7
+        },
+        {
+            "label": "v100_current",
+            "tracers": 6,
+            "max_final_mass_drift": 3.138139946426091e-7
+        },
+        {
+            "label": "v100_current",
+            "tracers": 32,
+            "max_final_mass_drift": 3.138139946426091e-7
+        },
+        {
+            "max_column_relative_L2": 0,
+            "tracers": 6,
+            "comparison": "current_L40S_vs_V100",
+            "max_column_absolute": 0
+        },
+        {
+            "max_column_relative_L2": 0,
+            "tracers": 32,
+            "comparison": "current_L40S_vs_V100",
+            "max_column_absolute": 0
+        },
+        {
+            "max_column_relative_L2": 0.0008428853089400498,
+            "tracers": 6,
+            "comparison": "current_vs_main"
+        },
+        {
+            "max_column_relative_L2": 0.0008428847977582363,
+            "tracers": 32,
+            "comparison": "current_vs_main"
+        }
+    ]
+}

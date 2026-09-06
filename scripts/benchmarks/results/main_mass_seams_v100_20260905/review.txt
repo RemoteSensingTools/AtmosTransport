@@ -1,0 +1,33 @@
+Codex review: Lin–Rood mass-seam checkpoint, 2026-09-05
+
+Reviewed the production diff, independent contact-map tests, full-day totals,
+finite output checks, tracer finite differences, and CPU validation records.
+
+- Each physical edge is owned once by p < neighbor.panel. Reversed ordering
+  matches the independent preprocessing contact map in both conventions.
+  Edge arrays are disjoint; corner cells do not alias the two face arrays.
+- Both panels receive the same scalar mixing-ratio estimate. The mirrored
+  carrier flux provides the normal sign, giving paired tracer transfers.
+  Interior faces are unchanged; no global correction or normalization occurs.
+- Forward phases finish outer face reconstruction before final updates. The
+  validated CUDA stream ordering and final synchronization preserve dependencies.
+- The tape saves original inner estimates before projection. The reverse first
+  couples final face seeds, then reverses the per-panel predictors. Tracer
+  finite differences use the production forward, with prescribed meteorology.
+- The documented donor-mass freeze in outer-face adjoints limits air-mass
+  sensitivities. The new tests do not claim to validate optimizing meteorology.
+- No persistent forward buffer is added. The reverse uses more temporary
+  storage for six panels' face seeds. The 32-tracer whole-run overhead is
+  measured at about 5.2% in the short V100 experiment.
+- Split PPM still has an open seam defect. A conservative grouping prototype
+  remains experimental pending complete validation. First-order temporal
+  refinement is observed in both that prototype and the original seam fixture.
+- Negative undershoots are present in both baseline and corrected full-day
+  fields and are explicitly recorded. Total conservation is not claimed to
+  establish positivity or reference-model equivalence.
+- README freshness was the only full-collection failure; the file map was
+  repaired and the failed file plus remaining tests pass on resume. The
+  final focused advection file includes the additional strong adjoint test.
+
+No unresolved blocker was found for the scoped Lin–Rood seam correction.
+The separate PPM, undershoot, and precision investigations remain open.

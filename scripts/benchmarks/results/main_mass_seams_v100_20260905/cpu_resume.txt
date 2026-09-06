@@ -1,0 +1,316 @@
+[ Info: Running core/test_readme_current.jl
+[ Info: Running core/test_reduced_gaussian_mesh.jl
+[ Info: Running core/test_replay_consistency.jl
+[ Info:   Write-time replay gate: max|m_evolved−m_stored|/max|m| = 4.000e-05  (abs=4.000e+04 kg  win=1  cell=(2, 2, 1))
+[ Info: Running core/test_rg_preprocessor_contract.jl
+[ Info:   Per-substep positivity gate: max outgoing/m=0.500 dir=h win=1 cell=(1, 1) (limit=0.95)
+[ Info:   Per-substep positivity gate: max outgoing/m=0.500 dir=h win=2 cell=(1, 1) (limit=0.95)
+[ Info: Running core/test_rg_preprocessor_unified_driver.jl
+[ Info:   Reading spectral data for 20211201...
+[ Info:   Spectral cache hit: /tmp/jl_TtBUq7/cache/era5_spectral_ee00019bffdac581c41a5e9412ea4f6cccf7f36b.jld2
+[ Info:   Spectral data read: T=0, 24 hours (2.0s)
+[ Info:   Compressed Laplacian: 24 unique entries (avg 3.0 neighbors/cell) from 20 faces (1× compression, 0.00s)
+[ Info:   Output: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 24 windows, 8 cells, 20 faces)
+[ Info:   Mass fix DISABLED
+[ Info:   Streaming: synthesize → balance → write (2-window sliding buffer)...
+[ Info:     Window  1/24 (hour 00): synth 0.13s  offset=+0.000 Pa
+[ Info:     Window  2/24 (hour 01): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window  1/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window  3/24 (hour 02): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window  2/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window  3/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window  8/24 (hour 07): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window  8/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window 16/24 (hour 15): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window 16/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window 24/24 (hour 23): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window 24/24 (last): bal 0.00s  pre_raw=0.00e+00 post_proj=0.00e+00 iter=0
+[ Info:   Per-substep positivity gate: max outgoing/m=0.000 dir=none win=0 cell=(0, 0) (limit=0.95)
+[ Info:   Write-time RG replay gate: max rel=0.000e+00 abs=0.000e+00 win=0 cell=(0, 0)
+[ Info:   Poisson balance summary: pre_raw=0.000e+00  post_proj=0.000e+00  post_raw=0.000e+00  max_cg_iter=0
+[ Info:   Done: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 7.3s)
+[ Info:   Reading spectral data for 20211201...
+[ Info:   Spectral cache hit: /tmp/jl_TtBUq7/cache/era5_spectral_ee00019bffdac581c41a5e9412ea4f6cccf7f36b.jld2
+[ Info:   Spectral data read: T=0, 24 hours (0.0s)
+[ Info:   Compressed Laplacian: 24 unique entries (avg 3.0 neighbors/cell) from 20 faces (1× compression, 0.00s)
+[ Info:   Output: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 24 windows, 8 cells, 20 faces)
+[ Info:   Mass fix DISABLED
+[ Info:   Streaming: synthesize → balance → write (2-window sliding buffer)...
+[ Info:     Window  1/24 (hour 00): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window  2/24 (hour 01): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window  1/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window  3/24 (hour 02): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window  2/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window  3/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window  8/24 (hour 07): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window  8/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window 16/24 (hour 15): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window 16/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window 24/24 (hour 23): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window 24/24 (last): bal 0.00s  pre_raw=0.00e+00 post_proj=0.00e+00 iter=0
+[ Info:   Per-substep positivity gate: max outgoing/m=0.000 dir=none win=0 cell=(0, 0) (limit=0.95)
+[ Info:   Write-time RG replay gate: max rel=0.000e+00 abs=0.000e+00 win=0 cell=(0, 0)
+[ Info:   Poisson balance summary: pre_raw=0.000e+00  post_proj=0.000e+00  post_raw=0.000e+00  max_cg_iter=0
+[ Info:   Done: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 0.0s)
+[ Info: Running core/test_runtime_chemistry_recipe.jl
+[ Info: Running core/test_section_timer.jl
+[ Info: Running core/test_selected_snapshots.jl
+[ Info: Saved snapshots: /tmp/jl_pp8zn2/full.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_pp8zn2/selected.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_fSOf5z/full.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_fSOf5z/selected.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_XIOgAy/full.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_XIOgAy/selected.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_2usqIK/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_2usqIK/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_QmtTFo/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_QmtTFo/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_bNtxkM/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_bNtxkM/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_WDWOi7/full.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_WDWOi7/selected.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_FVniBS/full.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_FVniBS/selected.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_ywWRq7/full.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_ywWRq7/selected.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_uyszwI/full.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_uyszwI/selected.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_RY9Wsi/full.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_RY9Wsi/selected.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_xWF3kn/full.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_xWF3kn/selected.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_wgyKaq/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_wgyKaq/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_UU9cL9/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_UU9cL9/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_1bPWF7/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_1bPWF7/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_ScK4Oa/full.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_ScK4Oa/selected.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_L7covD/full.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_L7covD/selected.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_IZfVnV/full.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_IZfVnV/selected.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Running core/test_structured_mesh_metadata.jl
+[ Info: Running core/test_surface_flux_kahan_accuracy.jl
+[ Info: Running core/test_timevarying_surface_flux.jl
+[ Info: Running core/test_tm5_alias_safety.jl
+[ Info: Running core/test_tm5_bidiagonal_solve.jl
+[ Info: Running core/test_tm5_bldiff.jl
+[ Info: Running core/test_tm5_convection.jl
+┌ Warning: TM5Convection: use_collab_lu=true but backend is CPU — the collaborative kernel is GPU-only; using the per-thread path. Set use_collab_lu=false to silence this.
+└ @ AtmosTransport.Operators.Convection ~/code/gitHub/AtmosTransportModel-revamp-main/src/Operators/Convection/TM5Convection.jl:282
+Precompiling packages...
+   2927.1 ms  ✓ AtmosTransportNVTXExt (serial)
+  1 dependency successfully precompiled in 3 seconds
+Precompiling packages...
+   4378.6 ms  ✓ AtmosTransportCUDAExt (serial)
+  1 dependency successfully precompiled in 4 seconds
+[ Info: Running core/test_tm5_driven_simulation.jl
+[ Info: Running core/test_tm5_hessenberg.jl
+[ Info: Running core/test_tm5_preprocessing.jl
+[ Info: Running core/test_tm5_preprocessing_rates.jl
+[ Info: Running core/test_tm5_process_day.jl
+[ Info:   Writing binary...
+[ Info: Running core/test_tm5_tile_bit_equality.jl
+[ Info: Running core/test_tm5_tracer_batching.jl
+[ Info: Running core/test_tm5_vertical_remap.jl
+[ Info: Running core/test_tm5_vs_cmfmc_parity.jl
+[ Info: Running core/test_tm5_workspace_lifetime.jl
+[ Info: Running core/test_transport_model_convection.jl
+[ Info: Running core/test_vertical_transforms.jl
+[ Info: echlevs level selection: 137 → 85 levels (86 interfaces)
+[ Info: echlevs level selection: 137 → 85 levels (86 interfaces)
+[ Info: Running core/test_visualization_snapshots.jl
+[ Info: Running core/test_window_prefetch.jl
+┌ Info: Building regridder (will cache to disk)
+└   path = "/tmp/jl_W2dWSE/regridder_ff691c8e65f20a8b982329166c432f57a64315ee.jld2"
+┌ Info: Loading cached regridder
+└   path = "/tmp/jl_W2dWSE/regridder_ff691c8e65f20a8b982329166c432f57a64315ee.jld2"
+[ Info: Resumed core and regridding suite complete.
+Test Summary:           | Pass  Total  Time
+Module README freshness |   82     82  0.1s
+Test Summary:              | Pass  Total  Time
+ReducedGaussianMesh wiring |    4      4  0.1s
+Test Summary:                | Pass  Total  Time
+ReducedGaussianMesh geometry |   22     22  0.6s
+Test Summary:                                          | Pass  Total  Time
+Plan 39 Commit H — replay-consistency gate regressions |   25     25  2.1s
+Test Summary:                  | Pass  Total  Time
+RG preprocessor contract gates |  184    184  1.3s
+Test Summary:                                       | Pass  Total   Time
+RG spectral unified driver emits reproducible bytes |    6      6  14.4s
+Test Summary:                      | Pass  Total  Time
+build_runtime_chemistry — dispatch |   13     13  0.4s
+Test Summary:       | Pass  Total  Time
+ChemistrySpec parse |   11     11  0.1s
+Test Summary:                                  | Pass  Total  Time
+RuntimePhysicsRecipe stores explicit chemistry |    1      1  0.0s
+Test Summary:                                  | Pass  Total  Time
+SectionTimer records concurrent samples safely |    7      7  2.4s
+Test Summary:                                     | Pass  Total  Time
+SectionTimer rejects samples from disabled epochs |    4      4  0.1s
+Test Summary:                                         | Pass  Total   Time
+Selected capture preserves full-capture NetCDF values |  354    354  40.5s
+Test Summary:                                                 | Pass  Total  Time
+Selected signed totals survive omitted layers and diagnostics |   11     11  2.0s
+Test Summary:                   | Pass  Total  Time
+LatLonMesh style and validation |   12     12  0.2s
+Test Summary:               | Pass  Total  Time
+CubedSphereMesh conventions |   26     26  0.5s
+Test Summary:                                        | Pass  Total  Time
+CubedSphereMesh connectivity matches corner geometry |  288    288  0.1s
+Test Summary:                       | Pass  Total  Time
+CubedSphereMesh local tangent basis |   20     20  0.3s
+Test Summary:                                | Pass  Total  Time
+Kahan vs naive F32 surface-flux accumulation |   45     45  0.2s
+Test Summary:                                    | Pass  Total  Time
+TimeVarying surface flux — constructor contracts |    4      4  0.2s
+Test Summary:                                   | Pass  Total  Time
+TimeVarying surface flux — _time_interp_bracket |   12     12  0.0s
+Test Summary:                                       | Pass  Total  Time
+TimeVarying surface flux — CS apply + interpolation |   33     33  1.0s
+Test Summary:                                          | Pass  Total  Time
+TimeVarying surface flux — temporal schemes (dispatch) |   16     16  0.4s
+Test Summary:                                                          | Pass  Total  Time
+TimeVarying surface flux — ConservativeMeanFlux knot-crossing integral |    4      4  0.2s
+Test Summary:                                                | Pass  Total  Time
+TimeVarying surface flux — Adapt identity + PerTracerFluxMap |    7      7  0.4s
+Test Summary:                         | Pass  Total  Time
+TM5 alias safety: f_scratch === conv1 |   23     23  1.0s
+Test Summary:                                       | Pass  Total  Time
+Bidiagonal eligibility follows active pivot history |    4      4  0.1s
+Test Summary:                                      | Pass  Total  Time
+Bidiagonal RHS solves agree with general LU solves | 1224   1224  2.0s
+Test Summary:            | Pass  Total  Time
+TM5 bldiff column kernel |   94     94  1.1s
+Test Summary:                                            | Pass  Total  Time
+plan 23 Commit 1: TM5Convection type + workspace factory |   30     30  0.1s
+Test Summary:                                                | Pass  Total  Time
+plan 23 Commit 1 / storage Commit 4: TM5Workspace tile shape |   26     26  0.2s
+Test Summary:                                        | Pass  Total  Time
+plan 23 Commit 1: _convection_workspace_for dispatch |    6      6  0.2s
+Test Summary:                                    | Pass  Total  Time
+plan 23 Commit 4: TM5Convection apply! LL kernel |    8      8  1.3s
+Test Summary:                                    | Pass  Total  Time
+plan 23 Commit 4: TM5Convection apply! RG kernel |    6      6  0.8s
+Test Summary:                                    | Pass  Total  Time
+plan 23 Commit 4: TM5Convection apply! CS kernel |    5      5  2.3s
+Test Summary:                                                     | Broken  Total  Time
+P6 collab-LU: bit-exact equivalence with per-thread kernel (CUDA) |      1      1  0.0s
+Test Summary:                                                 | Broken  Total  Time
+P6 collab-LU: bit-exact equivalence on ReducedGaussian (CUDA) |      1      1  0.0s
+Test Summary:                                             | Broken  Total  Time
+P6 collab-LU: bit-exact equivalence on CubedSphere (CUDA) |      1      1  0.0s
+Test Summary:                                                                               | Broken  Total  Time
+P6 collab-LU: lmax_conv truncation is bit-exact when forcings above k_shift are zero (CUDA) |      1      1  0.0s
+Test Summary:                                                  | Broken  Total  Time
+P6 collab-LU: n_merge = 1 is bit-exact to no-merge path (CUDA) |      1      1  0.0s
+Test Summary:                                                   | Broken  Total  Time
+P6 collab-LU: vertical aggregation conserves tracer mass (CUDA) |      1      1  0.0s
+Test Summary:                                                                  | Pass  Total  Time
+cloud-top closure: icltop==1 (clipped cloud) conserves mass over many substeps |    2      2  1.7s
+Test Summary:                                                  | Pass  Total  Time
+Collaborative LU: depth envelope and unbounded tracer batching |   12     12  0.0s
+Test Summary:                                                    | Pass  Total  Time
+plan 23 Commit 4: _assert_tm5_forcing catches missing tm5_fields |    4      4  0.0s
+Test Summary:                                                | Pass  Total  Time
+plan 23 Commit 2: _tm5_solve_column! identity + conservation |   39     39  0.3s
+Test Summary:                                   | Pass  Total  Time
+plan 23 Commit 2: column-major loop-order audit |    1      1  0.3s
+Test Summary:                                             | Pass  Total  Time
+plan 23 Commit 1: with_convection(model, TM5Convection()) |    5      5  0.1s
+Test Summary:                                         | Pass  Total  Time
+plan 23 Commit 6: DrivenSimulation with TM5Convection |   11     11  5.4s
+Test Summary:                                           | Pass  Total  Time
+plan 23 Commit 6: DrivenSimulation preserves FT for TM5 |    4      4  0.8s
+Test Summary:                                              | Pass  Total  Time
+Hessenberg LU retains general pivots and triangular solves |  402    402  0.3s
+Test Summary:                                                | Pass  Total  Time
+Production forward and adjoint choose exact column structure |  448    448  1.8s
+Test Summary:                        | Pass  Total  Time
+plan 23 Commit 3: ec2tm! column math |   27     27  0.4s
+Test Summary:                                       | Pass  Total  Time
+plan 23 Commit 3: LL transport binary TM5 roundtrip |    6      6  4.0s
+Test Summary:                                                      | Pass  Total  Time
+plan 23 Commit 3: LL binary without TM5 → has_tm5_convection=false |    2      2  0.4s
+Test Summary:                                                                  | Pass  Total  Time
+plan 23 Commit 3: TransportBinaryDriver populates window.convection.tm5_fields |    8      8  1.6s
+Test Summary:                                  | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! F90 parity |   10     10  0.5s
+Test Summary:                                    | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! zero forcing |    4      4  0.0s
+Test Summary:                                        | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! bad-data cleanup |    9      9  0.2s
+Test Summary:                                               | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! negative redistribution |    8      8  0.1s
+Test Summary:                                         | Pass  Total  Time
+TM5 closure: Σentu = Σdetu after column net-zero step |    8      8  0.0s
+Test Summary:                                      | Pass  Total  Time
+TM5 closure: no-op when column is already balanced |    4      4  0.0s
+Test Summary:                                    | Pass  Total  Time
+plan 24 Commit 1: dz_hydrostatic_virtual! sanity |    8      8  0.1s
+Test Summary:                                          | Pass  Total  Time
+plan 24 Commit 1: dz_hydrostatic_virtual! shape guards |    4      4  0.0s
+Test Summary:                                        | Pass  Total  Time
+plan 24 Commit 1: ec2tm! (plan-23 minimal) unchanged |    2      2  0.0s
+Test Summary:                                    | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! shape guards |    2      2  0.0s
+Test Summary:                                     | Pass  Total  Time
+ec2tm_from_rates! sign-aware closure (regression) |    5      5  0.0s
+Test Summary:                   | Pass  Total  Time
+resolve_tm5_convection_settings |    9      9  0.2s
+Test Summary:                                                    | Pass  Total  Time
+tm5_copy_or_regrid_ll! supports lower-resolution LL target shape |    2      2  3.6s
+Test Summary:                          | Pass  Total  Time
+LL write_day_binary! with TM5 sections |   17     17  1.7s
+Test Summary:                                   | Pass  Total  Time
+compute_tm5_merged_hour_on_source! zero-forcing |   24     24  9.7s
+Test Summary:                            | Pass  Total  Time
+TM5 tile bit-equality (storage Commit 4) |    8      8  1.1s
+Test Summary:                                     | Pass  Total  Time
+Collaborative convection batching: host selection |   15     15  0.0s
+Test Summary:                                               | Pass  Total  Time
+Shared RHS helper: partial batches, pivots, and active rows |  964    964  0.8s
+Test Summary:                                              | Pass  Total  Time
+plan 24 Commit 3: merge_tm5_field_3d! preserves column sum |   62     62  0.1s
+Test Summary:                                              | Pass  Total  Time
+plan 24 Commit 3: merge_tm5_field_3d! zeros unused buckets |    5      5  0.1s
+Test Summary:                                      | Pass  Total  Time
+plan 24 Commit 3: merge_tm5_field_3d! shape guards |    2      2  0.0s
+Test Summary:                                           | Pass  Total  Time
+plan 24 Commit 3: tm5_native_fields_for_hour! grid loop |   15     15  0.3s
+Test Summary:                                                    | Pass  Total  Time
+plan 24 Commit 3: tm5_native_fields_for_hour! output-shape guard |    1      1  0.3s
+Test Summary:                                                     | Pass  Total  Time
+plan 24 Commit 3: end-to-end native → merged column sum preserved |   48     48  0.2s
+Test Summary:                                   | Pass  Total  Time
+plan 23 Commit 5: CMFMC vs TM5 parity on LatLon |    6      6  1.0s
+Test Summary:                                            | Pass  Total  Time
+plan 23 Commit 5: CMFMC vs TM5 parity on ReducedGaussian |    3      3  1.3s
+Test Summary:                                                | Pass  Total  Time
+Runtime factories defer only requested collaborative scratch |   48     48  0.4s
+Test Summary:                                          | Pass  Total  Time
+Deferred TM5 scratch retains budget and allocates once |   38     38  0.2s
+Test Summary:                                            | Pass  Total  Time
+Deferred adaptation preserves persistent convection data |    8      8  0.1s
+Test Summary:                                                | Pass  Total  Time
+C180 L85 collaborative workspace omits legacy matrix payload |    3      3  0.1s
+Test Summary:                     | Pass  Total  Time
+TransportModel convection runtime |   24     24  1.4s
+Test Summary:                       | Pass  Total  Time
+DrivenSimulation convection runtime |   10     10  0.9s
+Test Summary:                                             | Pass  Total  Time
+binary substep contract keeps chemistry at window cadence |    4      4  0.5s
+Test Summary:                                         | Pass  Total  Time
+DrivenSimulation keeps convection runtime on model FT |    4      4  0.5s
+Test Summary:                                                      | Pass  Total  Time
+New DrivenSimulation invalidates convection from a previous driver |    7      7  1.9s
+Test Summary:                                  | Pass  Total  Time
+Plan 41 P0b — typed vertical-transform surface |  140    140  1.1s
+Test Summary:                      | Pass  Total  Time
+Visualization snapshot field views |   15     15  4.2s
+Test Summary:                        | Pass  Total  Time
+CPU startup loads one forcing window |   57     57  1.4s
+Test Summary:       | Pass  Total   Time
+Regridding (Tier 4) |  628    628  10.6s

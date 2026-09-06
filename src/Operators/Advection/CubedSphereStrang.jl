@@ -15,9 +15,11 @@
 # [Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]. The reconstruction stencil reads into
 # the halo region naturally.
 #
-# Mass conservation: guaranteed by the telescoping identity, same as
-# LatLon. Each panel's X sweep is periodic (halo wraps around), Y sweep
-# reads from halo at panel edges, Z sweep is panel-local closed.
+# Conservation caveat: halo values alone do not enforce one shared tracer
+# flux at panel seams. Rotated contacts can be evaluated at different X/Y
+# stages, causing a truncation-level tracer imbalance even in Float64.
+# Vertical sweeps are panel-local and closed. LinRoodSeams.jl corrects the
+# separate unsplit Lin-Rood path; the split path below still needs coupling.
 #
 # References:
 #   Strang (1968) — symmetric splitting for second-order accuracy
@@ -40,7 +42,7 @@ using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend, CPU
 # The UpwindScheme specialization uses hand-written gamma-clamped loops instead
 # (positivity-safe even at CFL > 1).
 
-"""X-sweep kernel on one CS panel. Interior i ∈ [1,Nc], periodic via halo."""
+"""X-sweep kernel on one CS panel. Interior i ∈ [1,Nc], neighbors via halo."""
 @kernel function _cs_xsweep_kernel!(rm_new, @Const(rm), m_new, @Const(m),
                                      @Const(am), scheme, Nc, Hp, flux_scale)
     ii, jj, k = @index(Global, NTuple)

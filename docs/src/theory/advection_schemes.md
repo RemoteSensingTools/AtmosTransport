@@ -214,12 +214,32 @@ edge orientation (`0 = aligned`, `2 = reversed`)? The default
 connectivity methods encode the GEOS-FP / GEOS-IT 6-panel arrangement and its
 gnomonic alternative.
 
-At the start of each X / Y sweep on the cubed sphere, the runtime
-`_propagate_cs_outflow_to_halo!` walks the connectivity table and
-copies each panel's canonical face flux into the corresponding
-neighbour panel's halo, applying the orientation flip if needed. This
-keeps the telescoping conservation argument intact across panel
-boundaries.
+Halo exchange supplies neighboring tracer and air-mass values for the
+reconstruction stencil. Matching air-mass fluxes alone does not guarantee
+matching tracer fluxes: both cells sharing a face must use the same tracer
+exchange at the same update stage.
+
+Lin–Rood now shares the mean of the two panels' inner and outer face mixing
+ratios before applying either panel's final horizontal divergence. Only panel
+boundary faces are changed. Tangential indices follow the connectivity map;
+mixing ratios are scalars, and the mirrored air-mass flux supplies the normal
+sign. This makes the two tracer transfers cancel to roundoff. The adjoint
+applies the transpose of the same averaging operation.
+
+The dimensionally split cubed-sphere Upwind, Slopes, and PPM paths still have
+an open seam conservation defect: rotated contacts can be evaluated at
+different X/Y stages. A Float64 seam test at Courant numbers around 0.1
+exposes drift that was hidden by the previous low-Courant fixture. Use
+Lin–Rood for cubed-sphere runs requiring the corrected seam exchange; its
+numerical behavior and cost differ from split PPM.
+
+In a six-tracer C90 L66, 24-hour V100 test with TM5 convection and Dkg diffusion,
+sharing Lin–Rood seam estimates reduces maximum final relative tracer-total
+drift from `3.77e-5` to `6.98e-7` in Float32 and from `3.80e-5` to `7.93e-16`
+in Float64. These are measured results for one forcing archive, not universal
+error bounds. Positive initial layers still develop negative undershoots in
+that workload both before and after the fix; conserving totals does not
+establish positivity or reference-model agreement.
 
 ## Reduced-Gaussian per-ring face segmentation
 

@@ -1,0 +1,4 @@
+Test Summary:                                          | Pass  Total  Time
+Lin-Rood shared faces preserve interiors and transpose |   12     12  3.3s
+Test Summary:                                                | Pass  Total   Time
+CUDA Lin-Rood shared faces match the independent contact map |   16     16  22.4s

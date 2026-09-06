@@ -134,6 +134,19 @@ performance guide now explains the distinction between nested host timing,
 GPU synchronization waits, cumulative allocation, peak memory, and shared-memory
 tracer batches.
 
+## Tracer mass drift
+
+The [mass-seam investigation](2026-09-05_main_mass_seams.md) identifies a
+horizontal tracer-exchange defect that persists in Float64. It is not explained
+by Float32 accumulation. Sharing final Lin–Rood face estimates reduces the
+six-tracer full-day V100 maximum final drift from 3.772e-5 to 6.981e-7 in
+Float32 and from 3.801e-5 to 7.931e-16 in Float64. The forward tape and adjoint
+include the same coupling. The full 118-file core collection plus regridding
+passes after repairing a README file-map entry and resuming the remaining
+files; 660 final focused CS checks and the strict docs build also pass.
+Split PPM still needs a separate treatment of rotated contacts evaluated at
+different directional stages.
+
 ## Remaining work
 
 - Evaluate whether reusing interior VMR buffers justifies the added initialization
@@ -142,7 +155,8 @@ tracer batches.
 - Profile multi-day input movement and peak host/device memory on representative
   archives before changing host-window ownership or staging. Current timing
   evidence covers warm-cache runs of at most one day.
-- Assess accumulated Float32 drift against an independent scientific reference;
-  the new launch layout preserves the existing drift but does not reduce it.
+- Correct the separate split-PPM seam defect with consistent forward and
+  adjoint exchange, then measure residual Float32 error. The Lin–Rood fix
+  establishes that the earlier full-day drift was not merely roundoff.
 - Retain the six-tracer matrix batch until an alternative improves measured
   whole-run performance. Other GPU architectures need their own measurements.

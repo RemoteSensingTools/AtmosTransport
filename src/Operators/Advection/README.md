@@ -62,6 +62,8 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   cubed-sphere palindrome
 - [`ppm_subgrid_distributions.jl`](ppm_subgrid_distributions.jl) — PPM
   subcell distributions shared by CS-specific code
+- [`LinRoodSeams.jl`](LinRoodSeams.jl) — shared final seam estimates and
+  their transpose for conservative Lin–Rood panel exchange
 - [`LinRood.jl`](LinRood.jl) — Lin-Rood style cubed-sphere horizontal
   transport utilities
 - [`linrood_adjoint_kernels.jl`](linrood_adjoint_kernels.jl) —

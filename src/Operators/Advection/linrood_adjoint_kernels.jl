@@ -1420,8 +1420,12 @@ end
         fx_in, fx_out, fy_in,
         mesh, ::Val{ORD})
 
-Discrete transpose of `fv_tp_2d_cs!` for ONE panel with all halos held
-at zero. Reads the forward tape inputs `(rm, m, am, bm, q_buf_phase2,
+Per-panel reverse composition used by `fv_tp_2d_cs!`. With `face_adjoints`,
+the six-panel caller supplies seeds after reversing the final update and
+shared-seam projection. Without them, this includes the uncoupled local
+update used by standalone kernel tests. Outer-face Courant denominators
+are fixed meteorology; this is not a complete derivative with respect to air mass.
+Reads the forward tape inputs `(rm, m, am, bm, q_buf_phase2,
 q_buf_phase3, fx_in, fx_out, fy_in)` and the adjoint seed
 `(lambda_rm_new, lambda_m_new)`, then accumulates into the input
 adjoints `(lambda_rm, lambda_m)`. Internally allocates the
@@ -1447,7 +1451,8 @@ function apply_linrood_horizontal_adjoint_single_panel!(
     q_buf_phase2, q_buf_phase3,
     fx_in, fx_out, fy_in,
     mesh::CubedSphereMesh,
-    ::Val{ORD}=Val(5),
+    ::Val{ORD}=Val(5);
+    face_adjoints=nothing,
 ) where {ORD}
     (ORD == 5 || ORD == 7) || throw(ArgumentError(
         "LinRoodPPMScheme adjoint supports ORD ∈ {5, 7}; got ORD=$ORD."))
@@ -1456,22 +1461,23 @@ function apply_linrood_horizontal_adjoint_single_panel!(
     N = Nc + 2Hp
     FT = eltype(lambda_rm)
 
-    # Backend-aware allocations on the same backend as `lambda_rm`.
-    lambda_fx_in  = similar(lambda_rm, FT, (Nc + 1, Nc, Nz)); fill!(lambda_fx_in,  zero(FT))
-    lambda_fx_out = similar(lambda_rm, FT, (Nc + 1, Nc, Nz)); fill!(lambda_fx_out, zero(FT))
-    lambda_fy_in  = similar(lambda_rm, FT, (Nc, Nc + 1, Nz)); fill!(lambda_fy_in,  zero(FT))
-    lambda_fy_out = similar(lambda_rm, FT, (Nc, Nc + 1, Nz)); fill!(lambda_fy_out, zero(FT))
-    lambda_q_buf  = similar(lambda_rm, FT, (N, N, Nz));       fill!(lambda_q_buf,  zero(FT))
-
-    # ── Reverse Phase 3 ────────────────────────────────────────────
-    # update_adjoint: lambda_rm_new, lambda_m_new → lambda_rm, lambda_m,
-    #                                              lambda_fx_in, lambda_fx_out,
-    #                                              lambda_fy_in, lambda_fy_out
-    apply_linrood_update_adjoint!(
-        lambda_rm, lambda_m,
-        lambda_fx_in, lambda_fx_out, lambda_fy_in, lambda_fy_out,
-        lambda_rm_new, lambda_m_new, am, bm, mesh,
-    )
+    # A six-panel caller reverses the update and shared-face projection first,
+    # then passes the coupled face seeds. Standalone panel callers retain the
+    # uncoupled composition used by the local kernel derivative tests.
+    if face_adjoints === nothing
+        lambda_fx_in  = similar(lambda_rm, FT, (Nc + 1, Nc, Nz)); fill!(lambda_fx_in,  zero(FT))
+        lambda_fx_out = similar(lambda_rm, FT, (Nc + 1, Nc, Nz)); fill!(lambda_fx_out, zero(FT))
+        lambda_fy_in  = similar(lambda_rm, FT, (Nc, Nc + 1, Nz)); fill!(lambda_fy_in,  zero(FT))
+        lambda_fy_out = similar(lambda_rm, FT, (Nc, Nc + 1, Nz)); fill!(lambda_fy_out, zero(FT))
+        apply_linrood_update_adjoint!(
+            lambda_rm, lambda_m,
+            lambda_fx_in, lambda_fx_out, lambda_fy_in, lambda_fy_out,
+            lambda_rm_new, lambda_m_new, am, bm, mesh,
+        )
+    else
+        lambda_fx_in, lambda_fx_out, lambda_fy_in, lambda_fy_out = face_adjoints
+    end
+    lambda_q_buf = similar(lambda_rm, FT, (N, N, Nz)); fill!(lambda_q_buf, zero(FT))
 
     # yq_face_adjoint: lambda_fy_out → lambda_q_buf (q_buf at phase 3 state C)
     apply_ppm_y_face_from_q_adjoint!(

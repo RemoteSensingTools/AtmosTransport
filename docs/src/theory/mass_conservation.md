@@ -7,7 +7,7 @@ holds.
 
 ## The contract
 
-For every cell `c` and every advection sub-step:
+For every cell `c` and every CFL-safe advection sub-step:
 
 ```math
 m^{n+1}_c \;=\; m^n_c \;+\; \sum_f \sigma_{c,f}\,F^n_f
@@ -47,19 +47,22 @@ the double-sum collapses to **boundary fluxes only**:
 
 For a closed sphere there is no boundary, so the right-hand side
 identically vanishes mathematically — and to floating-point in the
-implementation, modulo the accumulation noise of summing many
-fluxes. This holds for every advection scheme that is written in
-flux form (the X / Y / Z sweep kernels in
-`src/Operators/Advection/structured_kernels.jl`). It does NOT hold
+implementation, provided both cells use the same face flux at the same
+update stage. Writing each panel's update in flux form is insufficient
+if neighboring panels reconstruct different tracer fluxes. The structured
+X / Y / Z kernels in `src/Operators/Advection/structured_kernels.jl` use
+shared face values. The telescoping argument does NOT hold
 for schemes written in advective form (e.g. `χ ∂_t = -u ∂_x χ`),
 which is why every advection scheme in this repository is flux-form.
 
 The same telescoping argument extends to:
 
-- The cubed sphere via panel-edge halo synchronisation
-  (`PanelConnectivity` in `src/Grids/PanelConnectivity.jl`) which carries
-  the canonical face flux from one panel onto the halo of the neighbour
-  panel with the right sign / orientation.
+- Cubed-sphere Lin–Rood via shared final panel-edge tracer fluxes
+  (`src/Operators/Advection/LinRoodSeams.jl`) and mirrored air-mass fluxes.
+  Halo exchange alone is insufficient. The dimensionally split CS schemes
+  still have an open seam defect; see [Panel-edge halo treatment (cubed sphere)](@ref).
+  The q-space Lin–Rood path requires CFL-safe inputs: its existing cell-local
+  emergency flux scaling breaks conservation when activated.
 - The reduced-Gaussian grid via the LCM-based ring-boundary face
   segmentation in `_boundary_counts(nlon_per_ring)` in
   `src/Grids/ReducedGaussianMesh.jl`. Each ring-pair boundary is split
@@ -119,6 +122,10 @@ arithmetic at production resolutions (Float32's 23-bit mantissa,
 giving ~7 decimal digits of precision per operation, accumulates to
 roughly `1e-5` per substep on a 720×361 grid; the per-window gate is
 relaxed to `1e-4` to absorb the per-window accumulation).
+
+These replay gates check carrier-air continuity. They do not bound tracer
+drift or establish consistency of reconstructed tracer fluxes at panel seams;
+tracer conservation needs its own tests.
 
 The gate fires twice in the lifecycle of a binary:
 

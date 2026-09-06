@@ -1,0 +1,29 @@
+[ Info: Poisson balance: corrected 4/4 levels, max pre-balance residual: 0.0166 kg
+Test Summary:            | Pass  Total  Time
+CubedSphereMesh geometry |   36     36  0.7s
+Test Summary: | Pass  Total  Time
+Halo exchange |  496    496  0.6s
+Test Summary:                      | Pass  Total   Time
+CS Strang splitting — UpwindScheme |   28     28  18.8s
+Test Summary:                                       | Pass  Total  Time
+CS Strang splitting — SlopesScheme{MonotoneLimiter} |    9      9  3.0s
+Test Summary:                   | Pass  Total  Time
+CS Strang splitting — PPMScheme |    3      3  1.1s
+Test Summary:                                                   | Pass  Total  Time
+CS advection conserves structured tracers across mirrored seams |    8      8  6.9s
+Test Summary:                                                 | Pass  Total  Time
+Lin-Rood conserves across seams at appreciable Courant number |    8      8  1.5s
+Test Summary:                                   | Pass  Total  Time
+Lin-Rood q-space seam conservation at valid CFL |   32     32  8.8s
+Test Summary:                                         | Pass  Total  Time
+CS monotone advection preserves signed tracer offsets |   12     12  2.3s
+Test Summary:                      | Pass  Total  Time
+CS source mass closure — PPMScheme |   12     12  3.1s
+Test Summary:      | Pass  Total  Time
+CS halo validation |    2      2  0.5s
+Test Summary:                              | Pass  Total  Time
+LLPoissonWorkspace zero-allocation balance |    1      1  0.9s
+Test Summary:          | Pass  Total  Time
+CS advection — Float32 |    1      1  2.5s
+Test Summary:                                     | Pass  Total  Time
+Shared-seam horizontal adjoint at appreciable CFL |   12     12  6.9s

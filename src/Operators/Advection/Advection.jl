@@ -69,6 +69,7 @@ include("CubedSphereStrang.jl")
 include("ppm_subgrid_distributions.jl")
 
 # Lin-Rood cross-term advection for cubed-sphere grids (FV3 fv_tp_2d)
+include("LinRoodSeams.jl")
 include("LinRood.jl")
 include("linrood_adjoint_kernels.jl")
 

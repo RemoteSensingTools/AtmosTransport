@@ -232,6 +232,12 @@ function _record_linrood_horizontal_substep!(
     end
     synchronize(backend)
 
+    # The transverse predictors used the unsynchronized inner face values.
+    # Preserve those inputs for their reverse pass before sharing seam faces.
+    panels_fx_in_tape = record_ops ? map(copy, panels_fx_in) : nothing
+    panels_fy_in_tape = record_ops ? map(copy, panels_fy_in) : nothing
+    _share_lr_seam_faces!(panels_fx_in, panels_fx_out, panels_fy_in, panels_fy_out, mesh)
+
     # Apply the update in-place using a temporary destination.
     rm_buf = similar(panels_rm[1]); fill!(rm_buf, zero(FT))
     m_buf  = similar(panels_m[1]);  fill!(m_buf,  zero(FT))
@@ -257,7 +263,7 @@ function _record_linrood_horizontal_substep!(
     return _CSLinRoodHorizRecord{FT, A3, A3x, A3y, P, ORD}(
         panels_rm_tape, panels_m_tape,
         panels_q_buf_phase2, panels_q_buf_phase3,
-        panels_fx_in, panels_fx_out, panels_fy_in,
+        panels_fx_in_tape, panels_fx_out, panels_fy_in_tape,
         panels_am, panels_bm,
         fs,
     )
@@ -274,14 +280,28 @@ function _apply_cs_linrood_horizontal_adjoint!(
     record::_CSLinRoodHorizRecord{FT, A3, A3x, A3y, P, ORD},
     mesh::CubedSphereMesh{FT},
 ) where {FT, A3, A3x, A3y, P, ORD}
-    # Step 1: per-panel single-panel composition.
-    # Each panel's lambda_rm / lambda_m accumulate contributions to
-    # their own interior + halo from the panel's own kernel adjoints.
+    # Reverse the final update on all panels before reversing their shared
+    # face projection. A seam couples seeds from both neighboring cells.
+    input_lambda_rm = map(a -> fill!(similar(a), zero(FT)), lambda_panels_rm)
+    input_lambda_m = map(a -> fill!(similar(a), zero(FT)), lambda_panels_m)
+    face_seeds = map((record.panels_fx_in, record.panels_fx_in,
+                      record.panels_fy_in, record.panels_fy_in)) do panels
+        map(a -> fill!(similar(a), zero(FT)), panels)
+    end
     for p in 1:6
-        sub_lambda_rm = similar(lambda_panels_rm[p])
-        sub_lambda_m  = similar(lambda_panels_m[p])
-        fill!(sub_lambda_rm, zero(FT))
-        fill!(sub_lambda_m,  zero(FT))
+        apply_linrood_update_adjoint!(
+            input_lambda_rm[p], input_lambda_m[p],
+            face_seeds[1][p], face_seeds[2][p], face_seeds[3][p], face_seeds[4][p],
+            lambda_panels_rm[p], lambda_panels_m[p],
+            record.panels_am[p], record.panels_bm[p], mesh,
+        )
+    end
+    _share_lr_seam_faces!(face_seeds..., mesh)
+
+    # Reverse the remaining per-panel reconstruction and predictor stages.
+    for p in 1:6
+        sub_lambda_rm = input_lambda_rm[p]
+        sub_lambda_m = input_lambda_m[p]
         # The substep adjoint maps lambda(rm_new, m_new) — which is the
         # CURRENT lambda_panels_rm[p], lambda_panels_m[p] — into
         # (sub_lambda_rm, sub_lambda_m), the adjoint w.r.t. the
@@ -294,7 +314,8 @@ function _apply_cs_linrood_horizontal_adjoint!(
             record.panels_q_buf_phase2[p], record.panels_q_buf_phase3[p],
             record.panels_fx_in[p], record.panels_fx_out[p],
             record.panels_fy_in[p],
-            mesh, Val(ORD),
+            mesh, Val(ORD);
+            face_adjoints=ntuple(i -> face_seeds[i][p], 4),
         )
         # Carry-over: substep output's halo lambda is NOT overwritten
         # by the substep update (which only touches interior cells).

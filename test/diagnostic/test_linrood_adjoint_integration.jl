@@ -12,9 +12,7 @@
 using Test
 using Random
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-const AT = AtmosTransport
-const Adv = AtmosTransport.Operators.Advection
+using AtmosTransport
 
 # Reuse the existing test helpers (the footprint test lives under test/core/).
 include(joinpath(@__DIR__, "..", "core", "test_cs_ppm_adjoint_footprint.jl"))

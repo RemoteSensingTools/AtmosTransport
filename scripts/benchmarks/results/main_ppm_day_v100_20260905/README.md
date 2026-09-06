@@ -30,6 +30,11 @@ identical before and after. This exceeds the two-hour workload's drift of
 2.5718011894571768e-6; equivalence to the baseline does not establish that this
 accumulated full-day error meets a particular scientific accuracy requirement.
 
+A subsequent [seam investigation](../main_mass_seams_v100_20260905/README.md)
+finds drift in Float64 as well and isolates inconsistent horizontal tracer
+exchange. The launch-layout speedup remains valid, but baseline equivalence
+must not be read as evidence of tracer conservation.
+
 The median advection section falls from 34.127 to 25.240 s; it includes
 midpoint physics and waiting at synchronization boundaries. Matrix convection
 remains about 3.675 s per day. The short-run launch improvement therefore

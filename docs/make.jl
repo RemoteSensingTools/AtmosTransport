@@ -37,6 +37,7 @@ const PAGES = [
             "getting_started/quickstart.md",
             "getting_started/first_run.md",
             "getting_started/inspecting_output.md",
+            "getting_started/adjoints.md",
         ],
         "Core concepts" => [
             "concepts/architecture.md",
@@ -47,6 +48,7 @@ const PAGES = [
         ],
         "Tutorials" => [
             "tutorials/_generated/synthetic_latlon.md",
+            "tutorials/_generated/first_adjoint.md",
         ],
     ],
     "Workflows" => [

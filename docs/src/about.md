@@ -50,7 +50,7 @@ locally for live preview:
 cd docs && julia --project -e 'using DocumenterVitepress; DocumenterVitepress.dev_docs("build")'
 ```
 
-CI builds the same target on every push and PR; deployment to
+CI builds the same target on pull requests and pushes to `main`; deployment to
 `gh-pages` happens on pushes to `main`.
 
 ## How to contribute documentation

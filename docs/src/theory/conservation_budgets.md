@@ -149,7 +149,7 @@ The CS surface-emission footprint and 4D-Var stack are anchored by:
 
 The `test/runtests.jl` entry point discovers more than 100 files under
 `test/core/`; they run without external meteorology. CI runs that tier and the
-regridding tier on every push and PR. Real-data tests are opt-in via
+regridding tier on pull requests and pushes to `main`. Real-data tests are opt-in via
 `--real-data` or `--all` and require locally staged inputs.
 
 Total core-suite case count is in the thousands; CI reports per-test

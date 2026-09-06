@@ -100,6 +100,11 @@ function _check_config_table_shapes!(cfg, errors)
         _check_config_table!(cfg[name], "[$name]", errors)
     end
 
+    input = get(cfg, "input", nothing)
+    if input isa AbstractDict && haskey(input, "staging")
+        _check_config_table!(input["staging"], "[input.staging]", errors)
+    end
+
     tracers = get(cfg, "tracers", nothing)
     tracers isa AbstractDict || return nothing
     for (name, tracer) in pairs(tracers)
@@ -140,8 +145,9 @@ end
     validate_config(cfg::AbstractDict) -> (ok::Bool, errors::Vector{String})
 
 Check a driven runtime config and return errors without opening binary readers
-or allocating model state. Checks cover runtime table shapes (including tracer
-`init` and `surface_flux` subtables), resolved binary paths, numeric type,
+or allocating model state. Checks cover runtime table shapes (including
+`input.staging`, tracer `init` and `surface_flux` subtables), resolved binary
+paths, numeric type,
 backend/float compatibility, and integer run-window bounds. Shape errors are
 reported before value checks. Window indices accept integers, not Booleans or
 floating-point values.

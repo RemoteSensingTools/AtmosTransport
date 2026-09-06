@@ -164,6 +164,8 @@ synthetic generator; the runner and TOML pattern remain the same.
 
 ## Where to go next
 
+- [Learning adjoints and inversions](@ref Learning-adjoints) — compute a
+  receptor's emission sensitivity, check it, then run a synthetic inversion.
 - [Architecture tour](@ref Architecture-tour) — understand the objects that
   just ran without diving into implementation details.
 - [Run with real meteorology](@ref Run-with-real-meteorology) — point the same

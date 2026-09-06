@@ -63,6 +63,11 @@ binary_paths = [
 The list is consumed in the order you provide. Path expansion does not sort
 explicit lists or check their dates; list consecutive files chronologically.
 
+For complete daily files, omit `[run].stop_window`. Window indices belong to
+each file: two 24-window daily files make a 48-hour run, not a file with window
+48. Multi-file runs must consume each file's full range so forcing is not
+skipped at the handoff. Output schedules use hours since the whole run began.
+
 ### Input: folder and date range
 
 Use folder expansion for daily production files:
@@ -95,6 +100,8 @@ float_type = "Float32"
 
 After the CPU smoke run succeeds, set `use_gpu = true` and choose `"cuda"`,
 `"metal"`, or `"auto"`. Metal requires `Float32`.
+If you created the local GPU environment in [Installation](@ref), use
+`--project=gpu-env` instead of `--project=.` for that run.
 
 ### Operators
 

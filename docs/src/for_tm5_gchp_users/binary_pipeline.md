@@ -150,9 +150,10 @@ Three checkpoints in this pipeline are load-bearing for TM5 users:
   records `ps_offsets_pa_per_window` for traceability.
 - **Poisson balance.** Horizontal fluxes from spectral divergence have
   a non-zero divergence residual at the discrete grid level; we solve
-  one Poisson equation per layer per window to balance them against
-  the explicit mass-tendency. This is the same step TM5's
-  `mass_correction` routine performs.
+  the topology-specific Poisson problem against the explicit mass tendency.
+  Current CS preprocessing corrects vertically integrated columns and then
+  distributes the correction over levels; do not assume every topology uses
+  independent per-layer corrections. Vertical flux diagnosis follows balance.
 - **`recompute_cm_from_dm_target!`** runs *after* balance, not before.
   Initializing `cm` from `divergence(am, bm)` before balance is the
   wrong dependency order because balance changes the horizontal divergence;

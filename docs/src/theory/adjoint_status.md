@@ -6,6 +6,10 @@ The LinRood adjoint and TM5-style inversion scaffold are implemented and
 covered by the core test suite, but real-data parity with TM5-4DVAR remains a
 validation gap.
 
+For a first introduction, start with [Learning adjoints and inversions](@ref Learning-adjoints)
+and the [executed footprint tutorial](@ref First-emission-footprint). This page
+is the support reference, not the starting lesson.
+
 ## What is shipped
 
 ### Forward operators (unchanged)
@@ -148,11 +152,12 @@ julia --project=. scripts/inversions/cs_4dvar.jl \
     config/inversions/example_synthetic.toml
 ```
 
-That configuration owns observations, controls, covariance, optimizer, and
-checkpoint choices. For the lower-level Julia API, start with
-`test/core/test_cs_inversion_truth_recovery.jl`; it constructs the panel
-arrays, step sequences, mesh, and objective required by
-`cs_surface_emission_footprint`. Use `RevolveCheckpoint()` (without arguments)
+That synthetic-only configuration owns observations, controls, covariance and
+optimizer choices. It does not expose checkpoint or real-binary settings.
+For the lower-level Julia API, start with the
+[footprint tutorial](@ref First-emission-footprint), then
+`test/core/test_cs_inversion_truth_recovery.jl` for a larger inversion assembly.
+Use `RevolveCheckpoint()` (without arguments)
 for recursive bisection, or `StrideCheckpoint(K)` for an explicit interval.
 LinRood checkpoints currently require `tape_storage = :device`; split-sweep
 schemes also support `:pinned_host` and `:mmap`.

@@ -13,6 +13,14 @@ Streaming files record `completed_snapshots`, the number of fully flushed
 records. A write failure can leave an incomplete trailing record beyond that
 count. Reopening a stream to resume a run is not supported.
 
+The stream writes directly to its configured final path; file existence does
+not prove that the simulation finished. A failed or interrupted run leaves its
+partial file in place. If it can be opened, use only records up to
+`completed_snapshots` and compare their times with the requested schedule.
+An abrupt process or machine failure can also leave an unreadable NetCDF/HDF5
+file. Preserve the log for diagnosis and rerun to a new path; the writer does
+not recover or resume that file.
+
 For long runs, `format = "binary_mmap"` writes ATMSNAP files with a Float32
 spatial payload and compensated Float64 tracer totals; convert them to this
 same NetCDF schema with
@@ -254,9 +262,12 @@ field. Benchmark `deflate_level = 1` through `4` on representative output
 before choosing a production setting; high levels usually have diminishing
 returns.
 
-`float_type` is determined by the runtime's
-`[numerics].float_type` — F32 runs write F32 NetCDF, F64 runs write
-F64.
+Runtime NetCDF spatial precision follows `[numerics].float_type`: Float32
+transport writes Float32 spatial fields; Float64 transport writes Float64.
+ATMSNAP spatial payloads always use Float32. When calling the lower-level
+`write_snapshot_netcdf` API directly, choose precision with
+`SnapshotWriteOptions` (whose default is Float32). Time coordinates and
+`<tracer>_total_mass` remain Float64 independently of spatial precision.
 
 ## Where to read next
 

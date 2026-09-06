@@ -16,22 +16,24 @@ the 0.25° GEOS-FP products can be attached by setting
 `include_convection = true`; the day handle validates and embeds those
 payloads into the same transport binary.
 
-## Why column balance instead of Poisson balance?
+## How the native fluxes are balanced
 
-A spectral preprocessor needs a Poisson balance step because winds
-synthesized from VO + D do **not** satisfy the continuity equation
-exactly on the discrete grid; balance closes the residual.
+The native `MFXC` and `MFYC` fields provide the starting horizontal mass-flux
+amounts. After conversion to the transport grid, mass basis and time schedule,
+they must close against the selected next-hour dry-air endpoint.
 
-GEOS native MFXC / MFYC are **already discrete-conservative** — the
-FV3 dynamical core integrated them under its own discrete continuity.
-Running a Poisson balance on top would add a small spurious
-correction with no physical justification. The GEOS path therefore
-**skips Poisson balance** and instead runs a one-pass **column
-balance** (`balance_cs_column_mass_fluxes!`) to close the horizontal
-fluxes against the raw next-hour dry-air-mass endpoint, then
-diagnoses the vertical mass flux `cm` from those balanced fluxes via
-`diagnose_cs_cm!` (the same diagnostic used by the LL and RG spectral
-paths after their respective Poisson balances).
+The current path uses `balance_cs_column_mass_fluxes!`: it integrates each
+column vertically, applies a **global cubed-sphere Poisson correction** to
+those column totals, and distributes the face corrections back over levels
+using local air-mass weights. This avoids an independent correction at every
+level while retaining the column budget needed for closed top and bottom
+boundaries.
+
+The preprocessor then diagnoses vertical mass flux with `diagnose_cs_cm!`
+from the corrected horizontal divergence and explicit layer mass tendency.
+The implementation and its correction policy live in
+`src/Preprocessing/cs_poisson_balance.jl` and the native-source driver
+`src/Preprocessing/transport_binary/cubed_sphere_geos.jl`.
 
 The endpoint convention is the **raw dry endpoint** rather than the
 endpoint implied by an FV3-style pressure fixer. The pressure-fixer

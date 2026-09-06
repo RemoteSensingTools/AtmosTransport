@@ -136,6 +136,8 @@ the actual operator ordering to `TransportModel.step!`.
 | Symbol | Use |
 |---|---|
 | `capture_snapshot`, `write_snapshot_netcdf` | Capture and write diagnostic frames. |
+| `SnapshotFrame` | CPU-resident tracer and air-mass snapshot, with independent signed Float64 tracer totals. |
+| `SnapshotWriteOptions` | Select spatial output precision, compression and shuffle settings for the snapshot writer. |
 | `build_regridder`, `apply_regridder!` | Build and apply offline conservative regridders. |
 | `open_snapshot` | Open a written snapshot NetCDF. |
 | `fieldview` | Extract a plottable field view from a snapshot. |

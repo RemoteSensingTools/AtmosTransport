@@ -19,7 +19,10 @@
 
 Run the CS PPM transport path forward and return `objective` at the final
 time. Optional `emission_rates[t][panel][i, j]` entries are midpoint surface
-emission rates in kg s^-1. If `diffusion_op` is supplied, the helper applies
+emission rates in model-storage units per second (dry mixing ratio × carrier
+air mass per second, integrated over the cell). Convert physical species-mass
+inventories and per-area rates before calling this low-level API.
+If `diffusion_op` is supplied, the helper applies
 `V(dt/2) -> emissions -> V(dt/2)` at the control midpoint and requires a
 panel-native `DiffusionWorkspace` with filled `layer_thickness`. If
 `convection_op=CMFMCConvection()` or `TM5Convection()` is supplied, the

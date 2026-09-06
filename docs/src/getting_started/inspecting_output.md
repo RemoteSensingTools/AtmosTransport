@@ -71,7 +71,8 @@ variables begin with `co2_bl`:
 |---|---|
 | `co2_bl` | tracer mixing ratio on every model level |
 | `co2_bl_column_mean` | air-mass-weighted column mean |
-| `co2_bl_column_mass_per_area` | tracer column mass per unit area |
+| `co2_bl_column_mass_per_area` | conservative tracer storage per unit area; not physical kg of CO₂ |
+| `co2_bl_total_mass` | signed Float64 total of conservative tracer storage; use this for mass-budget checks |
 | `air_mass` | air mass on every model level |
 | `column_air_mass_per_area` | vertically integrated air mass per unit area |
 
@@ -81,7 +82,7 @@ The horizontal dimensions depend on the grid:
 |---|---|---|
 | Latitude–longitude | `(lon, lat, lev, time)` | `(lon, lat, time)` |
 | Reduced Gaussian | native cells plus rasterized products | native and `(lon, lat, time)` products |
-| Cubed sphere | `(Xdim, Ydim, face, lev, time)` | `(Xdim, Ydim, face, time)` |
+| Cubed sphere | `(Xdim, Ydim, nf, lev, time)` | `(Xdim, Ydim, nf, time)` |
 
 Some Python tools display dimensions in the opposite order because they follow
 row-major conventions. Read the variable's named dimensions instead of
@@ -90,6 +91,11 @@ assuming an axis order.
 The `[output.fields]` table can intentionally omit full three-dimensional
 fields, select tracers, or select model levels. Check that table first when an
 expected variable is absent. See [Output schema](@ref) for every option.
+
+Runtime NetCDF spatial fields use the simulation's configured precision; the
+independent total-mass series always uses Float64. For streamed NetCDF output, also check the global
+`completed_snapshots` attribute and the last output time: an interrupted run
+can leave a readable partial file. See [Output schema](@ref) before using it.
 
 ## Interpret the run summary
 

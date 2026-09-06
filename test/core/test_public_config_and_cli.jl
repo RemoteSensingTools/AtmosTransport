@@ -63,6 +63,21 @@ end
         @test filesize(path) == 0
         @test_throws "[architecture] must be a TOML table" run_driven_simulation(
             merge(base, Dict("architecture" => "cpu")))
+
+        # Nested input validation must also work when no tracers are supplied.
+        for staging in (false, "nvme", 7, ["cache"])
+            cfg = Dict("input" => Dict("binary_paths" => [path], "staging" => staging))
+            before = deepcopy(cfg)
+            ok, errors = validate_config(cfg)
+            @test !ok
+            @test length(errors) == 1
+            @test occursin("[input.staging] must be a TOML table", only(errors))
+            @test_throws "[input.staging] must be a TOML table" run_driven_simulation(cfg)
+            @test cfg == before
+            @test filesize(path) == 0
+        end
+        @test validate_config(Dict("input" => Dict("binary_paths" => [path],
+            "staging" => Dict("enabled" => false)))) == (true, String[])
     end
 end
 

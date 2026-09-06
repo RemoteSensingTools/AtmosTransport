@@ -12,6 +12,7 @@ API readers; there is no second, competing reference manual.
 3. [Quickstart](src/getting_started/quickstart.md)
 4. [Architecture tour](src/concepts/architecture.md)
 5. [Run with real meteorology](src/getting_started/first_run.md)
+6. [Learn adjoints and inversions](src/getting_started/adjoints.md)
 
 The quickstart is deterministic, uses the current version-4 binary contract,
 and downloads no external data.

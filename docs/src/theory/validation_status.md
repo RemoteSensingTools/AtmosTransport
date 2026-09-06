@@ -36,10 +36,14 @@ comparison or observational match, read the gaps below.
 
 ### Synthetic-fixture suite (verification, comprehensive)
 
-More than 100 files under `test/core/` run on every push and PR via the `CI`
+More than 100 files under `test/core/` run on pull requests and pushes to `main` via the `CI`
 workflow, with no external-data dependency. `test/runtests.jl` discovers that
 tier dynamically; `test/regridding/` is also part of the default CI baseline.
 Anchor tables:
+
+Hosted jobs are CPU-only. CUDA-gated comparisons skip without a functional GPU;
+the separate opt-in CUDA diagnostics provide the hardware evidence below.
+Passing hosted CI therefore does not certify CUDA or Metal execution.
 
 | Property | Test files | Status |
 |---|---|---|
@@ -59,6 +63,35 @@ Total core-suite cases: thousands; CI breaks down pass/fail per file.
 These are numerical and performance checks on tofu's V100 using the C90 L66
 ERA5 archive. They are not a matched ranking of advection algorithms or an
 end-to-end comparison against another model.
+
+The subsequent [L40S/V100 release checks](https://github.com/RemoteSensingTools/AtmosTransport.jl/blob/567bc96b/scripts/benchmarks/results/release_fp32_l40s_20260906/README.md)
+passed all ten maintained GPU diagnostic files on L40S, including transporting
+adjoints and output reductions. A matched Float32 C90/L66 full-physics day with
+six or 32 tracers produced exactly matching current-code L40S/V100 column means.
+Those results describe CUDA. A separate Apple M5 Pro smoke test is recorded below.
+
+### Apple Metal forward verification
+
+The user-provided September 6 logs from an **Apple M5 Pro with 20 GPU cores**
+show both six- and 32-tracer runs passing on source `567bc96b`. The bundle uses
+Float32 C90/L66 meteorology for two hours (two windows), standard PPM, exact
+TM5 Dkg diffusion, full-column collaborative TM5 convection and column output.
+It verifies `MtlArray` state with scalar indexing disabled, finite output, two
+completed snapshots, mass conservation and agreement with bundled CUDA output.
+
+| Tracers | Warmed elapsed time | Maximum relative mass drift | Maximum column relative L2 difference from CUDA |
+|---|---|---|---|
+| 6 | 2.899 s | `5.4687e-8` | `8.8808e-8` |
+| 32 | 8.279 s | `5.6299e-8` | `8.9079e-8` |
+
+The environment was Julia 1.12.6, Metal.jl 1.10.3 and KernelAbstractions 0.9.42
+on macOS 26.5.2. Times are single warmed runs including setup and output;
+they are not repeated benchmark medians. Transport executes in Float32;
+output totals and column accumulation use Float64 host slabs. This establishes
+the tested forward path on Apple hardware, while Metal adjoints and broader
+operator coverage remain open.
+
+### Scheme-specific coverage
 
 | Algorithm | Measured coverage | Evidence |
 |---|---|---|

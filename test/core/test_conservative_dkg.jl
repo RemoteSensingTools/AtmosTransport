@@ -14,6 +14,43 @@ end
     end
 end
 
+@testset "Split Dkg kernels run on CPU with GPU launch tile shapes" begin
+    # Normal CPU dispatch uses the packed column kernel. Launch the split
+    # factor/tracer kernels explicitly so CI also checks their indexing and
+    # read-only factor reuse, including partially filled CUDA-shaped tiles.
+    for FT in (Float32, Float64), (Nc, Nz, Nt) in ((3,1,3), (3,5,7), (35,3,33)),
+        strength in (0, 40)
+        m, d, original = dkg_mass_fixture(FT, Nc, Nz, Nt, strength)
+        actual = map(copy, original)
+        field = DkgState.PrecomputedCSDkgField(d)
+        ws = DkgDiff.DiffusionWorkspace(m, 1, Nt)
+        backend = get_backend(actual[1])
+        factor! = DkgDiff._vertical_diffusion_cs_dkg_factors_kernel!(backend, (32,2))
+        solve! = DkgDiff._vertical_diffusion_cs_mass_dkg_tracers_kernel!(backend, (32,1,2))
+        for p in 1:6
+            panel = DkgState.panel_field(field, p)
+            factor!(ws.factors[p], m[p], panel, one(FT), Nz, 1; ndrange=(Nc,Nc))
+            synchronize(backend)
+            factors_before = copy(ws.factors[p])
+            solve!(actual[p], m[p], panel, ws.factors[p], one(FT), Nz, 1;
+                   ndrange=(Nc,Nc,Nt))
+            synchronize(backend)
+            @test isequal(ws.factors[p], factors_before)
+            @test actual[p][[1,end],:,:,:] == original[p][[1,end],:,:,:]
+            @test actual[p][:,[1,end],:,:] == original[p][:,[1,end],:,:]
+            for i in (1,Nc), j in (1,Nc)
+                source = original[p][i+1,j+1,:,:]
+                expected = dkg_mass_reference(source, m[p][i+1,j+1,:], d[p][i,j,:])
+                value = actual[p][i+1,j+1,:,:]
+                @test all(isfinite, value)
+                @test norm(Float64.(value)-expected) <=
+                    (FT == Float32 ? 8e-7 : 5e-12) * norm(expected)
+            end
+        end
+        strength == 0 && @test isequal(actual, original)
+    end
+end
+
 @testset "Dkg leaves isolated layers bit-exact" begin
     for FT in (Float32,Float64)
         check_dkg_isolated_layers(FT)

@@ -18,6 +18,9 @@ operator yet.
 
 ## Try the shipped inversion first
 
+New to reverse sensitivities? Read [Learning adjoints and inversions](@ref Learning-adjoints)
+and run the [checked footprint tutorial](@ref First-emission-footprint) first.
+
 The repository contains a tiny, self-contained inversion with synthetic
 meteorology:
 
@@ -26,9 +29,10 @@ julia --project=. scripts/inversions/cs_4dvar.jl \
     config/inversions/example_synthetic.toml
 ```
 
-It builds a C3 cubed sphere, two transport steps, one layer-mean observation,
+It builds a C3 cubed sphere with zero transport fluxes, two model steps, one cell/layer observation,
 an isotropic covariance, a linear preconditioner, and an L-BFGS solve. It
-should complete in seconds and print the initial and final cost.
+prints the initial and final cost. First-time compilation can take longer
+than the small inversion itself.
 
 !!! note "Two config interfaces"
     `scripts/run_transport.jl` reads the forward-run schema documented in

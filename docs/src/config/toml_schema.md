@@ -55,6 +55,10 @@ not sort entries or validate date continuity; provide them chronologically.
 
 #### `[input.staging]` — rolling NVMe staging (opt-in)
 
+This value must be a TOML table even when staging is disabled. A scalar such
+as `staging = false` is rejected during configuration preflight; use
+`[input.staging] enabled = false` on separate TOML lines.
+
 Transport binaries (~15 GB/day) usually live on NFS-mounted storage. Cold,
 strided per-window reads over NFS make the window prefetch IO-bound (measured
 on a C180 GEOS 6-day run: `prefetch_fetch_wait` 96 s → 5 s, wall 265 s → 160 s,
@@ -133,6 +137,9 @@ air_mass_reset_mode = "preserve_tracer_mass"
 `stop_window` is the inclusive last window; setting it lets you
 run a partial day for smoke tests with a single input file. Multi-file runs
 require complete window ranges so no forcing is skipped between files.
+The index is local to each input file, not cumulative across the run. For two
+daily binaries with 24 windows each, omit `stop_window`; the result covers
+48 hours while each file supplies windows 1–24. Output times are cumulative.
 Both indices must be integers: Boolean and floating-point values are rejected.
 `start_window` must be at least 1, and `stop_window` must not precede it.
 Cubed-sphere runs currently require `start_window = 1`.

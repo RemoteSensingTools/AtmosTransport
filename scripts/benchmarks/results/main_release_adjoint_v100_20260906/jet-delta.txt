@@ -1,0 +1,7 @@
+Julia 1.12.6, JET 0.11.5, identical test environment
+Before: 152 reports; after: 154 reports.
+Two added GPU kernel-dispatch reports:
+
+MethodErrorReport(no matching method found `kwcall(::NamedTuple{(:ndrange,), <:Tuple{Any}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__linrood_halo_adjoint_kernel!)} where Backend<:KernelAbstractions.GPU, ::Any, ::Any, ::Any, ::Any, ::Int64, ::Int64)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(AtmosTransport.Operators.Advection.size(lambda_rm::Any)::Any)::Tuple{Any})::NamedTuple{(:ndrange,), <:Tuple{Any}}, kernel!, lambda_rm::Any, lambda_m::Any, halo_rm::Any, halo_m::Any, (mesh::CubedSphereMesh).Nc::Int64, (mesh::CubedSphereMesh).Hp::Int64))
+
+MethodErrorReport(no matching method found `kwcall(::NamedTuple{(:ndrange,), <:Tuple{Any}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__safe_mixing_ratio_halo_adjoint_kernel!)} where Backend<:KernelAbstractions.GPU, ::Any, ::Any, ::Any, ::Any, ::Any, ::Int64, ::Int64)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(AtmosTransport.Operators.Advection.size(lambda_rm::Any)::Any)::Tuple{Any})::NamedTuple{(:ndrange,), <:Tuple{Any}}, kernel!, lambda_rm::Any, lambda_m::Any, lambda_q::Any, rm::Any, m::Any, (mesh::CubedSphereMesh).Nc::Int64, (mesh::CubedSphereMesh).Hp::Int64))

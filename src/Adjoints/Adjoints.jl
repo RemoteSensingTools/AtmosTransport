@@ -35,6 +35,7 @@ using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     _init_q_buf_kernel!, _ppm_y_face_kernel!, _ppm_x_face_kernel!,
     _ppm_y_face_from_q_kernel!, _ppm_x_face_from_q_kernel!,
     _pre_advect_y_kernel!, _pre_advect_x_kernel!, _linrood_update_kernel!,
+    _copy_interior!, _accumulate_linrood_halo_adjoint!,
     strang_split_linrood_ppm!, CSLinRoodAdvectionWorkspace, LinRoodWorkspace,
     fv_tp_2d_cs!, _sweep_z!, _cs_flux_x_interior, _cs_flux_y_interior
 using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,

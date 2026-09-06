@@ -1,0 +1,51 @@
+SOURCE_COMMIT=1a89772e970d7df04394832669b32c28f9f0c283
+JULIA=1.12.6 CUDA=5.11.3 RUNTIME=12.6.0
+DEVICE=Tesla V100-PCIE-16GB
+PACKAGE=/tmp/atmos-release-resume-20260906/src/AtmosTransport.jl
+RUNNING core/test_cs_ppm_adjoint_footprint.jl
+WARNING: Detected access to binding `##ReleaseTest#277.HAS_GPU` in a world prior to its definition world.
+  Julia 1.12 has introduced more strict world age semantics for global bindings.
+  !!! This code may malfunction under Revise.
+  !!! This code will error in future versions of Julia.
+Hint: Add an appropriate `invokelatest` around the access to this binding.
+To make this warning an error, and hence obtain a stack trace, use `julia --depwarn=error`.
+COMPLETED core/test_cs_ppm_adjoint_footprint.jl
+RUNNING core/test_cmfmc_adjoint_identity.jl
+COMPLETED core/test_cmfmc_adjoint_identity.jl
+RUNNING core/test_adjoint_identity_model_space.jl
+COMPLETED core/test_adjoint_identity_model_space.jl
+RUNNING core/test_adjoint_identity_preconditioned.jl
+COMPLETED core/test_adjoint_identity_preconditioned.jl
+RUNNING core/test_cs_stride_checkpoint.jl
+COMPLETED core/test_cs_stride_checkpoint.jl
+RUNNING core/test_cs_tape_mmap_roundtrip.jl
+COMPLETED core/test_cs_tape_mmap_roundtrip.jl
+RUNNING core/test_linrood_kernel_adjoints.jl
+COMPLETED core/test_linrood_kernel_adjoints.jl
+RUNNING diagnostic/test_linrood_adjoint_integration.jl
+COMPLETED diagnostic/test_linrood_adjoint_integration.jl
+Precompiling packages...
+  18035.4 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 35 seconds. 192 already precompiled.
+Precompiling packages...
+  12086.6 ms  ✓ AtmosTransportCUDAExt (serial)
+  1 dependency successfully precompiled in 12 seconds
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+Test Summary:                  | Pass  Total     Time
+Release adjoint checks on V100 |  640    640  3m46.4s
+RELEASE_ADJOINT_CHECKS_PASSED

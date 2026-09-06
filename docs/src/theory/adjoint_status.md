@@ -50,6 +50,13 @@ transposition-tested (`test/core/test_linrood_kernel_adjoints.jl`) and
 finite-difference VJP-tested via single-panel and cross-panel halo
 compositions.
 
+The opt-in `test/diagnostic/test_cs_transport_adjoint_gpu.jl` also exercises
+transporting PPM and LinRood footprints on CUDA with scalar indexing disabled.
+It checks Float32/Float64 CPU/GPU agreement, Float64 directional finite
+differences, and full/stride/revolve checkpoint parity, plus the single-panel
+recording and reverse wrappers. LinRood copy-back and halo-gradient updates
+run on the array backend; the tape path does not require host scalar reads.
+
 The CS reverse pass also supports the default, unclamped/full-column/unmerged
 forms of `TM5Convection`, `CMFMCConvection`, and `CMFMCMatrixConvection`.
 CMFMC and CMFMC-matrix have column adjoint-identity tests; the TM5/CMFMC

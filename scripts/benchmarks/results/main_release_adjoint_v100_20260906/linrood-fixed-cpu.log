@@ -1,0 +1,88 @@
+Precompiling packages...
+  15515.2 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 18 seconds. 193 already precompiled.
+Precompiling packages...
+   3186.2 ms  ✓ AtmosTransportNVTXExt (serial)
+  1 dependency successfully precompiled in 3 seconds
+Precompiling packages...
+    AtmosTransportCUDAExt Being precompiled by another machine (hostname: tofu.gps.caltech.edu, pid: 3230990, pidfile: /home/cfranken/.julia/compiled/v1.12/AtmosTransportCUDAExt/gH0Bc_BLbwW.ji.pidfile)
+  25133.1 ms  ✓ AtmosTransportCUDAExt (serial)
+  1 dependency successfully precompiled in 25 seconds
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+Test Summary:                                    | Pass  Total  Time
+Plan 25 Commit 1 — LinRood update kernel adjoint |    8      8  2.3s
+Test Summary:                                 | Pass  Total  Time
+Plan 25 Commit 2 — pre-advect kernel adjoints |    7      7  1.4s
+Test Summary:                                                 | Pass  Total  Time
+Plan 25 Commit 3 — PPM `_from_q` face kernel adjoints (ORD=5) |    7      7  3.8s
+Test Summary:                                                 | Pass  Total  Time
+Plan 25 Commit 3b — PPM rm-input face kernel adjoints (ORD=5) |    6      6  4.0s
+Test Summary:                                                  | Pass  Total  Time
+Plan 25 Commit 4 — single-panel horizontal adjoint composition |    1      1  1.2s
+Test Summary:                                               | Pass  Total  Time
+Plan 25 Commit 5 — multi-substep LinRood horizontal adjoint |    1      1  0.9s
+Test Summary:                                                             | Pass  Total  Time
+Plan 25 Commit 5 (ORD=7) — multi-substep LinRood adjoint, no Val(7) kwarg |    1      1  0.6s
+Test Summary:                                       | Pass  Total   Time
+CS split-sweep surface-emission footprint prototype |   72     72  46.9s
+Test Summary:                                       | Pass  Total  Time
+Plan 25 Commit 6 — LinRoodPPMScheme footprint vs FD |    1      1  3.4s
+Test Summary:                                           | Pass  Total  Time
+Plan 25 Commit 3b — LinRoodPPMScheme(7) footprint vs FD |    1      1  1.8s
+Test Summary:                                     | Pass  Total  Time
+checkpoint_window_count / checkpoint_window_range |   14     14  0.0s
+Test Summary:                                                   | Pass  Total  Time
+StrideCheckpoint vs FullCheckpoint — linear PPM, transport flow |   13     13  1.4s
+Test Summary:                          | Pass  Total  Time
+StrideCheckpoint with CMFMC convection |    3      3  1.2s
+Test Summary:                                   | Pass  Total  Time
+StrideCheckpoint with ImplicitVerticalDiffusion |    3      3  0.8s
+Test Summary:                                                   | Pass  Total  Time
+StrideCheckpoint vs FullCheckpoint — monotone PPM (tracer tape) |   10     10  0.8s
+Test Summary:                                        | Pass  Total  Time
+StrideCheckpoint nonlinear PPM + base_emission_rates |    3      3  0.5s
+Test Summary:                                                          | Pass  Total  Time
+StrideCheckpoint nonlinear PPM + implicit diffusion + CMFMC convection |    3      3  1.4s
+Test Summary:                                         | Pass  Total  Time
+StrideCheckpoint vs FullCheckpoint — LinRoodPPMScheme |    5      5  0.7s
+Test Summary:                                                       | Pass  Total  Time
+StrideCheckpoint LinRood + base_emission_rates + implicit diffusion |    3      3  0.9s
+Test Summary:                                       | Pass  Total  Time
+StrideCheckpoint LinRood rejects :mmap tape_storage |    3      3  0.0s
+Test Summary:                                               | Pass  Total  Time
+StrideCheckpoint vs FullCheckpoint — LinRoodPPMScheme ORD=7 |    5      5  0.6s
+Test Summary:                                          | Pass  Total  Time
+LinRood non-unit flux_scale — FD and checkpoint parity |    6      6  1.1s
+Test Summary:                               | Pass  Total  Time
+stride rejects pre-constructed tape_storage |    1      1  0.1s
+Test Summary:                        | Pass  Total  Time
+from-seed stride parity — linear PPM |    5      5  0.4s
+Test Summary:                                                | Pass  Total  Time
+from-seed stride parity — nonlinear PPM with base_panels_rm0 |    3      3  0.4s
+Test Summary:                                                   | Pass  Total  Time
+from-seed stride parity — LinRoodPPMScheme with base_panels_rm0 |    4      4  0.5s
+Test Summary:                                                                 | Pass  Total  Time
+from-seed stride nonlinear PPM with base_panels_rm0 = nothing (zero fallback) |    3      3  0.2s
+Test Summary:                                              | Pass  Total  Time
+from-seed stride rejects unsupported scheme/storage combos |    4      4  0.2s
+Test Summary:                         | Pass  Total  Time
+RevolveCheckpoint parity — linear PPM |    2      2  0.4s
+Test Summary:                            | Pass  Total  Time
+RevolveCheckpoint parity — nonlinear PPM |    1      1  0.3s
+Test Summary:                               | Pass  Total  Time
+RevolveCheckpoint parity — LinRoodPPMScheme |    1      1  0.1s
+Test Summary:                                                        | Pass  Total  Time
+RevolveCheckpoint with implicit diffusion — nonlinear PPM (FD-grade) |   36     36  0.6s
+Test Summary:                      | Pass  Total  Time
+from-seed RevolveCheckpoint parity |    2      2  0.5s
+Test Summary:                                      | Pass  Total  Time
+RevolveCheckpoint rejects unsupported tape_storage |    5      5  0.2s
+Test Summary:                                                 | Pass  Total  Time
+RevolveCheckpoint handles nsteps == 1 (single-step base case) |    2      2  0.0s

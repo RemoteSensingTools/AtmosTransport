@@ -1,0 +1,34 @@
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+┌ Info: GPU directional gradient
+│   scheme = PPMScheme{AtmosTransport.Operators.Advection.NoLimiter}(AtmosTransport.Operators.Advection.NoLimiter())
+│   predicted = 0.3115497736108267
+│   fd = 0.3115497736079498
+└   relative_error = 9.234225691755592e-12
+┌ Info: GPU directional gradient
+│   scheme = PPMScheme{AtmosTransport.Operators.Advection.MonotoneLimiter}(AtmosTransport.Operators.Advection.MonotoneLimiter())
+│   predicted = 0.31185750297253534
+│   fd = 0.31185750297771375
+└   relative_error = 1.6605062261815075e-11
+┌ Info: GPU directional gradient
+│   scheme = LinRoodPPMScheme{5}()
+│   predicted = 0.31179908429374686
+│   fd = 0.31179910030265656
+└   relative_error = 5.134366867109263e-8
+┌ Info: GPU directional gradient
+│   scheme = LinRoodPPMScheme{7}()
+│   predicted = 0.31184663751010905
+│   fd = 0.31184665351749463
+└   relative_error = 5.133095193794714e-8
+Test Summary:                                       | Pass  Total     Time
+CS split-sweep surface-emission footprint prototype |   91     91  1m59.1s
+Test Summary:                         | Pass  Total     Time
+CUDA transporting footprint gradients |  580    580  1m37.6s
+Test Summary:                                    | Pass  Total   Time
+CUDA single-panel Lin-Rood recording and reverse |   32     32  13.3s

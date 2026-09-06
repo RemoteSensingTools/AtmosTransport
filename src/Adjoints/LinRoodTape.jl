@@ -248,10 +248,8 @@ function _record_linrood_horizontal_substep!(
                   panels_fy_in[p], panels_fy_out[p], Hp;
                   ndrange=(Nc, Nc, Nz))
         synchronize(backend)
-        @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
-            panels_rm[p][i, j, k] = rm_buf[i, j, k]
-            panels_m[p][i, j, k]  = m_buf[i, j, k]
-        end
+        _copy_interior!(panels_rm[p], rm_buf, Nc, Hp, Nz)
+        _copy_interior!(panels_m[p], m_buf, Nc, Hp, Nz)
     end
 
     record_ops || return nothing
@@ -321,16 +319,8 @@ function _apply_cs_linrood_horizontal_adjoint!(
         # by the substep update (which only touches interior cells).
         # Add the halo carry from the OUTPUT lambda back into the
         # substep-input adjoint.
-        Nc = mesh.Nc; Hp = mesh.Hp
-        @inbounds for k in axes(lambda_panels_rm[p], 3),
-                      j in axes(lambda_panels_rm[p], 2),
-                      i in axes(lambda_panels_rm[p], 1)
-            is_interior = (Hp + 1 <= i <= Hp + Nc) && (Hp + 1 <= j <= Hp + Nc)
-            if !is_interior
-                sub_lambda_rm[i, j, k] += lambda_panels_rm[p][i, j, k]
-                sub_lambda_m[i, j, k]  += lambda_panels_m[p][i, j, k]
-            end
-        end
+        _accumulate_linrood_halo_adjoint!(
+            sub_lambda_rm, sub_lambda_m, lambda_panels_rm[p], lambda_panels_m[p], mesh)
         # Replace the running lambda with the substep-input adjoint.
         copyto!(lambda_panels_rm[p], sub_lambda_rm)
         copyto!(lambda_panels_m[p],  sub_lambda_m)

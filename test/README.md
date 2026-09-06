@@ -15,6 +15,14 @@ include other tiers.
 
 ## Usage
 
+For direct `--project=test` invocations, prepare the test environment from the
+repository root first (also required on Julia 1.10, which does not use the
+`[sources]` entry):
+
+```bash
+julia --project=test -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
+```
+
 ```bash
 julia --project=. -e 'using Pkg; Pkg.test()'         # CI-equivalent default
 julia --project=test test/runtests.jl                # core + regridding
@@ -62,3 +70,14 @@ explicitly selected CUDA device (including V100 with CUDA runtime 12.6).
 Shared synthetic runtime inputs live in `test/fixtures/`. The window-prefetch
 and cubed-sphere file-handoff fixtures are used by both CPU core tests and
 explicitly enabled GPU diagnostics. They need no external meteorology files.
+
+The transporting adjoint GPU diagnostic checks unlimited/monotone PPM and
+Lin-Rood ORD=5/7 footprints in both precisions, including CPU/GPU agreement,
+Float64 directional finite differences, and full/stride/revolve replay. It
+also checks single-panel recording and reverse propagation with nonzero halo
+seeds. Run it on an explicitly selected device, with scalar indexing disabled:
+
+```bash
+ATMOSTR_RUN_TRANSPORT_ADJOINT_GPU_TESTS=1 ATMOSTR_ADJOINT_GPU_NAME=V100 \
+CUDA_VISIBLE_DEVICES=<authorized UUID> julia --project=. test/diagnostic/test_cs_transport_adjoint_gpu.jl
+```

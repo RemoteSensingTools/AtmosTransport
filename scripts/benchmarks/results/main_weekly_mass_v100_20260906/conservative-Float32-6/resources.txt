@@ -1,0 +1,23 @@
+	Command being timed: "/home/cfranken/.juliaup/bin/julia --startup-file=no --project=. /tmp/atmos-weekly-drift.jl conservative Float32 6"
+	User time (seconds): 265.05
+	System time (seconds): 13.50
+	Percent of CPU this job got: 123%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:45.17
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 6104540
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 143205
+	Minor (reclaiming a frame) page faults: 2239537
+	Voluntary context switches: 228458
+	Involuntary context switches: 751
+	Swaps: 0
+	File system inputs: 36530496
+	File system outputs: 39160
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

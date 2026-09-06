@@ -177,17 +177,32 @@ factors. No workspace or numerical approximation is added. V100 checks cover
 partial blocks, signed tracers, weak exchanges, and adjoints through 65 tracers.
 Focused CPU/Aqua/JET checks and the strict documentation build pass.
 
+## Initialization reuse and seven-day validation
+
+[Private initial-VMR reuse](../../scripts/benchmarks/results/main_initial_reuse_20260906/README.md)
+removes another 398 MB of cumulative host allocation from the 32-tracer day,
+with every output array unchanged. The public allocating builder retains
+independent storage, and mixed analytic/native ownership tests pass. The
+complete 120-file CPU core suite plus 628 regridding checks passes after this
+change and the parallel diffusion launch.
+
+The [seven-day experiment](../../scripts/benchmarks/results/main_weekly_mass_v100_20260906/README.md)
+uses all 168 windows from seven consecutive real daily files. Conservative Dkg
+reduces maximum final Float32 drift from 3.62e-6 to 5.64e-7 (also the maximum
+with 32 tracers); all six final column-mean fields improve relative to Float64.
+The largest Float64 daily total drift is 1.98e-16. Conservative runs peak at
+5.82–6.30 GiB process RSS and 1,502–2,976 MiB sampled device usage. These include
+compilation/mmap and allocator-pool costs respectively; they do not establish
+longer-run bounds or cold-storage throughput.
+
 ## Remaining work
 
-- Evaluate whether reusing interior VMR buffers justifies the added initialization
-  API complexity. Preserve target-layer selection, normalization, signed values,
-  and tracer ordering against the existing builders.
-- Profile multi-day input movement and peak host/device memory on representative
-  archives before changing host-window ownership or staging. Current timing
-  evidence covers warm-cache runs of at most one day.
-- Measure multi-day Float32 drift after the seam and implicit diffusion fixes.
-  Tune the diffusion cost while preserving weak transfers and independent field
-  accuracy. Keep conservation and positivity as separate criteria. Improve temporal accuracy
+- Extend the seven-day input/memory measurements to longer runs and other
+  representative archives before changing host-window ownership or staging.
+  Cold-storage throughput remains unmeasured.
+- Extend Float32 drift checks beyond one week and improve Float64 convection
+  performance without narrowing arithmetic or changing the requested vertical
+  grid. Keep conservation and positivity as separate criteria. Improve temporal accuracy
   at seams against independent reference fields before claiming second order.
 - Retain the six-tracer matrix batch until an alternative improves measured
   whole-run performance. Other GPU architectures need their own measurements.

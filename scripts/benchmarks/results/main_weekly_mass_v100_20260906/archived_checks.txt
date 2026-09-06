@@ -1,0 +1,2 @@
+Test Summary:                      | Pass  Total  Time
+Archived seven-day mass comparison |   25     25  0.3s

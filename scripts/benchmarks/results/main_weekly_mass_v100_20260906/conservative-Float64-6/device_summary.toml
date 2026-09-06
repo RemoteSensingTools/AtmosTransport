@@ -1,0 +1,4 @@
+sample_interval_ms = 500
+samples = 1527
+sampled_peak_device_MiB = 2976
+process_peak_rss_bytes = 6764777472

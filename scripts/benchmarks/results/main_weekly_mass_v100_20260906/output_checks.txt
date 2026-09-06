@@ -1,0 +1,15 @@
+DAY 1 max relative drift: seam_only=8.168654720603056e-7 conservative_F32=3.138139946426091e-7 conservative_F64=0.0
+DAY 2 max relative drift: seam_only=1.3826289358604935e-6 conservative_F32=4.1137388792129786e-7 conservative_F64=0.0
+DAY 3 max relative drift: seam_only=1.8473554582584087e-6 conservative_F32=4.603499037743357e-7 conservative_F64=0.0
+DAY 4 max relative drift: seam_only=2.291312478526624e-6 conservative_F32=4.968472054188118e-7 conservative_F64=0.0
+DAY 5 max relative drift: seam_only=2.7243640228923033e-6 conservative_F32=5.233121800917156e-7 conservative_F64=1.9828344355813393e-16
+DAY 6 max relative drift: seam_only=3.1937586461164924e-6 conservative_F32=5.500987379937994e-7 conservative_F64=1.9828344355813393e-16
+DAY 7 max relative drift: seam_only=3.6210844495426213e-6 conservative_F32=5.642841741785666e-7 conservative_F64=1.9828344355813393e-16
+tracer01_column_mean final relative L2 to F64: before=3.2379764281867515e-6 after=1.1553420571023304e-6; extrema_after=(1.4834012490583248e-11, 4.103711592762238e-9)
+tracer02_column_mean final relative L2 to F64: before=3.7289590624906224e-6 after=7.17457194222666e-7; extrema_after=(8.481943446214668e-13, 5.00306507333903e-9)
+tracer03_column_mean final relative L2 to F64: before=3.542778082502793e-6 after=6.967667190257356e-7; extrema_after=(-1.1221676365913424e-11, 3.85473342134901e-9)
+tracer04_column_mean final relative L2 to F64: before=3.623655266679596e-6 after=6.064909204946036e-7; extrema_after=(-5.613744278459842e-12, 3.984009566693203e-9)
+tracer05_column_mean final relative L2 to F64: before=3.8000562881264282e-6 after=5.479695368443993e-7; extrema_after=(-1.0133407134238492e-11, 5.0461621547981395e-9)
+tracer06_column_mean final relative L2 to F64: before=3.0706858149289094e-6 after=5.300636586614847e-7; extrema_after=(-1.4576256868181758e-11, 4.459398184053498e-9)
+Test Summary:                                  | Pass  Total  Time
+Weekly conserved totals and transported fields |   74     74  5.5s

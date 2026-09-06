@@ -189,10 +189,13 @@ composition policy:
   participates in one full implicit solve: `S(dt) → V(dt)`.
 
 Despite its historical name, `DiffusiveSurfaceFluxBoundary` is an ordering
-policy, not a distinct lower-boundary discretization. It reproduces GCHP's
-placement of fresh surface mass inside the diffusive step, but it does not
-insert the source into the bottom row of the Thomas system as a literal
-Neumann boundary term. On lat-lon and cubed-sphere grids, use
+policy, not a distinct lower-boundary discretization. With fixed linear
+diffusion coefficients, injecting the source before the implicit solve gives
+`(I - dt*L) * rm_new = rm_old + dt*source`. This is algebraically equivalent
+to adding that source to the backward-Euler right-hand side, including a
+bottom-layer surface source; the equivalence does not require small `dt`.
+Matching that placement alone does not establish full GCHP VDIFF parity.
+On lat-lon and cubed-sphere grids, use
 `surface_flux_boundary = true` for the supported GCHP-style placement.
 Reduced-Gaussian transport currently supports the midpoint split only and
 rejects that setting. Treat exact discrete VDIFF parity as unvalidated

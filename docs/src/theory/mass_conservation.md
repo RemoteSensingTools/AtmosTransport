@@ -192,7 +192,16 @@ column-mean fields are closer to the Float64 result. The initial conservative so
 costs `38.635` s median for the 32-tracer day; distributing CUDA tracer solves
 across threads reduces this to `29.543` s with identical output and no new
 persistent workspace. The earlier VMR solve with paired advection seams takes
-`34.574` s. These measurements cover one archive and do not bound multi-day drift.
+`34.574` s.
+
+Across seven consecutive daily files with the same setup, worst final relative
+Float32 drift falls from `3.62e-6` with the earlier diffusion solve to `5.64e-7`.
+All six final column-mean fields are closer to the Float64 reference, whose
+largest daily total drift is `1.98e-16`. A 32-tracer week has the same maximum
+final Float32 drift. These checks sample totals daily and cover one forcing
+sequence; they do not bound within-day maxima or longer-duration drift.
+
+![Daily mass drift before and after conservative diffusion](../assets/weekly_mass_v100.svg)
 
 ## Dry-basis vs moist-basis
 

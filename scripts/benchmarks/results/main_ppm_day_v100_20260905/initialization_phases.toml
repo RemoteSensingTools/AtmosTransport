@@ -1,0 +1,96 @@
+[[results]]
+pack_seconds = 0.027161235
+tracers = 6
+last_tracer_molecules = 1.0000000304144257e35
+build_seconds = 0.065823196
+sample = 0
+build_bytes = 79360336
+pack_bytes = 0
+[[results]]
+pack_seconds = 0.024127477
+tracers = 6
+last_tracer_molecules = 1.0000000304144257e35
+build_seconds = 0.053045640000000005
+sample = 1
+build_bytes = 79326112
+pack_bytes = 0
+[[results]]
+pack_seconds = 0.020846002000000002
+tracers = 6
+last_tracer_molecules = 1.0000000304144257e35
+build_seconds = 0.053021954999999996
+sample = 2
+build_bytes = 79326112
+pack_bytes = 0
+[[results]]
+pack_seconds = 0.017269154000000002
+tracers = 6
+last_tracer_molecules = 1.0000000304144257e35
+build_seconds = 0.06554673
+sample = 3
+build_bytes = 79326112
+pack_bytes = 0
+[[results]]
+pack_seconds = 0.018504821999999997
+tracers = 6
+last_tracer_molecules = 1.0000000304144257e35
+build_seconds = 0.05217657199999999
+sample = 4
+build_bytes = 79326112
+pack_bytes = 0
+[[results]]
+pack_seconds = 0.017683765
+tracers = 6
+last_tracer_molecules = 1.0000000304144257e35
+build_seconds = 0.052036617
+sample = 5
+build_bytes = 79326112
+pack_bytes = 0
+[[results]]
+pack_seconds = 0.12890496399999998
+tracers = 32
+last_tracer_molecules = 1.0000000304144257e35
+build_seconds = 0.397811482
+sample = 0
+build_bytes = 423073088
+pack_bytes = 0
+[[results]]
+pack_seconds = 0.126701759
+tracers = 32
+last_tracer_molecules = 1.0000000304144257e35
+build_seconds = 0.38359631600000005
+sample = 1
+build_bytes = 423073632
+pack_bytes = 0
+[[results]]
+pack_seconds = 0.12660721700000002
+tracers = 32
+last_tracer_molecules = 1.0000000304144257e35
+build_seconds = 0.32992030399999994
+sample = 2
+build_bytes = 423073056
+pack_bytes = 0
+[[results]]
+pack_seconds = 0.12633654100000002
+tracers = 32
+last_tracer_molecules = 1.0000000304144257e35
+build_seconds = 0.370593343
+sample = 3
+build_bytes = 423073632
+pack_bytes = 0
+[[results]]
+pack_seconds = 0.126658096
+tracers = 32
+last_tracer_molecules = 1.0000000304144257e35
+build_seconds = 0.326073736
+sample = 4
+build_bytes = 423073088
+pack_bytes = 0
+[[results]]
+pack_seconds = 0.121458083
+tracers = 32
+last_tracer_molecules = 1.0000000304144257e35
+build_seconds = 0.3153866920000001
+sample = 5
+build_bytes = 423073120
+pack_bytes = 0

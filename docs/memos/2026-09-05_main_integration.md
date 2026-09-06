@@ -108,17 +108,6 @@ Their existing CLI/regridding/inversion suites and a signed converter smoke pass
 at the pressure-typing checkpoint. All 196 output arrays remain exactly equal;
 75 GPU file-handoff physics checks also pass.
 
-## Remaining integration work
-
-- Profile the remaining initial-VMR construction and longer steady-state
-  workloads before further changes. The sweep/halo timing ambiguity is resolved
-  by the CUDA PPM checkpoint below.
-- Retain current signed-tracer conservation and output-total contracts.
-- Reconcile scientific documentation and package-loading improvements.
-- Repeat CPU and GPU runtime validation after the remaining I/O ports. Compare
-  against the real-input baseline above before promoting an adaptive tracer
-  batch size. The broader revamp is not yet fully integrated.
-
 ## CUDA PPM launch layout
 
 [Synchronized sweep profiling and tile selection](2026-09-05_main_ppm_launch_tiles.md)
@@ -127,5 +116,33 @@ arithmetic. A 32×2 tile reduces the real V100 32-tracer workload from 5.030 to
 4.466 s median, with essentially unchanged host allocation. All 196 output
 arrays remain exactly equal. The new GPU diagnostic passes 540 checks through
 65 tracers; focused CPU advection/Aqua/JET checks pass 619 assertions. The full
-CPU suite above predates this launch-only change. Other GPU architectures and
-longer runs remain unbenchmarked.
+CPU suite above predates this launch-only change. Other GPU architectures
+remain unbenchmarked.
+
+The [full-day follow-up](../../scripts/benchmarks/results/main_ppm_day_v100_20260905/README.md)
+uses all 24 windows and 255 transport substeps with 32 tracers. Median whole-run
+time improves from 41.404 to 32.598 s (21.3%), with essentially unchanged
+6.397 GB cumulative host allocation. All 150 output arrays remain exactly equal
+and all 368 comparison checks pass. Maximum compensated-total drift is
+2.565584820714352e-5, identically before and after; matching the baseline does
+not establish a full-day scientific error budget.
+
+A separate CPU probe on the same archive identifies 423 MB of remaining
+32-tracer temporary allocation in initial-VMR construction; conversion into
+already allocated mass slots uses zero temporary bytes. The maintained
+performance guide now explains the distinction between nested host timing,
+GPU synchronization waits, cumulative allocation, peak memory, and shared-memory
+tracer batches.
+
+## Remaining work
+
+- Evaluate whether reusing interior VMR buffers justifies the added initialization
+  API complexity. Preserve target-layer selection, normalization, signed values,
+  and tracer ordering against the existing builders.
+- Profile multi-day input movement and peak host/device memory on representative
+  archives before changing host-window ownership or staging. Current timing
+  evidence covers warm-cache runs of at most one day.
+- Assess accumulated Float32 drift against an independent scientific reference;
+  the new launch layout preserves the existing drift but does not reduce it.
+- Retain the six-tracer matrix batch until an alternative improves measured
+  whole-run performance. Other GPU architectures need their own measurements.

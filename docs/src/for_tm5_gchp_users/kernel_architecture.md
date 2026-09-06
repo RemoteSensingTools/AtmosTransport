@@ -48,11 +48,14 @@ of each physics algorithm.
 
 ## Workspaces own reusable scratch arrays
 
-Operators allocate their scratch storage during model construction. For
+Operators prepare reusable scratch storage during model construction. For
 example, the split-sweep advection workspaces contain typed ping-pong arrays;
 the cubed-sphere workspace owns halo-padded arrays and six-panel tuples.
 `Adapt.adapt` preserves the workspace structure while replacing `Array`
-storage with `CuArray` or `MtlArray` storage.
+storage with `CuArray` or `MtlArray` storage. Cubed-sphere advection workspace
+arrays are constructed directly on the state backend, avoiding a temporary
+host copy. The matrix-convection fallback defers its large global scratch
+allocation until that fallback is used.
 
 This design has two practical consequences:
 
@@ -65,17 +68,19 @@ checks.
 
 ## Packed multi-tracer transport
 
-`CellState` stores tracer mass in a fourth dimension,
-`(horizontal..., level, tracer)`. The structured and cubed-sphere split-sweep
+`CellState` stores tracer mass in the final array dimension,
+`(horizontal..., level, tracer)`. `CubedSphereState` uses six halo-padded
+`(i, j, level, tracer)` panels. The structured and cubed-sphere split-sweep
 paths process that tracer dimension inside each directional kernel. Air-mass
 updates and stencil indexing are therefore shared by all tracers in the
 launch.
 
-For the six directional legs of one advection palindrome, this changes the
-launch structure from six launches per tracer to six packed launches, before
-any CFL subcycling. It does **not** make runtime independent of tracer count:
-each tracer still requires flux calculations and memory traffic. Lin-Rood has
-its own horizontal implementation and should be profiled separately from the
+Each of the six directional legs of an advection palindrome processes all
+packed tracers together. The transport kernel launches once per structured
+sweep or once per cubed-sphere panel, before any CFL subcycling.
+Runtime still grows with tracer count because each tracer requires flux
+calculations and memory traffic. Lin-Rood has its own horizontal implementation
+and should be profiled separately from the
 split-sweep schemes.
 
 ```mermaid
@@ -105,6 +110,8 @@ builds and factors a column's matrix in shared memory. It retains the factors
 while loading, solving, and storing successive batches of six tracers.
 Additional tracers require more solves and memory traffic, but no larger shared
 matrix or tracer buffer. The final batch can be partially filled.
+The six-tracer batch is a workgroup's temporary shared-memory buffer, not a
+limit on the number of species in the model state.
 
 The solver uses the matrix's upper-Hessenberg structure for columns without
 downdrafts and retains the general pivoted path when downdrafts are present.
@@ -162,6 +169,34 @@ The runner prints a timing breakdown and writes a sibling
 include window loading, backend copying, forcing refresh, advection,
 diffusion, convection, and output. Allocation sampling can be added with
 `ATMOSTR_ALLOC_TIMERS=1`.
+
+Read these measurements with their scope in mind:
+
+- Sections can nest, and background input loading overlaps transport. Adding
+  all section times does not recover elapsed run time.
+- GPU launches are asynchronous. A host section that synchronizes the device
+  can include waiting for earlier launches; a large halo-section time alone
+  does not establish that halo copies are slow.
+- Host allocation counters report cumulative allocated bytes, not peak RAM
+  or device memory. With allocation sampling disabled, CSV allocation zeroes
+  mean unmeasured.
+- Warm compilation and a cached input file answer a different question from
+  first startup or cold filesystem throughput. Record which case you measured.
+
+To separate cubed-sphere split-sweep launch time from device completion, enable
+the more intrusive diagnostic:
+
+```bash
+ATMOSTR_TIMERS=1 ATMOSTR_PROFILE_GPU=1 \
+julia --project=. scripts/run_transport.jl my_run.toml
+```
+
+This adds a synchronization after each sweep kernel and records
+`cs_kernel_launch_*` and `cs_kernel_sync_*` sections. The synchronization time
+includes device execution and any earlier queued work. Use it to locate costs,
+then disable `ATMOSTR_PROFILE_GPU` for normal end-to-end comparisons because
+the added waits alter execution overlap. It is separate from CUDA trace capture
+below.
 
 For CUDA tracing, `scripts/run_transport.jl` also supports:
 

@@ -142,6 +142,56 @@ The gate fires twice in the lifecycle of a binary:
    default because it doubles binary load time; recommended for any
    new binary configuration before a long production simulation.
 
+## Implicit diffusion and roundoff
+
+The precomputed cubed-sphere Dkg path solves backward Euler directly for
+tracer mass. For exchange rate `D[k]` between layers `k` and `k+1`, define
+`u[k] = dt*D[k]/m[k]` and `d[k] = dt*D[k]/m[k+1]`. The mass-space matrix has
+diagonal `1 + u[k] + d[k-1]`, lower diagonal `-u[k-1]`, and upper diagonal
+`-d[k]`. Its columns sum to one: a closed diffusion column conserves mass.
+
+Ordinary Float32 Thomas elimination in VMR space can lose that cancellation
+through coefficient rounding and mass/VMR conversion. The state-mass entry
+point instead uses two column-conservative bidiagonal factors. Their inverses
+are directed retention/transfer passes. Starting with `v[0] = 0`, their ratios
+are
+
+```math
+r_k = \frac{u_k}{1+v_{k-1}}, \qquad
+v_k = \frac{d_k}{1+r_k}.
+```
+
+The downward pass retains fraction `1/(1+r[k])`; the upward pass retains
+`1/(1+v[k-1])`. Each passes the complementary mass to the adjacent layer.
+This is a factorization of the same backward-Euler equation, not a correction
+or rescaling of the tracer total. Factors are shared across all tracers.
+
+The implementation computes the smaller partition directly, because subtracting
+a rounded retention from one can erase a weak exchange into an empty layer.
+Compensated incoming sums reduce loss of small layer contributions in stiff
+columns. A removable constant background is chosen from the concentration
+range's endpoint closest to zero; profiles spanning zero use zero. Layers
+with no exchange retain their input values exactly. These operations need no
+additional persistent workspace and use Float32 arithmetic on Float32 states.
+
+The adjoint reverses the two passes with the same ratios. Tests cover signed
+and positive tracers, weak transfers down to `dt*D/m = 1e-14`, stiff columns,
+zero exchange, and constant total-mass gradients. The public array-level VMR
+solver and other diffusion geometries retain their existing Thomas paths.
+The conservation statement assumes positive carrier masses and closed column
+boundaries; the existing zero-carrier sink convention is preserved separately.
+Floating-point storage still introduces roundoff, so conservation of the
+mathematical operator is not a promise of identical stored totals in every run.
+
+On one C90 L66, 24-hour V100 PPM workload after paired advection seams,
+this diffusion path reduces the maximum final Float32 relative tracer-total
+drift from `8.17e-7` to `3.14e-7`. All six final Float64 compensated totals
+match initialization; their maximum hourly relative drift is `1.98e-16`.
+The exploratory Float32 target `1e-7` is not met. All six final Float32
+column-mean fields are closer to the Float64 result. The 32-tracer day costs
+11.7% more wall time (`34.574` to `38.635` s median) with no new persistent
+workspace. These measurements cover one archive and do not bound multi-day drift.
+
 ## Dry-basis vs moist-basis
 
 The pipeline ships **dry-basis by default** (`mass_basis = :dry` in the

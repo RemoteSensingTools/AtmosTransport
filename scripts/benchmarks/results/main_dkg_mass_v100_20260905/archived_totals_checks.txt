@@ -1,0 +1,6 @@
+all worst hourly relative drift: 8.168654720603056e-7 -> 3.138139946426091e-7; exploratory 1e-7 target met: false
+all_float64 worst hourly relative drift: 9.914172177906698e-16 -> 1.9828344355813393e-16; exploratory 1e-7 target met: true
+Test Summary:                          | Pass  Total  Time
+Archived conservative Dkg daily totals |   40     40  0.2s
+/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/scripts/benchmarks/results/main_dkg_mass_v100_20260905/../main_split_mass_seams_v100_20260905/after median wall seconds=34.5738578205; median cumulative host bytes=6.418863448e9
+/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/scripts/benchmarks/results/main_dkg_mass_v100_20260905/after median wall seconds=38.6349346815; median cumulative host bytes=6.413687048e9

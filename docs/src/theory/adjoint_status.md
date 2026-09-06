@@ -116,22 +116,21 @@ These are all on CI. Full inversion tests:
 
 Three concrete forward-design choices that pay off in the adjoint:
 
-- **Vertical diffusion** — the Thomas-tridiagonal coefficients `(a, b,
-  c)` are kept as **named locals at every level `k`** rather than fused
-  into a pre-factored `(b, factor)` form. The Diffusion module
-  docstring records this as a deliberate adjoint-readiness choice. The
-  CS reverse pass uses that layout to transpose the Backward-Euler
-  column solve, including the tracer-mass / VMR scaling.
+- **Vertical diffusion** — generic Kz kernels expose the tridiagonal
+  coefficients `(a, b, c)` and transpose the backward-Euler solve with its
+  mass/VMR scaling. The precomputed Dkg mass path exposes the retention
+  fractions of two conservative bidiagonal solves. Its reverse applies
+  those passes' transposes in reverse order, preserving a constant total-mass
+  gradient exactly for positive carrier masses.
 - **Convection (CMFMC + TM5)** — `apply!` takes a `ConvectionForcing`
   carrier explicitly so the operator does not call `current_time`
   internally; this keeps the operator pure-functional in the time
   variable. The TM5 reverse pass rebuilds the same per-column matrix
   and solves with the transposed LU factors.
-- **Advection** — the Strang palindrome's time symmetry means the
-  forward integrator is its own time-reverse; the adjoint of the
-  composition is the composition of the adjoints in reverse order,
-  which is structurally the same code path with each operator's
-  adjoint substituted in.
+- **Advection** — the adjoint composes each operator's transpose in reverse
+  order. The palindrome helps organize that reversal, but forward transport
+  is not its own inverse. Stored states supply the limiter branches and
+  reconstructed-face sensitivities needed by the reverse pass.
 
 ## How to use the adjoint today
 

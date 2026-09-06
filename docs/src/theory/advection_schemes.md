@@ -256,6 +256,10 @@ forcing archive, not universal error bounds. Positive initial layers still
 develop negative column means: about `-2.09e-10` mol/mol in Lin–Rood before
 and after its fix, and `-4.27e-11` mol/mol in the corrected split PPM run.
 Conserving totals does not establish positivity or reference-model agreement.
+These seam measurements predate the subsequent
+[conservative Dkg diffusion](mass_conservation.md#Implicit-diffusion-and-roundoff)
+change, which further reduces the PPM Float32 maximum to `3.14e-7` on the same
+six-tracer workload.
 
 An independent tilted solid-body rotation of a smooth Gaussian tracer on C8,
 C16, and C32 grids, with both panel conventions, gives slightly smaller

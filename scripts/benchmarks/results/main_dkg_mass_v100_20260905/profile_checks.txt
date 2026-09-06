@@ -1,0 +1,133 @@
+1 tracer01_total_mass before=4.218985620059356e-7 after=3.138139946426091e-7
+1 tracer02_total_mass before=4.619584297873229e-7 after=2.892967514445391e-7
+1 tracer03_total_mass before=5.517528148207766e-7 after=2.2784702218472575e-7
+1 tracer04_total_mass before=6.454274877687956e-7 after=1.96505009392094e-7
+1 tracer05_total_mass before=6.57706683612527e-7 after=1.69855005020207e-7
+1 tracer06_total_mass before=6.843318109524037e-7 after=1.6121901451565164e-7
+1 tracer07_total_mass before=6.731061317351419e-7 after=1.5990004232631933e-7
+1 tracer08_total_mass before=6.616084374297476e-7 after=1.6094123668178023e-7
+1 tracer09_total_mass before=6.709211949728376e-7 after=1.565580170557244e-7
+1 tracer10_total_mass before=6.651304919365089e-7 after=1.6837131067724057e-7
+1 tracer11_total_mass before=6.387573997355689e-7 after=1.9108774240218804e-7
+1 tracer12_total_mass before=6.33972074086916e-7 after=1.9124751973693483e-7
+1 tracer13_total_mass before=6.101865767227407e-7 after=2.111765465275416e-7
+1 tracer14_total_mass before=5.817826599712311e-7 after=2.2264863263533963e-7
+1 tracer15_total_mass before=5.808971306342815e-7 after=2.185667308281582e-7
+1 tracer16_total_mass before=5.5961332410214e-7 after=2.121013815291345e-7
+1 tracer17_total_mass before=5.520126949259714e-7 after=2.171939567551582e-7
+1 tracer18_total_mass before=5.561682257174292e-7 after=2.1062870319182573e-7
+1 tracer19_total_mass before=5.562145991482251e-7 after=2.1575530615205746e-7
+1 tracer20_total_mass before=6.131369226181752e-7 after=1.7541744916073027e-7
+1 tracer21_total_mass before=6.144977796392977e-7 after=1.7880856169028436e-7
+1 tracer22_total_mass before=6.588649351000282e-7 after=1.329004789778569e-7
+1 tracer23_total_mass before=6.851840463246749e-7 after=1.0236500995661832e-7
+1 tracer24_total_mass before=7.002651909190642e-7 after=9.651830238062684e-8
+1 tracer25_total_mass before=7.922174887105393e-7 after=5.7631405085345936e-8
+1 tracer26_total_mass before=8.203781159418402e-7 after=4.386406828827445e-8
+1 tracer27_total_mass before=7.961130931953941e-7 after=2.734583747965482e-8
+1 tracer28_total_mass before=7.681285440991935e-7 after=2.097801423783713e-8
+1 tracer29_total_mass before=7.005357419855241e-7 after=1.6037581684333876e-8
+1 tracer30_total_mass before=6.553325649193943e-7 after=1.0649123210050363e-8
+1 tracer31_total_mass before=5.731337549234369e-7 after=4.1705416529969656e-9
+1 tracer32_total_mass before=4.7278001931923554e-7 after=7.738378172151875e-9
+1 tracer01_column_mean relative_L2_change=8.214729319970811e-7
+1 tracer02_column_mean relative_L2_change=8.143877547477445e-7
+1 tracer03_column_mean relative_L2_change=8.03798270300057e-7
+1 tracer04_column_mean relative_L2_change=8.303727282900511e-7
+1 tracer05_column_mean relative_L2_change=8.177290900739794e-7
+1 tracer06_column_mean relative_L2_change=8.354636223365179e-7
+1 tracer07_column_mean relative_L2_change=8.323836439289796e-7
+1 tracer08_column_mean relative_L2_change=8.278594298890839e-7
+1 tracer09_column_mean relative_L2_change=8.330267467689931e-7
+1 tracer10_column_mean relative_L2_change=8.527361028515864e-7
+1 tracer11_column_mean relative_L2_change=8.74821636728148e-7
+1 tracer12_column_mean relative_L2_change=8.723856493599609e-7
+1 tracer13_column_mean relative_L2_change=8.81284928132227e-7
+1 tracer14_column_mean relative_L2_change=8.738532836096174e-7
+1 tracer15_column_mean relative_L2_change=8.766075811487595e-7
+1 tracer16_column_mean relative_L2_change=8.716190409441321e-7
+1 tracer17_column_mean relative_L2_change=8.736983442648296e-7
+1 tracer18_column_mean relative_L2_change=8.656925922163123e-7
+1 tracer19_column_mean relative_L2_change=8.761395628246495e-7
+1 tracer20_column_mean relative_L2_change=8.75115571036645e-7
+1 tracer21_column_mean relative_L2_change=8.807149773259146e-7
+1 tracer22_column_mean relative_L2_change=8.818847215351164e-7
+1 tracer23_column_mean relative_L2_change=8.688442083645508e-7
+1 tracer24_column_mean relative_L2_change=8.860493254545939e-7
+1 tracer25_column_mean relative_L2_change=9.146458967253533e-7
+1 tracer26_column_mean relative_L2_change=9.27921238718985e-7
+1 tracer27_column_mean relative_L2_change=9.41375923892286e-7
+1 tracer28_column_mean relative_L2_change=9.749684528500891e-7
+1 tracer29_column_mean relative_L2_change=1.035349690180223e-6
+1 tracer30_column_mean relative_L2_change=1.0877147190318481e-6
+1 tracer31_column_mean relative_L2_change=1.1781474468008776e-6
+1 tracer32_column_mean relative_L2_change=1.267877906305268e-6
+2 tracer01_total_mass before=4.218985620059356e-7 after=3.138139946426091e-7
+2 tracer02_total_mass before=4.619584297873229e-7 after=2.892967514445391e-7
+2 tracer03_total_mass before=5.517528148207766e-7 after=2.2784702218472575e-7
+2 tracer04_total_mass before=6.454274877687956e-7 after=1.96505009392094e-7
+2 tracer05_total_mass before=6.57706683612527e-7 after=1.69855005020207e-7
+2 tracer06_total_mass before=6.843318109524037e-7 after=1.6121901451565164e-7
+2 tracer07_total_mass before=6.731061317351419e-7 after=1.5990004232631933e-7
+2 tracer08_total_mass before=6.616084374297476e-7 after=1.6094123668178023e-7
+2 tracer09_total_mass before=6.709211949728376e-7 after=1.565580170557244e-7
+2 tracer10_total_mass before=6.651304919365089e-7 after=1.6837131067724057e-7
+2 tracer11_total_mass before=6.387573997355689e-7 after=1.9108774240218804e-7
+2 tracer12_total_mass before=6.33972074086916e-7 after=1.9124751973693483e-7
+2 tracer13_total_mass before=6.101865767227407e-7 after=2.111765465275416e-7
+2 tracer14_total_mass before=5.817826599712311e-7 after=2.2264863263533963e-7
+2 tracer15_total_mass before=5.808971306342815e-7 after=2.185667308281582e-7
+2 tracer16_total_mass before=5.5961332410214e-7 after=2.121013815291345e-7
+2 tracer17_total_mass before=5.520126949259714e-7 after=2.171939567551582e-7
+2 tracer18_total_mass before=5.561682257174292e-7 after=2.1062870319182573e-7
+2 tracer19_total_mass before=5.562145991482251e-7 after=2.1575530615205746e-7
+2 tracer20_total_mass before=6.131369226181752e-7 after=1.7541744916073027e-7
+2 tracer21_total_mass before=6.144977796392977e-7 after=1.7880856169028436e-7
+2 tracer22_total_mass before=6.588649351000282e-7 after=1.329004789778569e-7
+2 tracer23_total_mass before=6.851840463246749e-7 after=1.0236500995661832e-7
+2 tracer24_total_mass before=7.002651909190642e-7 after=9.651830238062684e-8
+2 tracer25_total_mass before=7.922174887105393e-7 after=5.7631405085345936e-8
+2 tracer26_total_mass before=8.203781159418402e-7 after=4.386406828827445e-8
+2 tracer27_total_mass before=7.961130931953941e-7 after=2.734583747965482e-8
+2 tracer28_total_mass before=7.681285440991935e-7 after=2.097801423783713e-8
+2 tracer29_total_mass before=7.005357419855241e-7 after=1.6037581684333876e-8
+2 tracer30_total_mass before=6.553325649193943e-7 after=1.0649123210050363e-8
+2 tracer31_total_mass before=5.731337549234369e-7 after=4.1705416529969656e-9
+2 tracer32_total_mass before=4.7278001931923554e-7 after=7.738378172151875e-9
+2 tracer01_column_mean relative_L2_change=8.214729319970811e-7
+2 tracer02_column_mean relative_L2_change=8.143877547477445e-7
+2 tracer03_column_mean relative_L2_change=8.03798270300057e-7
+2 tracer04_column_mean relative_L2_change=8.303727282900511e-7
+2 tracer05_column_mean relative_L2_change=8.177290900739794e-7
+2 tracer06_column_mean relative_L2_change=8.354636223365179e-7
+2 tracer07_column_mean relative_L2_change=8.323836439289796e-7
+2 tracer08_column_mean relative_L2_change=8.278594298890839e-7
+2 tracer09_column_mean relative_L2_change=8.330267467689931e-7
+2 tracer10_column_mean relative_L2_change=8.527361028515864e-7
+2 tracer11_column_mean relative_L2_change=8.74821636728148e-7
+2 tracer12_column_mean relative_L2_change=8.723856493599609e-7
+2 tracer13_column_mean relative_L2_change=8.81284928132227e-7
+2 tracer14_column_mean relative_L2_change=8.738532836096174e-7
+2 tracer15_column_mean relative_L2_change=8.766075811487595e-7
+2 tracer16_column_mean relative_L2_change=8.716190409441321e-7
+2 tracer17_column_mean relative_L2_change=8.736983442648296e-7
+2 tracer18_column_mean relative_L2_change=8.656925922163123e-7
+2 tracer19_column_mean relative_L2_change=8.761395628246495e-7
+2 tracer20_column_mean relative_L2_change=8.75115571036645e-7
+2 tracer21_column_mean relative_L2_change=8.807149773259146e-7
+2 tracer22_column_mean relative_L2_change=8.818847215351164e-7
+2 tracer23_column_mean relative_L2_change=8.688442083645508e-7
+2 tracer24_column_mean relative_L2_change=8.860493254545939e-7
+2 tracer25_column_mean relative_L2_change=9.146458967253533e-7
+2 tracer26_column_mean relative_L2_change=9.27921238718985e-7
+2 tracer27_column_mean relative_L2_change=9.41375923892286e-7
+2 tracer28_column_mean relative_L2_change=9.749684528500891e-7
+2 tracer29_column_mean relative_L2_change=1.035349690180223e-6
+2 tracer30_column_mean relative_L2_change=1.0877147190318481e-6
+2 tracer31_column_mean relative_L2_change=1.1781474468008776e-6
+2 tracer32_column_mean relative_L2_change=1.267877906305268e-6
+Test Summary:                               | Pass  Total  Time
+32-tracer conservative Dkg full-day outputs |  369    369  5.2s
+Exploratory 1e-7 target met: false
+Baseline maximum drift: 8.203781159418402e-7
+Maximum final absolute relative drift: 3.138139946426091e-7

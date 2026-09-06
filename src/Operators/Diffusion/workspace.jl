@@ -3,11 +3,14 @@
 
 Preallocated storage for implicit vertical diffusion.
 
-- `factors` stores the tracer-independent Thomas superdiagonal factors.
+- `factors` stores tracer-independent Thomas superdiagonal factors, or the
+  forward transfer/retention ratios for conservative Dkg mass transport.
 - `layer_thickness` stores geometric layer thickness [m] used to convert
   cell-centered Kz [m² s⁻¹] into interface mass exchange [kg s⁻¹].
 - `references` stores one cancellation-reducing column reference per packed
-  cubed-sphere tracer. It is `nothing` for LL and reduced-Gaussian layouts.
+  cubed-sphere tracer for VMR solves. The conservative Dkg mass path keeps its
+  reference and compensated transfer in registers. This field is `nothing`
+  for LL and reduced-Gaussian layouts.
 
 The workspace owns only diffusion data. Advection and convection buffers live
 in their respective workspace types.

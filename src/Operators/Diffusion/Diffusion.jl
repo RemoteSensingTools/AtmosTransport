@@ -16,9 +16,10 @@ Public surface:
 Both subtype the global `AbstractDiffusion` declared in
 `src/Operators/AbstractOperators.jl`; concrete operator structs live in
 `operators.jl`. The column-level Thomas solve (`solve_tridiagonal!`) is
-exposed as the numerical reference. Production kernels name the tridiagonal
-coefficients `(a, b, c)` explicitly; the matching transpose lives in
-`src/Adjoints/DiffusionAdjoint.jl`.
+exposed as the numerical reference. Generic Kz kernels name the tridiagonal
+coefficients `(a, b, c)` explicitly. Precomputed Dkg mass transport uses
+column-conservative bidiagonal factors in `conservative_dkg.jl`; both matching
+transposes live in `src/Adjoints/DiffusionAdjoint.jl`.
 """
 module Diffusion
 
@@ -42,6 +43,7 @@ export fill_dz_hydrostatic_constT!, fill_dz_hydrostatic_virtualT!
 
 include("thomas_solve.jl")
 include("diffusion_kernels.jl")
+include("conservative_dkg.jl")
 include("dz_helpers.jl")
 include("workspace.jl")
 include("operators.jl")

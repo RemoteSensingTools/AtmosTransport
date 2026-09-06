@@ -157,6 +157,16 @@ through 65 tracers pass. The original 32-tracer full-day benchmark takes
 31-fold to 8.204e-7. Conservation does not resolve the observed negative
 undershoots or establish second-order time accuracy.
 
+The [precomputed diffusion follow-up](2026-09-05_main_dkg_mass.md) isolates most
+remaining Float32 drift to the VMR implicit solve. A conservative mass-space
+factorization reduces maximum daily drift another 2.6-fold to 3.14e-7 in both
+six- and 32-tracer workloads. The exploratory 1e-7 target is not met; a candidate
+that reached it was rejected for erasing weak physical exchanges. Independent
+column errors and all six cross-precision final field errors improve. The full
+120-file CPU core suite plus regridding and 6,989,800 V100 checks through 65
+tracers pass. The 32-tracer day costs 38.635 s versus 34.574 s (11.7% more), with
+no new persistent workspace. No total normalization is applied.
+
 ## Remaining work
 
 - Evaluate whether reusing interior VMR buffers justifies the added initialization
@@ -165,9 +175,9 @@ undershoots or establish second-order time accuracy.
 - Profile multi-day input movement and peak host/device memory on representative
   archives before changing host-window ownership or staging. Current timing
   evidence covers warm-cache runs of at most one day.
-- Measure the residual Float32 precision budget after the two seam fixes,
-  including implicit diffusion. Keep conservation, positivity, and transported
-  field accuracy as separate validation criteria. Improve temporal accuracy
+- Measure multi-day Float32 drift after the seam and implicit diffusion fixes.
+  Tune the diffusion cost while preserving weak transfers and independent field
+  accuracy. Keep conservation and positivity as separate criteria. Improve temporal accuracy
   at seams against independent reference fields before claiming second order.
 - Retain the six-tracer matrix batch until an alternative improves measured
   whole-run performance. Other GPU architectures need their own measurements.

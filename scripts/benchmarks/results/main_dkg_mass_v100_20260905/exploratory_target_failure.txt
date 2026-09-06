@@ -1,0 +1,145 @@
+ERROR: LoadError: Some tests did not pass: 128 passed, 4 failed, 0 errored, 0 broken.
+in expression starting at /tmp/atmos-dkg-check-outputs.jl:5
+Dkg full-day totals, complete snapshots, and finite fields: Test Failed at /tmp/atmos-dkg-check-outputs.jl:20
+  Expression: maximum(abs, drift) < if case == "all_float64"
+        3.0e-14
+    else
+        1.0e-7
+    end
+   Evaluated: 3.138139946426091e-7 < 1.0e-7
+
+Stacktrace:
+  [1] macro expansion
+    @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+  [2] (::var"#5#6"{NCDataset{Nothing, Missing}, String, Dict{String, Any}})(b::NCDataset{Nothing, Missing})
+    @ Main /tmp/atmos-dkg-check-outputs.jl:20
+  [3] NCDataset(f::var"#5#6"{NCDataset{Nothing, Missing}, String, Dict{String, Any}}, args::String; kwargs::@Kwargs{})
+    @ NCDatasets ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:288
+  [4] NCDataset
+    @ ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:285 [inlined]
+  [5] #3
+    @ /tmp/atmos-dkg-check-outputs.jl:9 [inlined]
+  [6] NCDataset(f::var"#3#4"{String, Dict{String, Any}}, args::String; kwargs::@Kwargs{})
+    @ NCDatasets ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:288
+  [7] NCDataset(f::Function, args::String)
+    @ NCDatasets ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:285
+  [8] top-level scope
+    @ /tmp/atmos-dkg-check-outputs.jl:6
+  [9] macro expansion
+    @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+ [10] macro expansion
+    @ /tmp/atmos-dkg-check-outputs.jl:8 [inlined]
+all tracer1_total_mass before=-4.218985620059356e-7 after=3.138139946426091e-7 max_hourly=3.138139946426091e-7
+Dkg full-day totals, complete snapshots, and finite fields: Test Failed at /tmp/atmos-dkg-check-outputs.jl:20
+  Expression: maximum(abs, drift) < if case == "all_float64"
+        3.0e-14
+    else
+        1.0e-7
+    end
+   Evaluated: 1.620348027780849e-7 < 1.0e-7
+
+Stacktrace:
+  [1] macro expansion
+    @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+  [2] (::var"#5#6"{NCDataset{Nothing, Missing}, String, Dict{String, Any}})(b::NCDataset{Nothing, Missing})
+    @ Main /tmp/atmos-dkg-check-outputs.jl:20
+  [3] NCDataset(f::var"#5#6"{NCDataset{Nothing, Missing}, String, Dict{String, Any}}, args::String; kwargs::@Kwargs{})
+    @ NCDatasets ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:288
+  [4] NCDataset
+    @ ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:285 [inlined]
+  [5] #3
+    @ /tmp/atmos-dkg-check-outputs.jl:9 [inlined]
+  [6] NCDataset(f::var"#3#4"{String, Dict{String, Any}}, args::String; kwargs::@Kwargs{})
+    @ NCDatasets ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:288
+  [7] NCDataset(f::Function, args::String)
+    @ NCDatasets ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:285
+  [8] top-level scope
+    @ /tmp/atmos-dkg-check-outputs.jl:6
+  [9] macro expansion
+    @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+ [10] macro expansion
+    @ /tmp/atmos-dkg-check-outputs.jl:8 [inlined]
+all tracer2_total_mass before=-6.692367014378545e-7 after=1.620348027780849e-7 max_hourly=1.620348027780849e-7
+Dkg full-day totals, complete snapshots, and finite fields: Test Failed at /tmp/atmos-dkg-check-outputs.jl:20
+  Expression: maximum(abs, drift) < if case == "all_float64"
+        3.0e-14
+    else
+        1.0e-7
+    end
+   Evaluated: 2.1199674537972825e-7 < 1.0e-7
+
+Stacktrace:
+  [1] macro expansion
+    @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+  [2] (::var"#5#6"{NCDataset{Nothing, Missing}, String, Dict{String, Any}})(b::NCDataset{Nothing, Missing})
+    @ Main /tmp/atmos-dkg-check-outputs.jl:20
+  [3] NCDataset(f::var"#5#6"{NCDataset{Nothing, Missing}, String, Dict{String, Any}}, args::String; kwargs::@Kwargs{})
+    @ NCDatasets ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:288
+  [4] NCDataset
+    @ ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:285 [inlined]
+  [5] #3
+    @ /tmp/atmos-dkg-check-outputs.jl:9 [inlined]
+  [6] NCDataset(f::var"#3#4"{String, Dict{String, Any}}, args::String; kwargs::@Kwargs{})
+    @ NCDatasets ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:288
+  [7] NCDataset(f::Function, args::String)
+    @ NCDatasets ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:285
+  [8] top-level scope
+    @ /tmp/atmos-dkg-check-outputs.jl:6
+  [9] macro expansion
+    @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+ [10] macro expansion
+    @ /tmp/atmos-dkg-check-outputs.jl:8 [inlined]
+all tracer3_total_mass before=-6.111322901321005e-7 after=2.1199674537972825e-7 max_hourly=2.1199674537972825e-7
+Dkg full-day totals, complete snapshots, and finite fields: Test Failed at /tmp/atmos-dkg-check-outputs.jl:20
+  Expression: maximum(abs, drift) < if case == "all_float64"
+        3.0e-14
+    else
+        1.0e-7
+    end
+   Evaluated: 1.7265800463000635e-7 < 1.0e-7
+
+Stacktrace:
+  [1] macro expansion
+    @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+  [2] (::var"#5#6"{NCDataset{Nothing, Missing}, String, Dict{String, Any}})(b::NCDataset{Nothing, Missing})
+    @ Main /tmp/atmos-dkg-check-outputs.jl:20
+  [3] NCDataset(f::var"#5#6"{NCDataset{Nothing, Missing}, String, Dict{String, Any}}, args::String; kwargs::@Kwargs{})
+    @ NCDatasets ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:288
+  [4] NCDataset
+    @ ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:285 [inlined]
+  [5] #3
+    @ /tmp/atmos-dkg-check-outputs.jl:9 [inlined]
+  [6] NCDataset(f::var"#3#4"{String, Dict{String, Any}}, args::String; kwargs::@Kwargs{})
+    @ NCDatasets ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:288
+  [7] NCDataset(f::Function, args::String)
+    @ NCDatasets ~/.julia/packages/NCDatasets/umdPP/src/dataset.jl:285
+  [8] top-level scope
+    @ /tmp/atmos-dkg-check-outputs.jl:6
+  [9] macro expansion
+    @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+ [10] macro expansion
+    @ /tmp/atmos-dkg-check-outputs.jl:8 [inlined]
+all tracer4_total_mass before=-6.118191628651353e-7 after=1.7265800463000635e-7 max_hourly=1.7265800463000635e-7
+all tracer5_total_mass before=-8.168654720603056e-7 after=4.088804427919672e-8 max_hourly=4.097477702591429e-8
+all tracer6_total_mass before=-4.7278001931923554e-7 after=7.738378172151875e-9 max_hourly=8.28952959107132e-9
+all tracer1_column_mean extrema=(-4.272435f-11, 4.1037116f-9)
+all tracer2_column_mean extrema=(-4.181442f-11, 4.5662274f-9)
+all tracer3_column_mean extrema=(-2.7918098f-11, 3.7117998f-9)
+all tracer4_column_mean extrema=(-3.3036074f-11, 4.0286254f-9)
+all tracer5_column_mean extrema=(2.708438f-11, 4.446668f-9)
+all tracer6_column_mean extrema=(2.7358452f-11, 5.1246674f-9)
+all_float64 tracer1_total_mass before=-9.914172177906698e-16 after=0.0 max_hourly=1.9828344355813393e-16
+all_float64 tracer2_total_mass before=-7.931337742325356e-16 after=0.0 max_hourly=0.0
+all_float64 tracer3_total_mass before=-5.948503306744019e-16 after=0.0 max_hourly=0.0
+all_float64 tracer4_total_mass before=-5.948503306744019e-16 after=0.0 max_hourly=0.0
+all_float64 tracer5_total_mass before=-3.9656688711626785e-16 after=0.0 max_hourly=0.0
+all_float64 tracer6_total_mass before=-3.9656688711626785e-16 after=0.0 max_hourly=0.0
+all_float64 tracer1_column_mean extrema=(-4.272439674707122e-11, 4.103712879575708e-9)
+all_float64 tracer2_column_mean extrema=(-4.181432876672944e-11, 4.566230835590882e-9)
+all_float64 tracer3_column_mean extrema=(-2.791806173728424e-11, 3.711801720206527e-9)
+all_float64 tracer4_column_mean extrema=(-3.303602284905485e-11, 4.028626347608423e-9)
+all_float64 tracer5_column_mean extrema=(2.7084265168283968e-11, 4.4466691123149934e-9)
+all_float64 tracer6_column_mean extrema=(2.7358447133483804e-11, 5.12466700539558e-9)
+Test Summary:                                              | Pass  Fail  Total  Time
+Dkg full-day totals, complete snapshots, and finite fields |  128     4    132  7.2s
+RNG of the outermost testset: Random.Xoshiro(0x28590338cdd54a8c, 0xf0ea83ee9e31d367, 0x869485429eeb21bf, 0x55fc50ba0e56de76, 0xf5e55e68276282b6)

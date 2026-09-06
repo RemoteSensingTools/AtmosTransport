@@ -38,7 +38,7 @@ using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     strang_split_linrood_ppm!, CSLinRoodAdvectionWorkspace, LinRoodWorkspace,
     fv_tp_2d_cs!, _sweep_z!, _cs_flux_x_interior, _cs_flux_y_interior
 using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
-    apply_vertical_diffusion_vmr!
+    apply_vertical_diffusion_vmr!, _dkg_transfer_ratios
 using ..Operators.Convection: CMFMCConvection, CMFMCWorkspace,
     NoConvection, TM5Convection, TM5Workspace,
     CMFMCMatrixConvection, CMFMCMatrixWorkspace,

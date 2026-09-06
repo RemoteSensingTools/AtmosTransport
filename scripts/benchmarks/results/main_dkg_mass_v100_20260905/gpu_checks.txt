@@ -1,0 +1,8 @@
+Precompiling packages...
+  18303.5 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 28 seconds. 192 already precompiled.
+Precompiling packages...
+  11887.7 ms  ✓ AtmosTransportCUDAExt (serial)
+  1 dependency successfully precompiled in 12 seconds
+Test Summary:                            |    Pass    Total   Time
+CUDA conservative Dkg through 65 tracers | 6989800  6989800  47.5s

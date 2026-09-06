@@ -2,8 +2,8 @@
 
 Implicit vertical diffusion for the transport runtime.
 
-This folder owns the Thomas-solve-based vertical diffusion operator and
-the topology-specific runtime adapters that let the same operator family
+This folder owns backward-Euler vertical diffusion, its Thomas reference and
+conservative Dkg factorization, and the topology-specific runtime adapters that let the same operator family
 run on structured, face-indexed, and panel-native cubed-sphere state.
 
 ## Entry Points
@@ -22,7 +22,14 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
   [`thomas_solve.jl`](thomas_solve.jl)
   provides the allocation-free `solve_tridiagonal!` reference
 - Kernel implementations:
-  [`diffusion_kernels.jl`](diffusion_kernels.jl)
+  [`diffusion_kernels.jl`](diffusion_kernels.jl) and
+  [`conservative_dkg.jl`](conservative_dkg.jl)
+
+Precomputed cubed-sphere Dkg acts directly on tracer mass through paired
+retention/transfer passes. It shares factors across tracers, carries rounding
+residuals in registers, and preserves layers with no exchange exactly. There is
+no tracer-total normalization. The public VMR-level solver retains its Thomas
+implementation; state-mass entry points dispatch to the conservative path.
 
 ## Supported Layouts
 
@@ -42,6 +49,8 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
   coefficient builder
 - [`diffusion_kernels.jl`](diffusion_kernels.jl) — KernelAbstractions
   kernels for structured, face-indexed, and cubed-sphere panel solves
+- [`conservative_dkg.jl`](conservative_dkg.jl) — mass-conservative bidiagonal
+  factorization for precomputed cubed-sphere Dkg, with shared packed factors
 - [`dz_helpers.jl`](dz_helpers.jl) — hydrostatic layer-thickness helper
   kernels and host wrappers shared by vertical diffusion paths
 - [`workspace.jl`](workspace.jl) — topology-aware `DiffusionWorkspace`
@@ -87,4 +96,7 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
   [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)
 - Tests: [`../../../test/core/test_diffusion_mass_flux_conservation.jl`](../../../test/core/test_diffusion_mass_flux_conservation.jl),
   [`../../../test/core/test_precomputed_dkg_binary_payload.jl`](../../../test/core/test_precomputed_dkg_binary_payload.jl),
-  and [`../../../test/core/test_driven_simulation.jl`](../../../test/core/test_driven_simulation.jl)
+  [`../../../test/core/test_conservative_dkg.jl`](../../../test/core/test_conservative_dkg.jl),
+  and [`../../../test/core/test_driven_simulation.jl`](../../../test/core/test_driven_simulation.jl).
+  V100/A100 checks are opt-in through
+  [`../../../test/diagnostic/test_conservative_dkg_gpu.jl`](../../../test/diagnostic/test_conservative_dkg_gpu.jl).

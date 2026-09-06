@@ -1,0 +1,12 @@
+Test Summary:                             |  Pass  Total   Time
+Conservative Dkg mass solve and transpose | 12000  12000  10.0s
+Test Summary:                                 | Pass  Total  Time
+Dkg resolves weak transfers into empty layers |   78     78  0.4s
+Test Summary:                        | Pass  Total  Time
+Dkg leaves isolated layers bit-exact |    2      2  0.2s
+Test Summary:                                      | Pass  Total  Time
+Dkg validates all workspace panels before mutation |    4      4  0.2s
+Test Summary:                                     | Pass  Total  Time
+Dkg zero-carrier convention matches the VMR solve |    1      1  1.4s
+Test Summary:                                        | Pass  Total  Time
+Dkg closed interfaces do not pass rounding residuals |    2      2  0.2s

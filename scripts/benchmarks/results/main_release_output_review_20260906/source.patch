@@ -1,0 +1,311 @@
+diff --git a/Project.toml b/Project.toml
+index e9170fb8..6569f545 100644
+--- a/Project.toml
++++ b/Project.toml
+@@ -67,7 +67,7 @@ GRIB = "0.4.0"
+ GeoInterface = "1.6.1"
+ GeometryOps = "=0.1.38"
+ GeometryOpsCore = "0.1.10"
+-HDF5_jll = "2.1"
++HDF5_jll = "1.14, 2"
+ JET = "0.9, 0.10, 0.11"
+ JLD2 = "0.6.4"
+ JSON3 = "1.14.3"
+diff --git a/benchmarking/Project.toml b/benchmarking/Project.toml
+index 2925b8d0..27542217 100644
+--- a/benchmarking/Project.toml
++++ b/benchmarking/Project.toml
+@@ -19,10 +19,10 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+ [sources]
+ AtmosTransport = {path = ".."}
+ 
++# Benchmark the checkout across releases without a duplicated version bound.
+ [compat]
+ Adapt = "4"
+ ArgParse = "1"
+-AtmosTransport = "0.2"
+ CUDA = "5"
+ ConservativeRegridding = "=0.2.0"
+ JSON3 = "1"
+diff --git a/benchmarking/README.md b/benchmarking/README.md
+index 0dfd436f..78846682 100644
+--- a/benchmarking/README.md
++++ b/benchmarking/README.md
+@@ -6,6 +6,16 @@ Oceananigans benchmark dashboard: Julia produces raw benchmark records plus a
+ `github-action-benchmark` compatible JSON file; CI or a dedicated runner
+ publishes the history.
+ 
++Prepare the environment from the repository root, including on Julia 1.10
++where `[sources]` is ignored:
++
++```bash
++julia --project=benchmarking -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
++```
++
++AtmosTransport is sourced from this checkout without a duplicated release
++version bound, so the benchmark environment stays usable after version bumps.
++
+ Example:
+ 
+ ```bash
+diff --git a/docs/src/config/output_schema.md b/docs/src/config/output_schema.md
+index 6dbd288b..97e6dd70 100644
+--- a/docs/src/config/output_schema.md
++++ b/docs/src/config/output_schema.md
+@@ -45,6 +45,12 @@ cannot execute Float64 arithmetic, uses bounded host slabs for these totals.
+ Different reduction orders need not be bitwise identical, but output precision
+ does not erase small signed residuals.
+ 
++Column means and column mass diagnostics also accumulate in Float64. CUDA
++performs those reductions on the device. Metal transfers at most 16 vertical
++levels at a time and carries each column's Float64 sum across host slabs in
++model-level order, matching the CPU diagnostic without retaining a complete
++tracer volume. This avoids losing signed residuals in a Float32 column sum.
++
+ ## Global attributes
+ 
+ Every snapshot file carries a CF-style global header set by
+diff --git a/scripts/benchmarks/results/main_release_adjoint_v100_20260906/fresh-resolve.jl b/scripts/benchmarks/results/main_release_adjoint_v100_20260906/fresh-resolve.jl
+index 6b57d7b7..56fb29a0 100644
+--- a/scripts/benchmarks/results/main_release_adjoint_v100_20260906/fresh-resolve.jl
++++ b/scripts/benchmarks/results/main_release_adjoint_v100_20260906/fresh-resolve.jl
+@@ -2,8 +2,9 @@ using Pkg, TOML
+ root = pwd()
+ p = TOML.parsefile("test/Project.toml")
+ version = VersionNumber(TOML.parsefile("Project.toml")["version"])
+-println("Package version: ", version, "; test compat: ", p["compat"]["AtmosTransport"])
+-println("Version admitted: ", version in Pkg.Types.semver_spec(p["compat"]["AtmosTransport"]))
++compat = get(p["compat"], "AtmosTransport", nothing)
++println("Package version: ", version, "; test compat: ", something(compat, "unrestricted"))
++println("Version admitted: ", isnothing(compat) || version in Pkg.Types.semver_spec(compat))
+ mktempdir() do dir
+     p["sources"]["AtmosTransport"]["path"] = root
+     open(joinpath(dir, "Project.toml"), "w") do io
+diff --git a/src/Models/runner/output.jl b/src/Models/runner/output.jl
+index f1d8ae2a..fb9c3362 100644
+--- a/src/Models/runner/output.jl
++++ b/src/Models/runner/output.jl
+@@ -55,11 +55,13 @@ function _wait_pending_output!(output::RunSnapshotOutput)
+ end
+ 
+ function Base.close(output::RunSnapshotOutput)
+-    try
++    stream = output.stream
++    if stream === nothing
+         _wait_pending_output!(output)
+-    finally
+-        stream = output.stream
+-        stream === nothing || close(stream)
++    else
++        _with_run_resource(stream) do
++            _wait_pending_output!(output)
++        end
+     end
+     return nothing
+ end
+diff --git a/src/Output/netcdf_writer.jl b/src/Output/netcdf_writer.jl
+index c5bbec56..f25330dc 100644
+--- a/src/Output/netcdf_writer.jl
++++ b/src/Output/netcdf_writer.jl
+@@ -194,7 +194,7 @@ function _write_tracer_total_mass!(ds, frames, tracer_keys, mass_basis_sym::Symb
+     return nothing
+ end
+ 
+-# HDF5 2.1's automatic error handler is thread-local. NetCDF initializes the
++# Thread-safe HDF5 builds use thread-local error handlers. NetCDF initializes the
+ # main thread quietly, but a first `nc_create` on a `Threads.@spawn` worker can
+ # print an alarming H5Fis_accessible stack while probing a path that does not
+ # exist yet. Silence only that expected constructor probe, then restore the
+diff --git a/src/Output/selected_snapshots.jl b/src/Output/selected_snapshots.jl
+index e38dde71..26548b6b 100644
+--- a/src/Output/selected_snapshots.jl
++++ b/src/Output/selected_snapshots.jl
+@@ -32,16 +32,37 @@ end
+ _snapshot_accumulator_type(backend) = Float64
+ 
+ function _backend_column_sum(values::AbstractArray)
+-    get_backend(values) isa KA_CPU && return _column_sum(values)
++    backend = get_backend(values)
++    backend isa KA_CPU && return _column_sum(values)
++    return _backend_column_sum(values, _snapshot_accumulator_type(backend))
++end
++
++function _backend_column_sum(values::AbstractArray, ::Type{Float64})
+     horizontal = size(values)[1:end-1]
+-    # Metal cannot execute Float64; CUDA and CPU retain Float64 accumulation.
+-    T = _snapshot_accumulator_type(get_backend(values))
+-    out = similar(values, T, horizontal)
++    out = similar(values, Float64, horizontal)
+     _snapshot_column_sum!(get_backend(values), 256)(out, values, length(out),
+         size(values, ndims(values)); ndrange=length(out))
+     synchronize(get_backend(values))
+     return Array(out)
+ end
++
++# Backends without Float64 (Metal) still need the CPU diagnostic's precision.
++# Carry each column's sum across bounded slabs in the original vertical order;
++# reducing a slab in Float32 first would lose signed cancellation residuals.
++function _backend_column_sum(values::AbstractArray, ::Type{Float32})
++    axis = ndims(values)
++    out = zeros(Float64, size(values)[1:end-1])
++    totals = vec(out)
++    for first in 1:16:size(values, axis)
++        last = min(first + 15, size(values, axis))
++        slab = Array(selectdim(values, axis, first:last))
++        columns = reshape(slab, length(out), last - first + 1)
++        @inbounds for k in axes(columns, 2), c in eachindex(totals)
++            totals[c] += Float64(columns[c, k])
++        end
++    end
++    return out
++end
+ _backend_column_sum(values::NTuple{6}) = map(_backend_column_sum, values)
+ 
+ _output_interior(values, ::Union{LatLonMesh,ReducedGaussianMesh}, halo) = values
+diff --git a/test/Project.toml b/test/Project.toml
+index 931552ef..6c0abca0 100644
+--- a/test/Project.toml
++++ b/test/Project.toml
+@@ -56,11 +56,12 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+ [sources]
+ AtmosTransport = {path = ".."}
+ 
++# Pkg.test() injects the checkout itself. Do not duplicate its release version
++# in compat: a stale self-bound prevents the test sandbox from resolving.
+ [compat]
+ Adapt = "4"
+ Aqua = "0.8"
+ ArgParse = "1.2.0"
+-AtmosTransport = "0.3"
+ ConservativeRegridding = "0.2"
+ CubedSphere = "0.3.4"
+ Dates = "1"
+@@ -73,7 +74,7 @@ GRIB = "0.4.0"
+ GeoInterface = "1.6.1"
+ GeometryOps = "0.1.38"
+ GeometryOpsCore = "0.1.10"
+-HDF5_jll = "2.1"
++HDF5_jll = "1.14, 2"
+ JET = "0.9, 0.10, 0.11"
+ JLD2 = "0.6.4"
+ JSON3 = "1.14.3"
+diff --git a/test/README.md b/test/README.md
+index 34036db3..9351520b 100644
+--- a/test/README.md
++++ b/test/README.md
+@@ -23,6 +23,10 @@ repository root first (also required on Julia 1.10, which does not use the
+ julia --project=test -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
+ ```
+ 
++The test environment intentionally has no version bound for AtmosTransport
++itself: `Pkg.test()` supplies the checkout, and direct invocations develop it
++with the command above. Release version bumps need no matching test bound.
++
+ ```bash
+ julia --project=. -e 'using Pkg; Pkg.test()'         # CI-equivalent default
+ julia --project=test test/runtests.jl                # core + regridding
+diff --git a/test/core/test_async_output_lifetime.jl b/test/core/test_async_output_lifetime.jl
+index c4704698..112c0dfb 100644
+--- a/test/core/test_async_output_lifetime.jl
++++ b/test/core/test_async_output_lifetime.jl
+@@ -88,3 +88,41 @@ end
+         @test close(output) === nothing
+     end
+ end
++
++# Use a distinct grid type to inject a close failure without changing the
++# behavior of real NetCDF streams or corrupting an on-disk dataset.
++struct FailingCloseGrid
++    failure::ErrorException
++    calls::Base.RefValue{Int}
++end
++function Base.close(stream::O.NetCDFSnapshotStream{FailingCloseGrid})
++    stream.closed && return nothing
++    stream.closed = true
++    stream.grid.calls[] += 1
++    throw(stream.grid.failure)
++end
++
++@testset "Asynchronous write and stream-close failures are both preserved" begin
++    close_failure = ErrorException("stream close failed")
++    grid = FailingCloseGrid(close_failure, Ref(0))
++    stream = O.NetCDFSnapshotStream("unused.nc", grid)
++    output = R.RunSnapshotOutput(stream, Threads.@spawn error("daily write failed"))
++    failure = try
++        close(output)
++    catch e
++        e
++    end
++    @test failure isa CompositeException
++    @test length(failure.exceptions) == 2
++    @test failure.exceptions[1] isa TaskFailedException
++    @test occursin("daily write failed", sprint(showerror, failure.exceptions[1]))
++    @test failure.exceptions[2] === close_failure
++    @test output.pending_write === nothing
++    @test stream.closed
++    @test grid.calls[] == 1
++    @test close(output) === nothing
++
++    output = R.RunSnapshotOutput(O.NetCDFSnapshotStream("unused.nc", grid), nothing)
++    @test_throws ErrorException close(output)
++    @test grid.calls[] == 2
++end
+diff --git a/test/core/test_selected_snapshots.jl b/test/core/test_selected_snapshots.jl
+index 0da4d1ba..96f990a2 100644
+--- a/test/core/test_selected_snapshots.jl
++++ b/test/core/test_selected_snapshots.jl
+@@ -2,6 +2,22 @@ using Test, AtmosTransport, NCDatasets
+ using AtmosTransport.Output
+ using AtmosTransport.Grids: ncells
+ 
++@testset "Column fallback retains cancellation across slab boundaries" begin
++    O = AtmosTransport.Output
++    for shape in ((7, 33), (4, 3, 33)), levels in ((1, 2, 3), (15, 16, 17), (16, 17, 33))
++        values = zeros(Float32, shape)
++        axis = ndims(values)
++        selectdim(values, axis, levels[1]) .= 2f0^24
++        selectdim(values, axis, levels[2]) .= 1f0
++        selectdim(values, axis, levels[3]) .= -2f0^24
++        actual = O._backend_column_sum(values, Float32)
++        @test eltype(actual) === Float64
++        @test actual == ones(Float64, shape[1:end-1])
++        @test actual == O._column_sum(values)
++    end
++    @test O._backend_column_sum(zeros(Float32, 4, 0), Float32) == zeros(4)
++end
++
+ @testset "Selected capture preserves full-capture NetCDF values" begin
+     for FT in (Float32, Float64), topology in (:ll, :rg, :cs)
+         Nz = 4
+diff --git a/test/diagnostic/test_snapshot_totals_gpu.jl b/test/diagnostic/test_snapshot_totals_gpu.jl
+index 65742fb1..566769a0 100644
+--- a/test/diagnostic/test_snapshot_totals_gpu.jl
++++ b/test/diagnostic/test_snapshot_totals_gpu.jl
+@@ -9,6 +9,27 @@ if get(ENV, "ATMOSTR_RUN_SNAPSHOT_GPU_TESTS", "0") == "1"
+         error("This test requires the selected $expected GPU")
+     CUDA.allowscalar(false)
+ 
++    @testset "Column reductions retain signed residuals with and without device Float64" begin
++        for shape in ((7, 33), (4, 3, 33)), levels in ((1, 2, 3), (15, 16, 17), (16, 17, 33))
++            values = zeros(Float32, shape)
++            axis = ndims(values)
++            selectdim(values, axis, levels[1]) .= 2f0^24
++            selectdim(values, axis, levels[2]) .= 1f0
++            selectdim(values, axis, levels[3]) .= -2f0^24
++            device = CuArray(values)
++            # Exercise the host-slab policy used by Metal on real device arrays.
++            @test O._backend_column_sum(device, Float32) == O._column_sum(values)
++            @test O._backend_column_sum(device) == O._column_sum(values)
++        end
++        parent_values = zeros(Float32, 10, 10, 33)
++        parent_values[4:7, 4:7, 15] .= 2f0^24
++        parent_values[4:7, 4:7, 16] .= 1f0
++        parent_values[4:7, 4:7, 17] .= -2f0^24
++        interior = view(CuArray(parent_values), 4:7, 4:7, :)
++        @test O._backend_column_sum(interior, Float32) == ones(4, 4)
++        @test O._backend_column_sum(interior) == ones(4, 4)
++    end
++
+     @testset "Compensated device totals retain signed residuals" begin
+         for FT in (Float32,Float64), n in (3,257,2049,1048577)
+             values = zeros(FT,n)

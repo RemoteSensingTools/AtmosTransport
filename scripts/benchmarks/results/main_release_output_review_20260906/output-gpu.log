@@ -1,0 +1,30 @@
+Precompiling packages...
+  18068.9 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 38 seconds. 192 already precompiled.
+Precompiling packages...
+  11993.4 ms  ✓ AtmosTransportCUDAExt (serial)
+  1 dependency successfully precompiled in 12 seconds
+[ Info: Saved snapshots: /tmp/jl_UPlGNk/full.nc (1 frame(s), 4×2 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_wIhSbY/full.nc (1 frame(s), 4×2 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_KeVURm/full.nc (1 frame(s), 4×2 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_XaMNVl/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_PTgy74/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_zMyR0U/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_nhJbqU/full.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_1kNPoT/full.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_PURgCz/full.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_bptsVb/full.nc (1 frame(s), 4×2 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_P4Q70j/full.nc (1 frame(s), 4×2 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_un4794/full.nc (1 frame(s), 4×2 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_fOc3GA/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_sCch4d/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_sXdn1r/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_0r5p7P/full.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_MDOgRI/full.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_mq7xTa/full.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+Test Summary:                                                             | Pass  Total   Time
+Column reductions retain signed residuals with and without device Float64 |   14     14  24.6s
+Test Summary:                                     | Pass  Total  Time
+Compensated device totals retain signed residuals |   33     33  2.0s
+Test Summary:                                             | Pass  Total     Time
+Selected GPU capture and streaming preserve signed output |  342    342  1m11.0s

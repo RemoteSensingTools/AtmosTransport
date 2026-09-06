@@ -1,0 +1,77 @@
+Precompiling packages...
+  13192.7 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 14 seconds. 193 already precompiled.
+[ Info: Saved snapshots: /tmp/jl_tucpee/full.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_tucpee/selected.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_FEIbgf/full.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_FEIbgf/selected.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_dj3MCi/full.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_dj3MCi/selected.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_Dm0Dw1/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_Dm0Dw1/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_a9Fu1u/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_a9Fu1u/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_5hi8q7/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_5hi8q7/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_6LFGt1/full.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_6LFGt1/selected.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_4Jat87/full.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_4Jat87/selected.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_8hdUwT/full.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_8hdUwT/selected.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_t8XaYy/full.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_t8XaYy/selected.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_p0EUcj/full.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_p0EUcj/selected.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_lIt5Nj/full.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_lIt5Nj/selected.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_cxaelD/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_cxaelD/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_ZLxxRD/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_ZLxxRD/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_INHUHD/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_INHUHD/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_9dz63z/full.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_9dz63z/selected.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_cxOxMa/full.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_cxOxMa/selected.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_MX3Xqq/full.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_MX3Xqq/selected.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_amDwOu/one.nc (1 frame(s), 2×2 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_amDwOu/two.nc (1 frame(s), 2×2 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_pkyVne/batch.nc (4 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_gJxsUy/batch.nc (4 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_e5SQnj/batch.nc (4 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_VMOguF/batch.nc (4 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_1SGAOU/batch.nc (4 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_me9x1p/batch.nc (4 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_uMiWBO/batch.nc (4 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_chezks/batch.nc (4 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_bWWBzO/batch.nc (4 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_6EH6G2/batch.nc (4 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_hIdwBI/batch.nc (4 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_1KBr1b/batch.nc (4 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_64Lsrn/batch.nc (4 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_3lHeae/batch.nc (4 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_cqVjlY/batch.nc (4 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_LnYCb5/batch.nc (4 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_o8Hb6u/batch.nc (4 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_eilqvg/batch.nc (4 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+Test Summary:                                               | Pass  Total  Time
+Column fallback retains cancellation across slab boundaries |   19     19  0.7s
+Test Summary:                                         | Pass  Total   Time
+Selected capture preserves full-capture NetCDF values |  354    354  42.7s
+Test Summary:                                                 | Pass  Total  Time
+Selected signed totals survive omitted layers and diagnostics |   11     11  2.2s
+Test Summary:                                           | Pass  Total  Time
+Run output drains background writes on exceptional exit |    8      8  0.1s
+Test Summary:                                          | Pass  Total  Time
+Run and asynchronous output failures are both reported |    9      9  0.0s
+Test Summary:                                                        | Pass  Total  Time
+Daily output owns frames and closes other resources on write failure |   11     11  4.7s
+Test Summary:                                                   | Pass  Total  Time
+Asynchronous write and stream-close failures are both preserved |   11     11  0.6s
+Test Summary:                                                 | Pass  Total   Time
+Incremental NetCDF matches batch output and retains no frames | 1198   1198  38.5s
+Test Summary:                                                    | Pass  Total  Time
+NetCDF stream rejects incompatible frames before touching output |   17     17  0.4s

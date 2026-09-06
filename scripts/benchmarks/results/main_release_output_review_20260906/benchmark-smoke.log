@@ -1,0 +1,228 @@
+  Activating project at `/tmp/atmos-review-followup-20260906/benchmark-env`
+   Resolving package versions...
+     Project No packages added to or removed from `/tmp/atmos-review-followup-20260906/benchmark-env/Project.toml`
+    Manifest No packages added to or removed from `/tmp/atmos-review-followup-20260906/benchmark-env/Manifest.toml`
+Precompiling packages...
+    552.8 ms  ✓ ArrayInterface → ArrayInterfaceGPUArraysCoreExt
+   1344.9 ms  ✓ CUDA_Runtime_Discovery
+   1458.6 ms  ✓ UnsafeAtomics → UnsafeAtomicsLLVM
+   1909.4 ms  ✓ CUDA_Driver_jll
+   2665.6 ms  ✓ AtmosTransport → AtmosTransportNVTXExt
+   2095.0 ms  ✓ CUDA_Runtime_jll
+   1491.9 ms  ✓ CUDA_Compiler_jll
+   4732.5 ms  ✓ GPUArrays
+   1713.8 ms  ✓ GPUArrays → JLD2Ext
+  13827.0 ms  ✓ PrettyTables
+  19274.0 ms  ✓ GPUCompiler
+  22023.1 ms  ✓ Metal
+   2359.3 ms  ✓ Atomix → AtomixMetalExt
+   2347.7 ms  ✓ ArrayInterface → ArrayInterfaceMetalExt
+   2413.2 ms  ✓ Metal → SpecialFunctionsExt
+   3695.2 ms  ✓ AtmosTransport → AtmosTransportMetalExt
+  31346.2 ms  ✓ CUDA
+   3541.0 ms  ✓ Atomix → AtomixCUDAExt
+   3581.2 ms  ✓ CUDA → SpecialFunctionsExt
+   3592.9 ms  ✓ ArrayInterface → ArrayInterfaceCUDAExt
+   5027.8 ms  ✓ AtmosTransport → AtmosTransportCUDAExt
+   2827.9 ms  ✓ AtmosTransportBenchmarks
+  22 dependencies successfully precompiled in 60 seconds. 222 already precompiled.
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float32
+│   grid = 4
+│   levels = 32
+│   tracers = 1
+└   operator = :advection
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float32
+│   grid = 4
+│   levels = 32
+│   tracers = 1
+└   operator = :diffusion
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float32
+│   grid = 4
+│   levels = 32
+│   tracers = 1
+└   operator = :convection
+┌ Warning: TM5Convection: use_collab_lu=true but backend is CPU — the collaborative kernel is GPU-only; using the per-thread path. Set use_collab_lu=false to silence this.
+└ @ AtmosTransport.Operators.Convection ~/code/gitHub/AtmosTransportModel-revamp-main/src/Operators/Convection/TM5Convection.jl:184
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float32
+│   grid = 4
+│   levels = 32
+│   tracers = 1
+└   operator = :full
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float32
+│   grid = 4
+│   levels = 32
+│   tracers = 1
+└   operator = :io
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float32
+│   grid = 4
+│   levels = 32
+│   tracers = 1
+└   operator = :adjoint
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float32
+│   grid = 4
+│   levels = 32
+│   tracers = 4
+└   operator = :advection
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float32
+│   grid = 4
+│   levels = 32
+│   tracers = 4
+└   operator = :diffusion
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float32
+│   grid = 4
+│   levels = 32
+│   tracers = 4
+└   operator = :convection
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float32
+│   grid = 4
+│   levels = 32
+│   tracers = 4
+└   operator = :full
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float32
+│   grid = 4
+│   levels = 32
+│   tracers = 4
+└   operator = :io
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float32
+│   grid = 4
+│   levels = 32
+│   tracers = 4
+└   operator = :adjoint
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float64
+│   grid = 4
+│   levels = 32
+│   tracers = 1
+└   operator = :advection
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float64
+│   grid = 4
+│   levels = 32
+│   tracers = 1
+└   operator = :diffusion
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float64
+│   grid = 4
+│   levels = 32
+│   tracers = 1
+└   operator = :convection
+┌ Warning: TM5Convection: Float64 collaborative LU requires CUDA, depth 1..73 within Nz, n_merge=1, and positive Nt; got depth=32, Nz=32, n_merge=1, Nt=1, backend=KernelAbstractions.CPU. Using the per-thread path. Set use_collab_lu=false to silence this.
+└ @ AtmosTransport.Operators.Convection ~/code/gitHub/AtmosTransportModel-revamp-main/src/Operators/Convection/TM5Convection.jl:180
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float64
+│   grid = 4
+│   levels = 32
+│   tracers = 1
+└   operator = :full
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float64
+│   grid = 4
+│   levels = 32
+│   tracers = 1
+└   operator = :io
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float64
+│   grid = 4
+│   levels = 32
+│   tracers = 1
+└   operator = :adjoint
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float64
+│   grid = 4
+│   levels = 32
+│   tracers = 4
+└   operator = :advection
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float64
+│   grid = 4
+│   levels = 32
+│   tracers = 4
+└   operator = :diffusion
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float64
+│   grid = 4
+│   levels = 32
+│   tracers = 4
+└   operator = :convection
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float64
+│   grid = 4
+│   levels = 32
+│   tracers = 4
+└   operator = :full
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float64
+│   grid = 4
+│   levels = 32
+│   tracers = 4
+└   operator = :io
+┌ Info: Running benchmark
+│   backend = :cpu
+│   float_type = Float64
+│   grid = 4
+│   levels = 32
+│   tracers = 4
+└   operator = :adjoint
+┌ Info: Wrote benchmark results
+│   raw = "/tmp/atmos-review-followup-20260906/benchmark-results.json"
+└   dashboard = "/tmp/atmos-review-followup-20260906/benchmark-results.github-action-benchmark.json"
+CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float32           0.002634 s/step  1.166e+06 cell-tracer/s
+CPU release smoke / C4 L32 diffusion 1tr / CPU-Intel / Float32           0.000151 s/step  2.038e+07 cell-tracer/s
+CPU release smoke / C4 L32 convection 1tr / CPU-Intel / Float32          0.000176 s/step  1.744e+07 cell-tracer/s
+CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float32                0.002836 s/step  1.083e+06 cell-tracer/s
+CPU release smoke / C4 L32 io 1tr / CPU-Intel / Float32                  0.000552 s/step  5.565e+06 cell-tracer/s
+CPU release smoke / C4 L32 adjoint 1tr / CPU-Intel / Float32             0.008301 s/step  3.701e+05 cell-tracer/s
+CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float32           0.004336 s/step  2.834e+06 cell-tracer/s
+CPU release smoke / C4 L32 diffusion 4tr / CPU-Intel / Float32           0.000195 s/step  6.286e+07 cell-tracer/s
+CPU release smoke / C4 L32 convection 4tr / CPU-Intel / Float32          0.000293 s/step  4.195e+07 cell-tracer/s
+CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float32                0.004793 s/step  2.564e+06 cell-tracer/s
+CPU release smoke / C4 L32 io 4tr / CPU-Intel / Float32                  0.000447 s/step  2.752e+07 cell-tracer/s
+CPU release smoke / C4 L32 adjoint 4tr / CPU-Intel / Float32             0.008140 s/step  1.510e+06 cell-tracer/s
+CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float64           0.002633 s/step  1.167e+06 cell-tracer/s
+CPU release smoke / C4 L32 diffusion 1tr / CPU-Intel / Float64           0.000154 s/step  1.992e+07 cell-tracer/s
+CPU release smoke / C4 L32 convection 1tr / CPU-Intel / Float64          0.000184 s/step  1.669e+07 cell-tracer/s
+CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float64                0.002953 s/step  1.040e+06 cell-tracer/s
+CPU release smoke / C4 L32 io 1tr / CPU-Intel / Float64                  0.000719 s/step  4.270e+06 cell-tracer/s
+CPU release smoke / C4 L32 adjoint 1tr / CPU-Intel / Float64             0.008653 s/step  3.550e+05 cell-tracer/s
+CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float64           0.004734 s/step  2.596e+06 cell-tracer/s
+CPU release smoke / C4 L32 diffusion 4tr / CPU-Intel / Float64           0.000249 s/step  4.935e+07 cell-tracer/s
+CPU release smoke / C4 L32 convection 4tr / CPU-Intel / Float64          0.000300 s/step  4.093e+07 cell-tracer/s
+CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float64                0.005332 s/step  2.305e+06 cell-tracer/s
+CPU release smoke / C4 L32 io 4tr / CPU-Intel / Float64                  0.000684 s/step  1.797e+07 cell-tracer/s
+CPU release smoke / C4 L32 adjoint 4tr / CPU-Intel / Float64             0.008432 s/step  1.457e+06 cell-tracer/s
+BENCHMARK_SMOKE_PASSED

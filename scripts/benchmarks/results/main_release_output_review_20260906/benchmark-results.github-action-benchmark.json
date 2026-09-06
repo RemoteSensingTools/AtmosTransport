@@ -1,0 +1,994 @@
+[
+    {
+        "name": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float32",
+        "extra": {
+            "updates_per_second": 1.1662560220495278e6,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.00263407
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / advection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.002627
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_cfl_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000169
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_sweep_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000929
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_halo_m_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 7.9e-5
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_halo_rm_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000107
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_halo_m_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 7.5e-5
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_sweep_z",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000411
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_halo_rm_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.00011
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_sweep_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000955
+    },
+    {
+        "name": "CPU release smoke / C4 L32 diffusion 1tr / CPU-Intel / Float32",
+        "extra": {
+            "updates_per_second": 2.0380137327097222e7,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.000150735
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / diffusion / advection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 diffusion 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000145
+    },
+    {
+        "name": "CPU release smoke / C4 L32 convection 1tr / CPU-Intel / Float32",
+        "extra": {
+            "updates_per_second": 1.7438395122698866e7,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.000176163
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / convection / convection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 convection 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.00017
+    },
+    {
+        "name": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float32",
+        "extra": {
+            "updates_per_second": 1.0833926695366697e6,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.002835537
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / advection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.002655
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_cfl_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000106
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_sweep_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000919
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / convection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000177
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_halo_m_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 8.0e-5
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_halo_rm_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 9.9e-5
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_halo_m_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 7.5e-5
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / diffusion",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000172
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_sweep_z",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000391
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_halo_rm_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 9.9e-5
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_sweep_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000908
+    },
+    {
+        "name": "CPU release smoke / C4 L32 io 1tr / CPU-Intel / Float32",
+        "extra": {
+            "updates_per_second": 5.56528796560826e6,
+            "device": "CPU",
+            "bytes_per_second": 7.300889685195284e8
+        },
+        "unit": "s/step",
+        "value": 0.000551993
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / io / io",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 io 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000551993
+    },
+    {
+        "name": "CPU release smoke / C4 L32 adjoint 1tr / CPU-Intel / Float32",
+        "extra": {
+            "updates_per_second": 370090.96382915,
+            "device": "CPU",
+            "adjoint_runs_per_second": 120.47231895480144
+        },
+        "unit": "s/step",
+        "value": 0.008300662
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / adjoint / adjoint_forward_reverse",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 adjoint 1tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.008300662
+    },
+    {
+        "name": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float32",
+        "extra": {
+            "updates_per_second": 2.83363988052961e6,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.004336472
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / advection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.00433
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_cfl_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000106
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_sweep_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.001735
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_halo_m_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000118
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_halo_rm_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.00037
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_halo_m_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.0001
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_sweep_z",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000712
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_halo_rm_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000389
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / advection / cs_sweep_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.001352
+    },
+    {
+        "name": "CPU release smoke / C4 L32 diffusion 4tr / CPU-Intel / Float32",
+        "extra": {
+            "updates_per_second": 6.286258018969274e7,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.000195474
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / diffusion / advection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 diffusion 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000191
+    },
+    {
+        "name": "CPU release smoke / C4 L32 convection 4tr / CPU-Intel / Float32",
+        "extra": {
+            "updates_per_second": 4.1951882338080004e7,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.000292907
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / convection / convection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 convection 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.00029
+    },
+    {
+        "name": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float32",
+        "extra": {
+            "updates_per_second": 2.5639099626931073e6,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.00479268
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / advection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.00452
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_cfl_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000109
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_sweep_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.001731
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / convection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000268
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_halo_m_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000114
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_halo_rm_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.00037
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_halo_m_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 9.6e-5
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / diffusion",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000229
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_sweep_z",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000714
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_halo_rm_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000389
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / full / cs_sweep_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.001316
+    },
+    {
+        "name": "CPU release smoke / C4 L32 io 4tr / CPU-Intel / Float32",
+        "extra": {
+            "updates_per_second": 2.751634118650786e7,
+            "device": "CPU",
+            "bytes_per_second": 9.024410452089366e8
+        },
+        "unit": "s/step",
+        "value": 0.000446571
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / io / io",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 io 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.000446571
+    },
+    {
+        "name": "CPU release smoke / C4 L32 adjoint 4tr / CPU-Intel / Float32",
+        "extra": {
+            "updates_per_second": 1.5095559758048449e6,
+            "device": "CPU",
+            "adjoint_runs_per_second": 122.84797980182655
+        },
+        "unit": "s/step",
+        "value": 0.008140142
+    },
+    {
+        "name": "Operator Breakdown / C4 Float32 CPU-Intel / adjoint / adjoint_forward_reverse",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 adjoint 4tr / CPU-Intel / Float32"
+        },
+        "unit": "s/step",
+        "value": 0.008140142
+    },
+    {
+        "name": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float64",
+        "extra": {
+            "updates_per_second": 1.1668283463322772e6,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.002632778
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / advection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.002628
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_cfl_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000157
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_sweep_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000929
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_halo_m_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000102
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_halo_rm_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000119
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_halo_m_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 9.3e-5
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_sweep_z",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000414
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_halo_rm_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000127
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_sweep_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000948
+    },
+    {
+        "name": "CPU release smoke / C4 L32 diffusion 1tr / CPU-Intel / Float64",
+        "extra": {
+            "updates_per_second": 1.9915333899502765e7,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.000154253
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / diffusion / advection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 diffusion 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000146
+    },
+    {
+        "name": "CPU release smoke / C4 L32 convection 1tr / CPU-Intel / Float64",
+        "extra": {
+            "updates_per_second": 1.6690572434476465e7,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.000184056
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / convection / convection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 convection 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000178
+    },
+    {
+        "name": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float64",
+        "extra": {
+            "updates_per_second": 1.0403504951655198e6,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.002952851
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / advection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.002758
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_cfl_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000115
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_sweep_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000973
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / convection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.00019
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_halo_m_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 9.9e-5
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_halo_rm_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000114
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_halo_m_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 9.4e-5
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / diffusion",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000154
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_sweep_z",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000401
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_halo_rm_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000124
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_sweep_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000939
+    },
+    {
+        "name": "CPU release smoke / C4 L32 io 1tr / CPU-Intel / Float64",
+        "extra": {
+            "updates_per_second": 4.269785982537243e6,
+            "device": "CPU",
+            "bytes_per_second": 1.1188173582367117e9
+        },
+        "unit": "s/step",
+        "value": 0.000719474
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / io / io",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 io 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000719474
+    },
+    {
+        "name": "CPU release smoke / C4 L32 adjoint 1tr / CPU-Intel / Float64",
+        "extra": {
+            "updates_per_second": 355007.47168231825,
+            "device": "CPU",
+            "adjoint_runs_per_second": 115.56232802158797
+        },
+        "unit": "s/step",
+        "value": 0.008653339
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / adjoint / adjoint_forward_reverse",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 adjoint 1tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.008653339
+    },
+    {
+        "name": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float64",
+        "extra": {
+            "updates_per_second": 2.5955465507514053e6,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.004734263
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / advection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.004728
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_cfl_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000124
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_sweep_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.001885
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_halo_m_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000157
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_halo_rm_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000421
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_halo_m_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.00013
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_sweep_z",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000728
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_halo_rm_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.00042
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / advection / cs_sweep_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 advection 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.001531
+    },
+    {
+        "name": "CPU release smoke / C4 L32 diffusion 4tr / CPU-Intel / Float64",
+        "extra": {
+            "updates_per_second": 4.935355993879002e7,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.000248979
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / diffusion / advection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 diffusion 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000244
+    },
+    {
+        "name": "CPU release smoke / C4 L32 convection 4tr / CPU-Intel / Float64",
+        "extra": {
+            "updates_per_second": 4.092630400969868e7,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.000300247
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / convection / convection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 convection 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000297
+    },
+    {
+        "name": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float64",
+        "extra": {
+            "updates_per_second": 2.3047295909611387e6,
+            "device": "CPU"
+        },
+        "unit": "s/step",
+        "value": 0.005331645
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / advection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.005016
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_cfl_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000125
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_sweep_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.001872
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / convection",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000304
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_halo_m_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000161
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_halo_rm_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.00041
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_halo_m_x",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000135
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / diffusion",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000254
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_sweep_z",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000729
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_halo_rm_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.00043
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / full / cs_sweep_y",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 full 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.001576
+    },
+    {
+        "name": "CPU release smoke / C4 L32 io 4tr / CPU-Intel / Float64",
+        "extra": {
+            "updates_per_second": 1.7969352076755807e7,
+            "device": "CPU",
+            "bytes_per_second": 1.177132946590605e9
+        },
+        "unit": "s/step",
+        "value": 0.000683831
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / io / io",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 io 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.000683831
+    },
+    {
+        "name": "CPU release smoke / C4 L32 adjoint 4tr / CPU-Intel / Float64",
+        "extra": {
+            "updates_per_second": 1.4573653046009715e6,
+            "device": "CPU",
+            "adjoint_runs_per_second": 118.60069210619885
+        },
+        "unit": "s/step",
+        "value": 0.008431654
+    },
+    {
+        "name": "Operator Breakdown / C4 Float64 CPU-Intel / adjoint / adjoint_forward_reverse",
+        "extra": {
+            "source_case": "CPU release smoke / C4 L32 adjoint 4tr / CPU-Intel / Float64"
+        },
+        "unit": "s/step",
+        "value": 0.008431654
+    }
+]

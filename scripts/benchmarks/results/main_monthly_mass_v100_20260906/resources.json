@@ -1,0 +1,28 @@
+{
+  "Float32": {
+    "process_peak_rss_gib": 6.241249084472656,
+    "sampled_peak_rss_gib": 6.2512359619140625,
+    "sampled_peak_device_mib": 1856.0,
+    "host_samples": 510,
+    "discarded_zero_rss_samples": 1,
+    "device_samples": 1065,
+    "host_observed_seconds": 531.5411720275879,
+    "second_half_rss_range_gib": [
+      2.80902099609375,
+      6.2512359619140625
+    ]
+  },
+  "Float64": {
+    "process_peak_rss_gib": 6.83349609375,
+    "sampled_peak_rss_gib": 6.841426849365234,
+    "sampled_peak_device_mib": 3006.0,
+    "host_samples": 602,
+    "discarded_zero_rss_samples": 0,
+    "device_samples": 1258,
+    "host_observed_seconds": 628.2574520111084,
+    "second_half_rss_range_gib": [
+      3.9091949462890625,
+      6.841426849365234
+    ]
+  }
+}

@@ -1,0 +1,46 @@
+INPUT era5_n320_transport_20181201_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181202_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181203_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181204_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181205_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181206_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181207_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181208_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181209_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181210_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181211_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181212_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181213_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181214_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181215_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181216_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181217_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181218_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181219_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181220_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181221_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181222_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181223_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181224_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181225_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181226_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181227_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181228_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181229_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181230_float32.bin bytes=3114263552
+INPUT era5_n320_transport_20181231_float32.bin bytes=3114263552
+tracer01_total_mass daily relative drift=[0.0, 0.0, 0.0, 0.0, 0.0, -1.9828344355813393e-16, 0.0, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16]
+tracer02_total_mass daily relative drift=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16, -1.982834435581339e-16]
+tracer03_total_mass daily relative drift=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+tracer04_total_mass daily relative drift=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+tracer05_total_mass daily relative drift=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16]
+tracer06_total_mass daily relative drift=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16, -1.9828344355813393e-16]
+tracer01_column_mean column mean extrema=(1.4834023671662474e-11, 4.103712879575708e-9)
+tracer02_column_mean column mean extrema=(8.482221592325065e-13, 5.003062650439055e-9)
+tracer03_column_mean column mean extrema=(-1.1221716535541993e-11, 3.854730252857011e-9)
+tracer04_column_mean column mean extrema=(-5.613924258128173e-12, 3.984008894879667e-9)
+tracer05_column_mean column mean extrema=(-1.0133445538070818e-11, 5.046165151226092e-9)
+tracer06_column_mean column mean extrema=(-1.457626658258859e-11, 4.459404176798528e-9)
+Test Summary:                                                 | Pass  Total  Time
+31 complete daily files, finite output and complete snapshots |   30     30  2.0s
+MONTHLY RESULT /home/cfranken/data/AtmosTransport/benchmarks/revamp-20260906/atmos-monthly-drift-conservative-Float64-6 wall=616.276046507 cumulative_host_bytes=322356637816 process_max_rss_bytes=7337410560

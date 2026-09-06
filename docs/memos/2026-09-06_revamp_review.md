@@ -28,6 +28,16 @@ with 32 tracers. Float64 remains within 1.98e-16. Process RSS peaks at
 5.82–6.30 GiB for these conservative runs, including compilation and mmap
 pages; 500 ms device samples peak at 1,502–2,976 MiB.
 
+The [31-day extension](../../scripts/benchmarks/results/main_monthly_mass_v100_20260906/README.md)
+completes both precisions with six tracers. Maximum daily Float32 drift is
+5.84e-7 on day 10, falling to 2.48e-7 at the endpoint; Float64 stays within
+1.98e-16. All first-week totals reproduce the earlier runs exactly. Maximum
+native final Float32-to-Float64 relative L2 difference is 1.74e-6. GNU time
+reports peak process RSS of 6.24/6.83 GiB; sampled RSS peaks at 6.25/6.84 GiB,
+and sampled device use at 1,856/3,006 MiB. The raw memory traces include
+compilation, mmap pages, and allocator reservations. They characterize the
+measured month without establishing leak freedom in other workloads.
+
 Mass conservation, field accuracy, positivity, and adjoint fidelity are separate
 criteria. Positive pressure layers can still develop small negative column
 means under PPM/Lin–Rood. The split seam fixture does not establish second-order
@@ -39,6 +49,10 @@ complete meteorological adjoint or full TM5/GCHP forcing parity.
 - CUDA Dkg tracer solves now read shared column factors in parallel. The
   32-tracer day falls from 38.635 to 29.543 s median with identical outputs.
   No new persistent workspace is added. CPU and Metal retain the fused loop.
+- The 31-day six-tracer Float32 run records 130.063 s in caller-side prefetch
+  waits, versus 0.691 s in Float64. Cache state and compute overlap differ;
+  these are a reason to isolate host loading and backend copies before further
+  staging changes, not a measured disk-bandwidth or wall-time-saving claim.
 - Float64 CUDA now supports the collaborative matrix solve on unmerged depths
   through 73. The C90 L66 day falls from 92.853 to 21.759 s with six tracers
   and from 147.673 to 63.943 s with 32. Full-precision state comparisons stay
@@ -95,7 +109,7 @@ build pass.
 Before adopting further changes, use actual profiling to choose the next cost,
 keep independent scientific probes, and validate the changed path. Do not
 replace evidence with a blanket `Any` purge or repository-wide formatting.
-Outstanding work includes long-duration drift/memory measurements, transported
+Outstanding work includes drift/memory measurements on other forcing archives, transported
 field positivity and seam time accuracy, and adjoint tape profiling. Hardware
 outside the measured V100 needs its own validation.
 

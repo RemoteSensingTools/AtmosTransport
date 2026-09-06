@@ -198,10 +198,25 @@ Across seven consecutive daily files with the same setup, worst final relative
 Float32 drift falls from `3.62e-6` with the earlier diffusion solve to `5.64e-7`.
 All six final column-mean fields are closer to the Float64 reference, whose
 largest daily total drift is `1.98e-16`. A 32-tracer week has the same maximum
-final Float32 drift. These checks sample totals daily and cover one forcing
-sequence; they do not bound within-day maxima or longer-duration drift.
+final Float32 drift.
 
 ![Daily mass drift before and after conservative diffusion](../assets/weekly_mass_v100.svg)
+
+Extending the conservative setup through all 31 December inputs gives a
+maximum daily Float32 drift of `5.84e-7` on day 10 and a final drift of
+`2.48e-7`. Float64 stays within `1.98e-16`. All first-week total series match
+the earlier runs exactly. The declining Float32 endpoint reflects net error
+accumulation and cancellation; it does not replace the worst-daily measure.
+These daily samples cover one forcing sequence and do not bound within-day
+maxima, other archives, or longer durations.
+
+![Daily mass drift through one month](../assets/monthly_mass_v100.svg)
+
+The native final tracer-storage comparison across all panels and layers has
+maximum Float32-to-Float64 relative L2 difference `1.74e-6`. Both precisions
+still produce small negative column means earlier in the month, about
+`-1.46e-11` mol/mol. Conserved totals and finite output do not establish
+positivity or reference-model field accuracy.
 
 ## Dry-basis vs moist-basis
 

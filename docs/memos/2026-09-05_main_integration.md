@@ -219,13 +219,21 @@ GPU diagnostics pass 3,116 checks through 65 tracers, including partial rows,
 copy-back and ping-pong wrappers, signed storage, halos, and paired adjoints.
 No arithmetic, workspace ownership, or other backend policy changes.
 
+## Month-long conservation and memory
+
+The [31-day extension](../../scripts/benchmarks/results/main_monthly_mass_v100_20260906/README.md)
+completes Float32 and Float64 with six tracers. Worst daily relative drift is
+5.84e-7 and 1.98e-16 respectively; first-week totals reproduce exactly.
+All 256 completeness, total, native-field, and weekly-prefix checks pass.
+The archived memory traces and separate RSS/device counters cover both runs.
+
 ## Remaining work
 
-- Extend the seven-day input/memory measurements to longer runs and other
-  representative archives before changing host-window ownership or staging.
+- Isolate the measured prefetch waits, host loads, and backend copies under
+  controlled cache conditions before changing host-window ownership or staging.
+  Extend the measurements to other representative forcing archives.
   Cold-storage throughput remains unmeasured.
-- Extend Float32/Float64 drift and memory checks beyond one week.
-  Keep conservation and positivity as
+- Keep conservation and positivity as
   separate criteria. Improve temporal accuracy
   at seams against independent reference fields before claiming second order.
 - Retain the six-tracer matrix batch until an alternative improves measured

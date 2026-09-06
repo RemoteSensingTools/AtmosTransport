@@ -1,0 +1,17 @@
+name: TagBot
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+
+jobs:
+  TagBot:
+    if: github.event_name == 'workflow_dispatch' || github.actor == 'JuliaTagBot'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: JuliaRegistries/TagBot@cded32665b34ca0496d3ac10a67d08ddfc726963 # v1.25.11
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # A repository-scoped deploy key lets tag pushes trigger the docs build.
+          ssh: ${{ secrets.TAGBOT_SSH_KEY }}

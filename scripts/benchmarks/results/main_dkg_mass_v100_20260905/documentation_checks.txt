@@ -1,0 +1,6 @@
+Test Summary:                                  | Pass  Total  Time
+maintained documentation has valid local links |   75     75  0.6s
+Test Summary:                                  | Pass  Total  Time
+home page exposes VitePress front matter first |    1      1  0.0s
+Test Summary:           | Pass  Total  Time
+Module README freshness |   84     84  0.1s

@@ -19,7 +19,7 @@
 using Test
 using Dates
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 
 using .AtmosTransport.Preprocessing: AbstractMetSettings,
                                       ERA5N320Settings, ERA5GRIBDayHandles,

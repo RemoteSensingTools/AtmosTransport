@@ -1,28 +1,24 @@
 # Typed runtime-physics configuration specs.
 #
-# Oceananigans-style: parse loose TOML *once* into typed objects, validate at the
-# boundary, then dispatch on concrete types — instead of `Val(Symbol(get(...)))`
-# over a raw `Dict{String,Any}` at the point of use. Mirrors the existing
-# `RuntimeOutputSpec` in `src/Output/runtime_output.jl`.
+# Parse TOML values into typed specifications, then construct the requested
+# operators by dispatch. Numerical kernels receive operators, not TOML tables.
 #
 #   TOML section Dict  --<family>_spec-->  <Spec>  --materialize(spec, style[, …])-->  <operator>
 #
-# The only place a string becomes a type is the `_parse_*_kind` parser, where all
-# parse-time validation (including the lmax_conv/n_merge footgun) lives. The
-# materialized operator is identical to what the old `build_runtime_*` produced, so
-# this is behavior-preserving EXCEPT for the one intentional tightening noted on
-# `convection_spec`.
+# Each family has three parts: a specification type, a section parser, and
+# `materialize` methods. Parsers validate values and option combinations;
+# materialization applies topology/capability gates and operator constructors.
+# GPU solver eligibility is checked later, when precision and state depth are
+# known (see Convection/TM5Convection.jl).
 #
-# POLICY: every `materialize(spec, style[, …])` method for EVERY spec family
-# (convection now; advection/diffusion/chemistry to follow) lives in THIS file. Do
-# not define `materialize` elsewhere in the Models module — keeping them together is
-# what makes the dispatch discoverable.
+# Keep all physics `materialize` methods here. RuntimePhysicsRecipe.jl supplies
+# the grid/driver context helpers and assembles the resulting operators.
 #
 # This file holds the convection, advection, chemistry, and diffusion spec families.
 
 # --- Typed TOML-value accessors (clean errors at the boundary) -------------
-# All three give the user the section + key + offending value, instead of a bare
-# MethodError/InexactError from a `Float64("1.5")`/`Int(2.0)` deep in the parser.
+# Report the section, key, and offending value when a TOML value has the wrong
+# type, before attempting numeric conversion.
 # `label` is the TOML table name (e.g. "[convection]") for the error message.
 
 function _spec_bool(section, key::AbstractString, default::Bool, label::AbstractString)
@@ -59,24 +55,22 @@ struct CMFMCConvectionSpec <: AbstractConvectionSpec
     clamp :: Bool
 end
 
-# Knobs stored as raw/friendly scalars — never the run `FT` (TM5Convection's own FT
-# is `typeof(tile_workspace_gib)` = Float64, independent of the run precision).
+# Configuration scalars are independent of tracer precision. In particular,
+# TM5Convection's type parameter describes the workspace budget, not the arrays
+# or arithmetic used by the solver.
 #
-# Knob reference:
-#   tile_workspace_gib — per-topology column-tile budget (binary GiB); default 1.0
-#     fits C720/L137 with slack on H100; lower it on memory-tight GPUs (e.g. L40S
-#     48 GiB), raise it to amortize launch overhead.
-#   use_collab_lu      — opt into the workgroup-collaborative kernel (~10× faster,
-#     bit-exact within Float32 rounding on CUDA). Default off so existing runs stay
-#     bit-identical. REQUIRED for lmax_conv/n_merge to do anything (see convection_spec).
-#   lmax_conv          — cap the convection matrix below the full Nz (TM5 tropoX*).
-#     0 = no truncation. Pick a safe ceiling with
-#     `scripts/diagnostics/per_column_depth_histogram.jl`; e.g. on the ERA5/GEOS-native
-#     C180/L85 binary `lmax_conv = 75` is bit-exact for every observed column.
-#   n_merge            — aggregate n adjacent fine layers per convection super-layer
-#     (LU is O(L_super³): n_merge=3 ≈ 27× cheaper). 1 = no aggregation. n_merge=2 is
-#     accepted (the historical multi-substep blow-up was a clipping bug, now fixed —
-#     see TM5Convection.jl) and is the most accurate merge.
+#   tile_workspace_gib — legacy column-tile target in binary GiB; default 1.0.
+#     Collaborative solves defer this global scratch until a fallback needs it.
+#   use_collab_lu — request one GPU workgroup per column, sharing the LU factors
+#     across tracer batches. Defaults to the legacy solve. Actual speed and
+#     eligibility depend on backend, precision, and effective vertical depth.
+#   lmax_conv — 0 uses all Nz levels; a positive value selects that many bottom
+#     levels. Validate the retained region against the forcing's cloud depths.
+#   n_merge — 1 keeps individual levels; larger values aggregate adjacent layers
+#     and change vertical mixing. The effective matrix has fld(L, n_merge) rows;
+#     a nondivisible active depth L also omits top layers from the fine span.
+# Tracer batching requires neither truncation nor aggregation. These numerical
+# approximations apply only when the collaborative solver actually engages.
 struct TM5ConvectionSpec <: AbstractCollabLUConvectionSpec
     tile_workspace_gib :: Float64
     use_collab_lu      :: Bool
@@ -112,14 +106,11 @@ function _collab_lu_knobs(section)
         throw(ArgumentError(
             "[convection] lmax_conv/n_merge only take effect with use_collab_lu = true " *
             "— they steer the collaborative-LU kernel, and the per-thread fallback ignores " *
-            "them. Set use_collab_lu = true (requires Float32 + GPU + lmax_conv ≤ 85), or " *
-            "remove lmax_conv/n_merge. Got lmax_conv=$(lmax_conv), n_merge=$(n_merge), " *
+            "them. Set use_collab_lu = true to request the GPU solver, or remove " *
+            "lmax_conv/n_merge. Solver support depends on backend, precision, and " *
+            "effective depth; see TM5Convection. Got lmax_conv=$(lmax_conv), n_merge=$(n_merge), " *
             "use_collab_lu=false."))
     end
-    # n_merge=2 is no longer rejected (2026-06-13): the multi-substep mass
-    # blow-up was a CLIPPING bug (uncompensated residual updraft flux when
-    # lmax_conv truncates below the cloud top), not n=2-specific — fixed by the
-    # cloud-top closure in the convection kernels. See TM5Convection.jl.
     return (budget, use_collab, lmax_conv, n_merge)
 end
 
@@ -128,10 +119,10 @@ end
 
 Parse a `[convection]` TOML section into a typed spec, validating at the boundary.
 
-INTENTIONAL behavior change vs the old builder: the collaborative-LU knobs
-`lmax_conv`/`n_merge` only take effect when `use_collab_lu = true` (they steer the
-workgroup-collaborative kernel; the legacy per-thread path ignores them). Setting
-them without `use_collab_lu` used to be a silent no-op; it is now a hard error.
+Nondefault `lmax_conv`/`n_merge` require `use_collab_lu = true`; otherwise parsing
+throws an `ArgumentError`. They affect the workgroup-collaborative solver only.
+Eligibility is checked against the backend, tracer precision, and state depth
+at execution time. The legacy fallback uses the full column without aggregation.
 """
 function convection_spec(section)
     kind = _parse_convection_kind(section)
@@ -174,7 +165,7 @@ struct SlopesAdvectionSpec <: AbstractAdvectionSpec end
 struct PPMAdvectionSpec    <: AbstractAdvectionSpec end
 struct NoAdvectionSpec     <: AbstractAdvectionSpec end
 
-# LinRood is cubed-sphere only and carries the reconstruction order.
+# Lin–Rood is cubed-sphere only. `order` selects its PPM edge-value family.
 struct LinRoodAdvectionSpec <: AbstractAdvectionSpec
     order :: Int
 end
@@ -195,7 +186,8 @@ end
 
 Parse an `[advection]` section into a typed spec. `ppm_order` is only meaningful
 for `scheme = "linrood"`; pairing it with `scheme = "ppm"` is rejected (the split
-PPM path takes no order knob), matching the old builder.
+PPM path takes no order knob). An omitted selector defaults to upwind; an
+omitted Lin–Rood `ppm_order` defaults to 5.
 """
 function advection_spec(section)
     kind = _parse_advection_scheme(section)
@@ -276,10 +268,9 @@ end
     chemistry_spec(section) -> AbstractChemistrySpec
 
 Parse a `[chemistry]` section into a typed spec. `kind = "decay"` with an empty
-(or absent) `half_lives_seconds` table reduces to `NoChemistrySpec` — matching the
-old builder (an inert decay scheme is just no chemistry). Each half-life is
-validated positive at parse time (the old builder silently produced an Inf/negative
-decay rate for a non-positive value).
+(or absent) `half_lives_seconds` table reduces to `NoChemistrySpec`. Each
+half-life must be numeric, non-Boolean, and positive. Values are stored as
+Float64 seconds and converted to tracer precision during materialization.
 """
 function chemistry_spec(section)
     kind = _parse_chemistry_kind(section)

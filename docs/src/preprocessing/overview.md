@@ -97,7 +97,9 @@ the configuration, and dispatches into `run_unified_preprocessor_day!`.
 
 ## What a preprocessing config contains
 
-A typical config has these blocks:
+This spectral ERA5 example follows
+`config/preprocessing/era5_ll72x37_advresln_dec2021_f32.toml`. Native-source
+configs use a different vertical-selection interface, described below:
 
 ```toml
 # Where the raw met data lives
@@ -117,13 +119,11 @@ type = "latlon"             # "latlon" | "reduced_gaussian" | "cubed_sphere"
 nlon = 72
 nlat = 37
 
-# Vertical transform (drives the vertical axis)
-[vertical]
-transform   = "merge_above_pressure"   # "identity" | "merge_above_pressure" |
-                                       #   "merge_layers_thinner_than" |
-                                       #   "pressure_overlap"
-threshold_pa = 25.0                    # merge anything above 0.25 hPa into one layer
-coefficients = "config/era5_L137_coefficients.toml"
+# The spectral ERA5 path selects/merges levels in [grid].
+level_top = 1
+level_bot = 137
+echlevs = "ml137_tropo34"
+merge_min_thickness_Pa = 1000.0
 
 # Numerics
 [numerics]
@@ -142,9 +142,10 @@ target_ps_dry_pa      = 98726.0
 qv_global_climatology = 0.00247
 ```
 
-For GEOS-native preprocessing the `[input]` block is replaced by a
-`[source]` block (e.g. `name = "GEOS-IT"`) and the vertical transform
-defaults to `"identity"` if you want the 72-level passthrough — see
+For GEOS-native preprocessing, use `[source] toml = "config/met_sources/geosit.toml"`
+and `root_dir` instead of the spectral `[input]` block. That path reads a
+`[vertical]` table (`transform`, `threshold_pa`, `coefficients`); do not copy
+those keys into a spectral configuration and expect the same selection. See
 [GEOS native cubed-sphere](geos_native_cs.md) for the full schema.
 
 ## What the unified driver does, conceptually

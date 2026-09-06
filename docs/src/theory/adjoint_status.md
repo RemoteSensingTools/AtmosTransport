@@ -6,6 +6,10 @@ The LinRood adjoint and TM5-style inversion scaffold are implemented and
 covered by the core test suite, but real-data parity with TM5-4DVAR remains a
 validation gap.
 
+For a first introduction, start with [Learning adjoints and inversions](@ref Learning-adjoints)
+and the [executed footprint tutorial](@ref First-emission-footprint). This page
+is the support reference, not the starting lesson.
+
 ## What is shipped
 
 ### Forward operators (unchanged)
@@ -49,6 +53,13 @@ The supporting kernel adjoints in
 transposition-tested (`test/core/test_linrood_kernel_adjoints.jl`) and
 finite-difference VJP-tested via single-panel and cross-panel halo
 compositions.
+
+The opt-in `test/diagnostic/test_cs_transport_adjoint_gpu.jl` also exercises
+transporting PPM and LinRood footprints on CUDA with scalar indexing disabled.
+It checks Float32/Float64 CPU/GPU agreement, Float64 directional finite
+differences, and full/stride/revolve checkpoint parity, plus the single-panel
+recording and reverse wrappers. LinRood copy-back and halo-gradient updates
+run on the array backend; the tape path does not require host scalar reads.
 
 The CS reverse pass also supports the default, unclamped/full-column/unmerged
 forms of `TM5Convection`, `CMFMCConvection`, and `CMFMCMatrixConvection`.
@@ -116,22 +127,21 @@ These are all on CI. Full inversion tests:
 
 Three concrete forward-design choices that pay off in the adjoint:
 
-- **Vertical diffusion** — the Thomas-tridiagonal coefficients `(a, b,
-  c)` are kept as **named locals at every level `k`** rather than fused
-  into a pre-factored `(b, factor)` form. The Diffusion module
-  docstring records this as a deliberate adjoint-readiness choice. The
-  CS reverse pass uses that layout to transpose the Backward-Euler
-  column solve, including the tracer-mass / VMR scaling.
+- **Vertical diffusion** — generic Kz kernels expose the tridiagonal
+  coefficients `(a, b, c)` and transpose the backward-Euler solve with its
+  mass/VMR scaling. The precomputed Dkg mass path exposes the retention
+  fractions of two conservative bidiagonal solves. Its reverse applies
+  those passes' transposes in reverse order, preserving a constant total-mass
+  gradient exactly for positive carrier masses.
 - **Convection (CMFMC + TM5)** — `apply!` takes a `ConvectionForcing`
   carrier explicitly so the operator does not call `current_time`
   internally; this keeps the operator pure-functional in the time
   variable. The TM5 reverse pass rebuilds the same per-column matrix
   and solves with the transposed LU factors.
-- **Advection** — the Strang palindrome's time symmetry means the
-  forward integrator is its own time-reverse; the adjoint of the
-  composition is the composition of the adjoints in reverse order,
-  which is structurally the same code path with each operator's
-  adjoint substituted in.
+- **Advection** — the adjoint composes each operator's transpose in reverse
+  order. The palindrome helps organize that reversal, but forward transport
+  is not its own inverse. Stored states supply the limiter branches and
+  reconstructed-face sensitivities needed by the reverse pass.
 
 ## How to use the adjoint today
 
@@ -142,11 +152,12 @@ julia --project=. scripts/inversions/cs_4dvar.jl \
     config/inversions/example_synthetic.toml
 ```
 
-That configuration owns observations, controls, covariance, optimizer, and
-checkpoint choices. For the lower-level Julia API, start with
-`test/core/test_cs_inversion_truth_recovery.jl`; it constructs the panel
-arrays, step sequences, mesh, and objective required by
-`cs_surface_emission_footprint`. Use `RevolveCheckpoint()` (without arguments)
+That synthetic-only configuration owns observations, controls, covariance and
+optimizer choices. It does not expose checkpoint or real-binary settings.
+For the lower-level Julia API, start with the
+[footprint tutorial](@ref First-emission-footprint), then
+`test/core/test_cs_inversion_truth_recovery.jl` for a larger inversion assembly.
+Use `RevolveCheckpoint()` (without arguments)
 for recursive bisection, or `StrideCheckpoint(K)` for an explicit interval.
 LinRood checkpoints currently require `tape_storage = :device`; split-sweep
 schemes also support `:pinned_host` and `:mmap`.

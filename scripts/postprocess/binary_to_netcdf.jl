@@ -16,17 +16,16 @@
 using JSON3
 using Printf
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
-using .AtmosTransport.Architectures: CPU
-using .AtmosTransport.Grids: AtmosGrid, CubedSphereMesh, CubedSphereDefinition,
+using AtmosTransport
+using AtmosTransport.Architectures: CPU
+using AtmosTransport.Grids: AtmosGrid, CubedSphereMesh, CubedSphereDefinition,
                               EquiangularCubedSphereDefinition,
                               GMAOCubedSphereDefinition,
                               GnomonicPanelConvention,
                               GEOSNativePanelConvention,
                               AbstractCubedSpherePanelConvention,
                               HybridSigmaPressure
-using .AtmosTransport.Output: SnapshotFrame, write_snapshot_netcdf,
+using AtmosTransport.Output: SnapshotFrame, write_snapshot_netcdf,
                                SnapshotWriteOptions, output_field_spec
 
 const _ATMSNAP_MAGIC = "ATMSNAP1"

@@ -2,20 +2,6 @@
 # CubedSphereState — panel-native prognostic state for cubed-sphere runtime
 # ---------------------------------------------------------------------------
 
-"""
-    CubedSphereState{Basis, A3, Raw4, Names}
-
-Panel-native prognostic state for cubed-sphere transport.
-
-# Fields
-- `air_mass :: NTuple{6, A3}` — halo-padded panel air mass arrays with shape
-  `(Nc + 2Hp, Nc + 2Hp, Nz)`.
-- `tracers_raw :: NTuple{6, Raw4}` — packed per-panel model tracer storage
-  (conventionally `dry VMR × dry-air mass`, not physical kg species) with shape
-  `(Nc + 2Hp, Nc + 2Hp, Nz, Nt)`.
-- `tracer_names :: Names` — names of the tracer axis in storage order.
-- `halo_width :: Int` — halo width `Hp` needed to recover the physical interior.
-"""
 function _validate_cs_state_storage(air_mass, tracers_raw, tracer_names, halo_width)
     halo_width >= 0 || throw(ArgumentError(
         "CubedSphereState halo_width must be non-negative, got $(halo_width)"))
@@ -49,6 +35,7 @@ function _validate_cs_state_storage(air_mass, tracers_raw, tracer_names, halo_wi
 end
 
 """
+    CubedSphereState{Basis, A3, Raw4, Names}
     CubedSphereState(Basis, mesh, air_mass; tracers...)
     CubedSphereState(Basis, air_mass; halo_width, tracers...)
 
@@ -56,6 +43,15 @@ Panel-native prognostic state. Air mass is stored as six halo-padded
 three-dimensional panels. Tracers are packed into one trailing tracer axis on
 each panel, with names retained in storage order. Diagnostics and global sums
 exclude halos.
+
+# Fields
+- `air_mass :: NTuple{6, A3}` — halo-padded panel air mass arrays with shape
+  `(Nc + 2Hp, Nc + 2Hp, Nz)`.
+- `tracers_raw :: NTuple{6, Raw4}` — packed per-panel model tracer storage
+  (conventionally `dry VMR × dry-air mass`, not physical kg species) with shape
+  `(Nc + 2Hp, Nc + 2Hp, Nz, Nt)`.
+- `tracer_names :: Names` — names of the tracer axis in storage order.
+- `halo_width :: Int` — halo width `Hp` needed to recover the physical interior.
 """
 struct CubedSphereState{Basis <: AbstractMassBasis,
                         A3 <: AbstractArray,

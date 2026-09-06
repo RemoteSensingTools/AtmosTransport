@@ -1,0 +1,6 @@
+Test Summary:                                          | Pass  Total  Time
+Lin-Rood shared faces preserve interiors and transpose |   12     12  3.4s
+SEAM_TIME separate 9.080392800000001e-5
+SEAM_TIME fused 0.000651430089
+Test Summary:                           | Pass  Total   Time
+Fused seam kernel versus separate edges |   12     12  26.7s

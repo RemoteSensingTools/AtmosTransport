@@ -177,7 +177,7 @@ function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
                                      FT::Type{<:AbstractFloat} = Float64,
                                      array_type::Type{<:AbstractArray} = Array,
                                      n_tracers::Integer = 0)
-    cs = CSAdvectionWorkspace(mesh, Nz; FT, array_type, n_tracers)
+    cs = CSAdvectionWorkspace(mesh, Nz; FT, array_type, n_tracers, seam_transport=false)
     lr = LinRoodWorkspace(mesh; FT = FT, Nz = Nz, array_type = array_type)
     return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(lr)}(cs, lr)
 end
@@ -185,7 +185,7 @@ end
 function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh,
                                      prototype::AbstractArray{FT, 3};
                                      n_tracers::Integer = 0) where {FT <: AbstractFloat}
-    cs = CSAdvectionWorkspace(mesh, prototype; n_tracers)
+    cs = CSAdvectionWorkspace(mesh, prototype; n_tracers, seam_transport=false)
     lr = LinRoodWorkspace(mesh, prototype)
     return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(lr)}(cs, lr)
 end
@@ -554,7 +554,8 @@ end
         # CFL guard: clamp mass flux divergence to prevent m_new < 0.
         # At thin TOA levels (k≥70), air mass m ≈ 0.01-0.5 kg but horizontal
         # fluxes can be 0.1-1 kg → CFL > 1 → m_new < 0 → q inverts → blowup.
-        # Equivalent to GCHP's per-level ksplt subcycling (fv_tracer2d.F90:445-471).
+        # This cell-local fallback is not conservative when activated. Callers
+        # must supply CFL-safe fluxes; it is not a substitute for subcycling.
         mass_div = (am_w - am_e) + (bm_s - bm_n)
         max_outflow = FT(0.9) * m1
         scale = mass_div < -max_outflow && m1 > zero(FT) ? max_outflow / (-mass_div) : one(FT)
@@ -627,7 +628,10 @@ end
                   mesh, ::Val{ORD}, ws, ws_lr; damp_coeff=0.0)
 
 Lin-Rood horizontal advection for cubed-sphere grids.
-Averages X-first and Y-first PPM orderings (FV3 fv_tp_2d algorithm).
+Averages X-first and Y-first PPM orderings, then shares the final seam
+mixing-ratio estimates between neighboring panels before their flux updates.
+The transverse formulation follows FV3; the explicit seam projection is
+AtmosTransport's conservative interface coupling.
 """
 function fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                        mesh::CubedSphereMesh, ::Val{ORD}, ws, ws_lr::LinRoodWorkspace;
@@ -706,6 +710,9 @@ function fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
     for p in eachindex(ws_lr.fx_in)
         yq_face_k!(ws_lr.fy_out[p], ws_lr.q_buf[p], bm_panels[p], m_panels[p],
                    Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
+    end
+    _share_lr_seam_faces!(ws_lr.fx_in, ws_lr.fx_out, ws_lr.fy_in, ws_lr.fy_out, mesh)
+    for p in eachindex(ws_lr.fx_in)
         update_k!(ws.rm_A, ws.m_A,
                   rm_panels[p], m_panels[p], am_panels[p], bm_panels[p],
                   ws_lr.fx_in[p], ws_lr.fx_out[p], ws_lr.fy_in[p], ws_lr.fy_out[p],
@@ -721,12 +728,12 @@ end
 # ---------------------------------------------------------------------------
 # Q-space Lin-Rood Horizontal Advection (GCHP-aligned)
 #
-# Operates on mixing ratio q and pressure thickness dp instead of rm and m.
-# dp evolves via mass flux divergence; q is updated as:
-#   q_new = (q*dp1 + flux_div) / dp2
-# This matches GCHP's tracer_2d (fv_tracer2d.F90:543-549).
+# Operates on mixing ratio q and carrier air mass m instead of tracer mass rm.
+# Air mass evolves via mass flux divergence; q is updated as:
+#   q_new = (q*m1 + tracer_flux_div) / m2
+# This uses the mass-weighted form of GCHP's tracer_2d update.
 #
-# m_panels is read-only (used for CFL fraction in PPM face kernels).
+# m_panels supplies CFL fractions and is updated by the final divergence.
 # Phase 3 uses per-panel output buffers (ws_lr.q_out, ws_lr.dp_out)
 # for parallel kernel launch across all 6 panels (no sequential sync).
 # ---------------------------------------------------------------------------
@@ -813,6 +820,9 @@ function fv_tp_2d_cs_q!(q_panels, m_panels, am_panels, bm_panels,
     for p in eachindex(ws_lr.fx_in)
         yq_face_k!(ws_lr.fy_out[p], ws_lr.q_buf[p], bm_panels[p], m_panels[p],
                    Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
+    end
+    _share_lr_seam_faces!(ws_lr.fx_in, ws_lr.fx_out, ws_lr.fy_in, ws_lr.fy_out, mesh)
+    for p in eachindex(ws_lr.fx_in)
         # q_out gets q_new, dp_out gets m_new (reusing dp_out buffer for m)
         update_q_k!(ws_lr.q_out[p], ws_lr.dp_out[p],
                     q_panels[p], m_panels[p], am_panels[p], bm_panels[p],

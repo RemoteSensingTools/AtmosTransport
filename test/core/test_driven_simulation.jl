@@ -2,8 +2,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.MetDrivers: driver_grid
 using .AtmosTransport.Models: current_qv, substep_index, window_index
 

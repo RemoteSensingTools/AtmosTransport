@@ -60,6 +60,14 @@ binary_paths = [
 ]
 ```
 
+The list is consumed in the order you provide. Path expansion does not sort
+explicit lists or check their dates; list consecutive files chronologically.
+
+For complete daily files, omit `[run].stop_window`. Window indices belong to
+each file: two 24-window daily files make a 48-hour run, not a file with window
+48. Multi-file runs must consume each file's full range so forcing is not
+skipped at the handoff. Output schedules use hours since the whole run began.
+
 ### Input: folder and date range
 
 Use folder expansion for daily production files:
@@ -92,6 +100,8 @@ float_type = "Float32"
 
 After the CPU smoke run succeeds, set `use_gpu = true` and choose `"cuda"`,
 `"metal"`, or `"auto"`. Metal requires `Float32`.
+If you created the local GPU environment in [Installation](@ref), use
+`--project=gpu-env` instead of `--project=.` for that run.
 
 ### Operators
 
@@ -137,6 +147,28 @@ opening the full simulation:
 ```bash
 julia --project=. scripts/run_transport.jl my_run.toml
 ```
+
+You can also check a configuration from Julia without opening its binaries or
+allocating model state:
+
+```julia
+using AtmosTransport, TOML
+cfg = TOML.parsefile("my_run.toml")
+ok, errors = validate_config(cfg)
+foreach(println, errors)
+```
+
+This reports malformed tables, missing input paths, incompatible precision and
+backend settings, and invalid window indices. For example, `co2 = 0.0004`
+directly inside `[tracers]` is rejected: use the `[tracers.co2.init]` table shown
+above. Window indices must be integers; `start_window = true` and
+`start_window = 1.0` are errors. Shape errors are reported first, before the
+remaining value checks.
+
+`ok = true` does not validate binary contents or establish that the requested
+physics matches the forcing. Keep the binary inspection in step 1. GPU
+auto-detection can load and probe runtime packages, and the CLI preloads a
+requested GPU package during startup.
 
 The script may restart itself with two Julia threads so NetCDF writes can
 overlap computation. Set `ATMOSTR_NO_AUTO_THREADS=1` only when debugging a

@@ -177,6 +177,8 @@ function _snapshot_variables(ds, topology::AbstractSnapshotTopology)
             key in ("time", "nf", "air_mass", "air_mass_per_area") && continue
             v = ds[key]
             ndims(v) == 5 && push!(names, Symbol(key))
+            endswith(String(key), "_column_mean") &&
+                push!(names, Symbol(chop(String(key); tail=length("_column_mean"))))
         end
     else
         for key in keys(ds)
@@ -205,7 +207,7 @@ function open_snapshot(path::AbstractString)
         times = _read_times(ds)
         topology = if _is_cs_snapshot(ds)
             Nc = haskey(attrs, "Nc") ? Int(attrs["Nc"]) : length(ds.dim["Xdim"])
-            nlevel = haskey(ds.dim, "lev") ? length(ds.dim["lev"]) : size(ds["air_mass"], 4)
+            nlevel = haskey(ds, "lev") ? size(ds["lev"], 1) : size(ds["air_mass"], 4)
             conv = Symbol(get(attrs, "panel_convention", "gnomonic"))
             CubedSphereSnapshotTopology(Nc, nlevel, conv)
         elseif _is_lonlat_snapshot(ds)
@@ -316,9 +318,20 @@ function _read_cs_field(snapshot::SnapshotDataset, ds, variable::Symbol,
                         transform::Symbol, ti::Int,
                         level::Union{Nothing, Int}, unit::Symbol)
     name = String(variable)
+    column_name = "$(name)_column_mean"
+    if transform === :column_mean && haskey(ds, column_name)
+        values = Array{Float64}(ds[column_name][:, :, :, ti])
+        units = String(get(ds[column_name].attrib, "units", "mol mol-1"))
+        values, units = _scale_units!(values, units, unit)
+        return HorizontalField(snapshot.topology, values, variable, units,
+                               snapshot.times[ti], ti, transform, nothing, snapshot.path)
+    end
     haskey(ds, name) || throw(ArgumentError("$(basename(snapshot.path)) has no CS variable `$(name)`"))
     raw = Array{Float64}(ds[name][:, :, :, :, ti])
+    selected = "lev_selected" in dimnames(ds[name])
+    levels = selected ? Int.(ds["lev_selected"][:]) : collect(1:size(raw, 4))
     values = if transform === :column_mean
+        selected && throw(ArgumentError("CS column_mean requires full levels or a stored column mean"))
         haskey(ds, "air_mass") ||
             throw(ArgumentError("CS column_mean requires `air_mass` in $(basename(snapshot.path))"))
         air = Array{Float64}(ds["air_mass"][:, :, :, :, ti])
@@ -327,14 +340,14 @@ function _read_cs_field(snapshot::SnapshotDataset, ds, variable::Symbol,
         _cs_column_sum(raw)
     elseif transform === :level_slice
         lev = level === nothing ? throw(ArgumentError("level_slice requires `level`")) : level
-        1 <= lev <= size(raw, 4) ||
-            throw(ArgumentError("level $(lev) outside 1:$(size(raw, 4))"))
-        Array{Float64}(raw[:, :, :, lev])
+        index = findfirst(==(lev), levels)
+        index === nothing && throw(ArgumentError("model level $(lev) was not written"))
+        Array{Float64}(raw[:, :, :, index])
     elseif transform === :surface_slice
-        lev = level === nothing ? size(raw, 4) : level
-        1 <= lev <= size(raw, 4) ||
-            throw(ArgumentError("surface_slice level $(lev) outside 1:$(size(raw, 4))"))
-        Array{Float64}(raw[:, :, :, lev])
+        lev = level === nothing ? snapshot.topology.nlevel : level
+        index = findfirst(==(lev), levels)
+        index === nothing && throw(ArgumentError("model level $(lev) was not written"))
+        Array{Float64}(raw[:, :, :, index])
     else
         throw(ArgumentError("unsupported CS transform: $(transform)"))
     end
@@ -351,7 +364,9 @@ Load one topology-native horizontal field from a snapshot file.
 
 `time` may be a one-based frame index or a snapshot hour. For CS snapshots,
 `transform` may be `:column_mean`, `:column_sum`, `:level_slice`, or
-`:surface_slice`. LL/RG snapshots currently carry column means only.
+`:surface_slice`. Stored CS column means support column-only output; level
+selection uses original model indices and rejects levels that were not written.
+LL/RG snapshots currently carry column means only.
 """
 function fieldview(snapshot::SnapshotDataset, variable::Union{Symbol, AbstractString};
                    transform::Symbol=:column_mean,

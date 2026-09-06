@@ -20,6 +20,33 @@ import AtmosTransport.Adjoints:
 using AtmosTransport.Architectures: GPU
 using CUDA: CuArray, CUDABackend
 
+# A scalar workgroup size extends to (size, 1, 1). On C90 this leaves
+# 166 of a 256-thread row inactive. A 32×2 tile keeps adjacent i cells in
+# one warp and covers panel rows with much less padding. Measured on V100.
+AtmosTransport.Operators.Advection._cs_packed_sweep_workgroupsize(
+    ::CUDABackend, ::AtmosTransport.Operators.Advection.PPMScheme,
+    ::Type{Float32}) = (32, 2)
+
+# Float64 packed sweeps benefit from the same contiguous 32-cell rows,
+# with one warp per workgroup on the measured V100 workload.
+AtmosTransport.Operators.Advection._cs_packed_sweep_workgroupsize(
+    ::CUDABackend, ::AtmosTransport.Operators.Advection.PPMScheme,
+    ::Type{Float64}) = 32
+
+# Share one factorization per diffusion column, then distribute independent
+# tracer solves across warps. The tracer tile pairs two tracers while keeping
+# all 32 i cells of each warp contiguous. No extra workspace is required.
+AtmosTransport.Operators.Diffusion._cs_dkg_mass_workgroupsize(
+    ::CUDABackend, ::Type) = (32, 2)
+AtmosTransport.Operators.Diffusion._cs_dkg_tracer_workgroupsize(
+    ::CUDABackend, ::Type) = (32, 1, 2)
+
+# Static shared storage for a six-tracer Float64 batch is
+# 8*(L^2 + 9L + 2) + 4*(L + 2) bytes. L=73 uses 48,204 bytes;
+# L=74 exceeds the 48 KiB budget. Keep Float32's portable 85-level gate.
+AtmosTransport.Operators.Convection._tm5_collab_max_depth(
+    ::Type{Float64}, ::CUDABackend) = 73
+
 AtmosTransport.Architectures.array_type(::GPU{:cuda}) = CuArray
 AtmosTransport.Architectures.device(::GPU{:cuda})     = CUDABackend()
 AtmosTransport.Architectures.architecture(::CUDA.AbstractGPUArray) = GPU(:cuda)

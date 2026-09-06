@@ -1,5 +1,11 @@
 # Full-Codebase Review Notes — 2026-05-17
 
+Historical review of `f2500fe`, not an active defect list. Several paths below
+have since been removed or repaired. See the
+[September 6 review](2026-09-06_revamp_review.md) and
+[current-main integration record](2026-09-05_main_integration.md) for verified
+status; old performance rankings were hypotheses, not measurements.
+
 Synthesis of six parallel reviewers (julia-style-reviewer) each covering a
 non-overlapping slice of the active `src/` tree (~63K lines, ~150 files).
 Findings collected here for future documentation generation and as a
@@ -95,6 +101,13 @@ asserted in one place but not enforced elsewhere, or abstractions leak.
   `PreprocessorRunCache` and so cannot share with the spectral path.
 
 ### 1.6 Diffusion lower-boundary approximation
+
+**September 6 correction:** the small-diffusivity restriction in the original
+paragraph below is incorrect for fixed linear backward-Euler coefficients.
+Adding surface mass before the solve gives the same right-hand side as adding
+that source directly to the system. Full GCHP VDIFF parity remains unvalidated;
+see the [current ordering contract](../src/for_tm5_gchp_users/operators_on_binaries.md#surface-flux-and-diffusion-ordering).
+
 - **`DiffusiveSurfaceFluxBoundary` is documented as "GCHP VDIFF lower-boundary
   placement"** ([Diffusion/operators.jl:22](../../src/Operators/Diffusion/operators.jl#L22))
   but the implementation adds surface flux mass to the bottom cell and then

@@ -1,0 +1,12 @@
+Test Summary:                                         | Pass  Total  Time
+Float64 PPM launch layouts preserve every saved value | 1788   1788  5.9s
+Test Summary:                                                        | Pass  Total   Time
+Full-precision packed states are byte-identical after layout changes |   12     12  33.7s
+Nt=6 tile=baseline median_seconds=21.7590676625 host_bytes=1.0781083968e10
+Nt=6 tile=256 median_seconds=21.5896822255 host_bytes=1.0781430184e10
+Nt=6 tile=32 median_seconds=17.4550746445 host_bytes=1.0780740832e10
+Nt=6 tile=32x2 median_seconds=17.2365149065 host_bytes=1.0780851272e10
+Nt=32 tile=baseline median_seconds=63.943214093499996 host_bytes=1.1719071352e10
+Nt=32 tile=256 median_seconds=63.061268346 host_bytes=1.1719912456e10
+Nt=32 tile=32 median_seconds=47.4821009775 host_bytes=1.171842306e10
+Nt=32 tile=32x2 median_seconds=48.473893651 host_bytes=1.1719218888e10

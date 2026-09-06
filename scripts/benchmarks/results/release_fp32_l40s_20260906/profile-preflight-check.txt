@@ -1,0 +1,2 @@
+Existing results rejected before opening logs or starting GPU workers.
+Existing profile logs retained identical SHA-256 checksums.

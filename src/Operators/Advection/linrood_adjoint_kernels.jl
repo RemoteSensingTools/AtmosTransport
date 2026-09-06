@@ -1379,35 +1379,63 @@ end
 #     lambda_rm[h] += lambda_q[h] / m[h]
 #     lambda_m [h] += lambda_q[h] * (-rm[h]/m[h]²)
 # with the same `100·eps` threshold guard.
-function _accumulate_safe_mixing_ratio_halo_adjoint!(
-    lambda_rm, lambda_m, lambda_q, rm, m, mesh::CubedSphereMesh{FT},
-) where {FT}
-    Nc = mesh.Nc; Hp = mesh.Hp
-    Nz = size(lambda_rm, 3)
-    N = Nc + 2Hp
+@kernel function _safe_mixing_ratio_halo_adjoint_kernel!(
+    lambda_rm, lambda_m, @Const(lambda_q), @Const(rm), @Const(m), Nc, Hp,
+)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(lambda_rm)
     thresh = FT(100) * eps(FT)
-    @inbounds for k in 1:Nz, j in 1:N, i in 1:N
+    @inbounds begin
         is_interior = (Hp + 1 <= i <= Hp + Nc) && (Hp + 1 <= j <= Hp + Nc)
-        is_interior && continue
         m_h = m[i, j, k]
-        if m_h > thresh
+        if !is_interior && m_h > thresh
             inv_m = one(FT) / m_h
             bar = lambda_q[i, j, k]
             lambda_rm[i, j, k] += bar * inv_m
             lambda_m[i, j, k]  += bar * (-rm[i, j, k] * inv_m * inv_m)
         end
     end
+end
+
+function _accumulate_safe_mixing_ratio_halo_adjoint!(
+    lambda_rm, lambda_m, lambda_q, rm, m, mesh::CubedSphereMesh,
+)
+    backend = get_backend(lambda_rm)
+    kernel! = _safe_mixing_ratio_halo_adjoint_kernel!(backend, 256)
+    kernel!(lambda_rm, lambda_m, lambda_q, rm, m, mesh.Nc, mesh.Hp;
+            ndrange=size(lambda_rm))
+    synchronize(backend)
     return nothing
 end
 
 # Helper to zero the interior of an array in [Hp+1..Hp+Nc] × [Hp+1..Hp+Nc].
 function _zero_interior!(arr, mesh::CubedSphereMesh)
     Nc = mesh.Nc; Hp = mesh.Hp
-    @inbounds for k in axes(arr, 3),
-                  j in (Hp + 1):(Hp + Nc),
-                  i in (Hp + 1):(Hp + Nc)
-        arr[i, j, k] = zero(eltype(arr))
+    fill!(view(arr, (Hp + 1):(Hp + Nc), (Hp + 1):(Hp + Nc), :), zero(eltype(arr)))
+    return nothing
+end
+
+# The forward update preserves halos. Their output adjoints therefore carry
+# through unchanged, in addition to the reconstructed-face contributions.
+@kernel function _linrood_halo_adjoint_kernel!(
+    lambda_rm, lambda_m, @Const(halo_rm), @Const(halo_m), Nc, Hp,
+)
+    i, j, k = @index(Global, NTuple)
+    if !(Hp + 1 <= i <= Hp + Nc && Hp + 1 <= j <= Hp + Nc)
+        @inbounds begin
+            lambda_rm[i, j, k] += halo_rm[i, j, k]
+            lambda_m[i, j, k] += halo_m[i, j, k]
+        end
     end
+end
+
+function _accumulate_linrood_halo_adjoint!(lambda_rm, lambda_m, halo_rm, halo_m,
+                                            mesh::CubedSphereMesh)
+    backend = get_backend(lambda_rm)
+    kernel! = _linrood_halo_adjoint_kernel!(backend, 256)
+    kernel!(lambda_rm, lambda_m, halo_rm, halo_m, mesh.Nc, mesh.Hp;
+            ndrange=size(lambda_rm))
+    synchronize(backend)
     return nothing
 end
 
@@ -1420,8 +1448,12 @@ end
         fx_in, fx_out, fy_in,
         mesh, ::Val{ORD})
 
-Discrete transpose of `fv_tp_2d_cs!` for ONE panel with all halos held
-at zero. Reads the forward tape inputs `(rm, m, am, bm, q_buf_phase2,
+Per-panel reverse composition used by `fv_tp_2d_cs!`. With `face_adjoints`,
+the six-panel caller supplies seeds after reversing the final update and
+shared-seam projection. Without them, this includes the uncoupled local
+update used by standalone kernel tests. Outer-face Courant denominators
+are fixed meteorology; this is not a complete derivative with respect to air mass.
+Reads the forward tape inputs `(rm, m, am, bm, q_buf_phase2,
 q_buf_phase3, fx_in, fx_out, fy_in)` and the adjoint seed
 `(lambda_rm_new, lambda_m_new)`, then accumulates into the input
 adjoints `(lambda_rm, lambda_m)`. Internally allocates the
@@ -1447,7 +1479,8 @@ function apply_linrood_horizontal_adjoint_single_panel!(
     q_buf_phase2, q_buf_phase3,
     fx_in, fx_out, fy_in,
     mesh::CubedSphereMesh,
-    ::Val{ORD}=Val(5),
+    ::Val{ORD}=Val(5);
+    face_adjoints=nothing,
 ) where {ORD}
     (ORD == 5 || ORD == 7) || throw(ArgumentError(
         "LinRoodPPMScheme adjoint supports ORD ∈ {5, 7}; got ORD=$ORD."))
@@ -1456,22 +1489,23 @@ function apply_linrood_horizontal_adjoint_single_panel!(
     N = Nc + 2Hp
     FT = eltype(lambda_rm)
 
-    # Backend-aware allocations on the same backend as `lambda_rm`.
-    lambda_fx_in  = similar(lambda_rm, FT, (Nc + 1, Nc, Nz)); fill!(lambda_fx_in,  zero(FT))
-    lambda_fx_out = similar(lambda_rm, FT, (Nc + 1, Nc, Nz)); fill!(lambda_fx_out, zero(FT))
-    lambda_fy_in  = similar(lambda_rm, FT, (Nc, Nc + 1, Nz)); fill!(lambda_fy_in,  zero(FT))
-    lambda_fy_out = similar(lambda_rm, FT, (Nc, Nc + 1, Nz)); fill!(lambda_fy_out, zero(FT))
-    lambda_q_buf  = similar(lambda_rm, FT, (N, N, Nz));       fill!(lambda_q_buf,  zero(FT))
-
-    # ── Reverse Phase 3 ────────────────────────────────────────────
-    # update_adjoint: lambda_rm_new, lambda_m_new → lambda_rm, lambda_m,
-    #                                              lambda_fx_in, lambda_fx_out,
-    #                                              lambda_fy_in, lambda_fy_out
-    apply_linrood_update_adjoint!(
-        lambda_rm, lambda_m,
-        lambda_fx_in, lambda_fx_out, lambda_fy_in, lambda_fy_out,
-        lambda_rm_new, lambda_m_new, am, bm, mesh,
-    )
+    # A six-panel caller reverses the update and shared-face projection first,
+    # then passes the coupled face seeds. Standalone panel callers retain the
+    # uncoupled composition used by the local kernel derivative tests.
+    if face_adjoints === nothing
+        lambda_fx_in  = similar(lambda_rm, FT, (Nc + 1, Nc, Nz)); fill!(lambda_fx_in,  zero(FT))
+        lambda_fx_out = similar(lambda_rm, FT, (Nc + 1, Nc, Nz)); fill!(lambda_fx_out, zero(FT))
+        lambda_fy_in  = similar(lambda_rm, FT, (Nc, Nc + 1, Nz)); fill!(lambda_fy_in,  zero(FT))
+        lambda_fy_out = similar(lambda_rm, FT, (Nc, Nc + 1, Nz)); fill!(lambda_fy_out, zero(FT))
+        apply_linrood_update_adjoint!(
+            lambda_rm, lambda_m,
+            lambda_fx_in, lambda_fx_out, lambda_fy_in, lambda_fy_out,
+            lambda_rm_new, lambda_m_new, am, bm, mesh,
+        )
+    else
+        lambda_fx_in, lambda_fx_out, lambda_fy_in, lambda_fy_out = face_adjoints
+    end
+    lambda_q_buf = similar(lambda_rm, FT, (N, N, Nz)); fill!(lambda_q_buf, zero(FT))
 
     # yq_face_adjoint: lambda_fy_out → lambda_q_buf (q_buf at phase 3 state C)
     apply_ppm_y_face_from_q_adjoint!(
@@ -1639,10 +1673,8 @@ function record_linrood_substep!(rm, m, am, bm,
               fx_in, fx_out, fy_in, fy_out, Hp;
               ndrange=(Nc, Nc, Nz))
     synchronize(backend)
-    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
-        rm_new[i, j, k] = update_buf_rm[i, j, k]
-        m_new[i, j, k]  = update_buf_m[i, j, k]
-    end
+    _copy_interior!(rm_new, update_buf_rm, Nc, Hp, Nz)
+    _copy_interior!(m_new, update_buf_m, Nc, Hp, Nz)
 
     entry = LinRoodHorizontalTapeEntry{FT, typeof(rm), typeof(fx_in), typeof(fy_in), ORD}(
         copy(rm), copy(m), q_buf_phase2, q_buf_phase3, fx_in, fx_out, fy_in)
@@ -1713,14 +1745,8 @@ function apply_linrood_multi_substep_adjoint!(
         # interior is zero. We pass the interior-only lambda_rm/m into
         # the substep adjoint, and add the halo carry to the substep-
         # input adjoint at the end.
-        Nc = mesh.Nc; Hp = mesh.Hp
-        @inbounds for k in axes(lambda_rm, 3), j in 1:size(lambda_rm, 2), i in 1:size(lambda_rm, 1)
-            is_interior = (Hp + 1 <= i <= Hp + Nc) && (Hp + 1 <= j <= Hp + Nc)
-            if !is_interior
-                sub_lambda_rm[i, j, k] += lambda_rm[i, j, k]
-                sub_lambda_m[i, j, k]  += lambda_m[i, j, k]
-            end
-        end
+        _accumulate_linrood_halo_adjoint!(sub_lambda_rm, sub_lambda_m,
+                                         lambda_rm, lambda_m, mesh)
         # The substep adjoint's output IS the substep-input adjoint;
         # shift it into the running lambda for the next (earlier)
         # substep.
@@ -1729,9 +1755,7 @@ function apply_linrood_multi_substep_adjoint!(
     end
 
     # Final running lambda IS the gradient at substep-0.
-    @inbounds for I in eachindex(lambda_rm0)
-        lambda_rm0[I] += lambda_rm[I]
-        lambda_m0[I]  += lambda_m[I]
-    end
+    lambda_rm0 .+= lambda_rm
+    lambda_m0 .+= lambda_m
     return nothing
 end

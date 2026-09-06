@@ -24,10 +24,11 @@ functions in this folder; they should not special-case the runner.
 module Output
 
 using Dates
+using HDF5_jll
 using JSON3
-using KernelAbstractions: CPU, get_backend
 using NCDatasets
 using Printf
+using KernelAbstractions: @kernel, @index, get_backend, synchronize, CPU as KA_CPU
 
 function _config_bool(value, path::AbstractString)
     value isa Bool || throw(ArgumentError("$(path) must be true or false; got $(repr(value))"))
@@ -43,7 +44,7 @@ using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                cs_definition_tag, coordinate_law_tag, center_law_tag
 using ..State: DryBasis, MoistBasis, mass_basis, tracer_names, get_tracer
 
-export SnapshotFrame, SnapshotWriteOptions
+export AbstractSnapshotFrame, SnapshotFrame, SelectedSnapshotFrame, SnapshotWriteOptions
 export AbstractOutputSchedule, AbstractOutputPartition
 export AbstractLayerSelection, FullLayerSelection, SelectedLayerSelection
 export NoLayerSelection, TracerOutputFields, OutputFieldSpec
@@ -58,8 +59,11 @@ export column_mean_mixing_ratio, layer_mass_per_area, column_mass_per_area
 include("snapshots.jl")
 include("runtime_output.jl")
 include("diagnostics.jl")
+include("snapshot_totals.jl")
+include("selected_snapshots.jl")
 include("netcdf_schema.jl")
 include("netcdf_writer.jl")
+include("netcdf_stream.jl")
 include("binary_writer.jl")
 
 end # module Output

@@ -1,0 +1,13 @@
+Test Summary:                                       | Pass  Total  Time
+Float64 full-day collaborative versus legacy output |  748    748  5.5s
+Test Summary:                                                 | Pass  Total  Time
+Float64 final three-dimensional state, every panel and tracer |  242    242  3.2s
+Test Summary:                             | Pass  Total  Time
+Float32 full-day output remains bit-exact |  454    454  1.4s
+PERFORMANCE Nt=6 legacy median_seconds=92.853093228 median_host_bytes=1.0781530552e10
+PERFORMANCE Nt=6 collab median_seconds=21.7590676625 median_host_bytes=1.0781083968e10
+PERFORMANCE Nt=32 legacy median_seconds=147.6733453535 median_host_bytes=1.1719222272e10
+PERFORMANCE Nt=32 collab median_seconds=63.943214093499996 median_host_bytes=1.1719071352e10
+MAX_FIELD_RELATIVE_L2 6.637727525346709e-17
+MAX_FINAL_RELATIVE_DRIFT 1.9828344355813393e-16
+MAX_FULL_STATE_RELATIVE_L2 1.7200583905372056e-16

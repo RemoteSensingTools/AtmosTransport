@@ -1,0 +1,2 @@
+Test Summary:                             | Pass  Total  Time
+Lin-Rood 6/32-tracer V100 profile outputs |  692    692  4.2s

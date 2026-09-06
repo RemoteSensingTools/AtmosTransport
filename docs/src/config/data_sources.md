@@ -10,20 +10,51 @@ not require a data account or a large download.
 
 ## ERA5 (ECMWF Reanalysis 5)
 
-ERA5 is the primary spectral source for the LL / CS spectral
-preprocessing path. Authoritative source: the
-[Copernicus Climate Data Store (CDS)](https://cds.climate.copernicus.eu/).
+ERA5 supports LL, reduced-Gaussian and CS preprocessing. The repository has a
+unified downloader; choose its recipe together with a matching preprocessor.
+The older split spectral/thermo layout and the newer native N320 layout are
+not interchangeable merely by changing the input directory.
 
-### What you need per day
+### Choose a download route
+
+| Recipe | Local workflow |
+|---|---|
+| `config/downloads/era5_arco.toml` | Native core/surface downloads from the ARCO mirror. Pair with the ARCO-aware N320 source descriptor. |
+| `config/downloads/era5_convection_only.toml` | Additional CDS convection stream for a workflow that requires it. |
+| `config/downloads/era5_native_daily.toml` | CDS native model-level core, convection and surface streams, requested by day. |
+
+Preview one day without downloading it:
+
+```bash
+julia --project=. scripts/downloads/download_data.jl \
+    config/downloads/era5_arco.toml --start 2021-12-01 --end 2021-12-01 --dry-run
+```
+
+Remove `--dry-run` to download after reviewing the output paths and requested
+streams. `config/met_sources/era5_n320_arco.toml` explicitly sources surface
+pressure from the downloaded single-level field because the assembled ARCO
+core lacks spectral `lnsp`. That descriptor currently disables optional
+surface/convection/diffusion payloads: downloading the surface files alone
+does not enable runtime physics. Read its comments and the
+[preprocessing guide](@ref Preprocessing-overview) before assembling a campaign.
+
+CDS requests need credentials and accepted dataset terms; the public ARCO
+route does not use a CDS token. Check the selected recipe and its source
+descriptor for the exact file layout. Existing split-file spectral examples
+use the layout listed below instead of the native N320 bundle.
+
+### Split-file spectral input
 
 | File | Variable | Format |
 |---|---|---|
-| `era5_spectral_YYYYMMDD_lnsp.gb` | log surface pressure (LNSP) spectral coefficients | GRIB |
-| `era5_spectral_YYYYMMDD_vo_d.gb` | vorticity + divergence (VO + D) spectral coefficients | GRIB |
-| `era5_thermo_ml_YYYYMMDD.nc` | model-level specific humidity (`q`), temperature, etc. | NetCDF |
+| `era5_spectral_YYYYMMDD_lnsp.gb` | log surface pressure spectral coefficients | GRIB |
+| `era5_spectral_YYYYMMDD_vo_d.gb` | vorticity and divergence spectral coefficients | GRIB |
+| `era5_thermo_ml_YYYYMMDD.nc` | model-level specific humidity and temperature | NetCDF |
 
-The thermo file is mandatory for `mass_basis = "dry"` (the runtime
-default). All three files are model-level (137 levels, hybrid σ-p).
+The thermo file supplies humidity for dry-air conversion. These examples use
+ERA5's 137 model levels, with surface pressure defining the hybrid coordinate.
+The files must already match the spectral reader's naming and variables;
+raw native bundles may require preparation rather than only renaming.
 
 ### Credentials
 
@@ -49,9 +80,9 @@ CDS API will pick up the `~/.cdsapirc` file automatically.
 | `reanalysis-era5-single-levels` | Surface fields (PS, 2T, 10U, 10V, …) |
 | `reanalysis-era5-pressure-levels` | Pressure-level diagnostics (not used by the preprocessor) |
 
-A reference download script lives outside the repository (the
-historical practice is per-user `cdsapi` calls); see
-`config/met_sources/era5.toml` for the canonical descriptor.
+The maintained downloader is `scripts/downloads/download_data.jl`; its recipes
+reference the descriptors in `config/met_sources/`. The native daily recipe
+includes the core and optional-physics request definitions.
 
 ### Recommended local layout
 
@@ -66,8 +97,9 @@ historical practice is per-user `cdsapi` calls); see
         └── era5_thermo_ml_20211201.nc      # CDS reanalysis-era5-complete with q
 ```
 
-The `spectral_dir` and `thermo_dir` keys in
-[TOML schema](@ref) point at these.
+The preprocessing `[input].spectral_dir` and `thermo_dir` keys point at these
+folders. They are not runtime `[input]` keys: the forward runtime consumes
+transport binaries. See [Preprocessing overview](@ref).
 
 ## GEOS-IT (NASA GMAO Integrated Tropospheric)
 
@@ -183,5 +215,5 @@ a different source or physics configuration.
 ## Where to read next
 
 - [Quickstart](@ref) — a zero-download, runnable walkthrough.
-- [TOML schema](@ref) — `[input]` / `[source]` / `[grid]` reference.
+- [TOML schema](@ref) — runtime input and operator configuration.
 - [Preprocessing overview](@ref) — the unified `process_day` dispatch.

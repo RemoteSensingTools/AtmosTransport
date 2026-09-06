@@ -1,0 +1,7 @@
+baseline-day 6 solver=collaborative
+baseline-day 32 solver=legacy
+current-day 6 solver=collaborative
+current-day 32 solver=collaborative
+v100/current-day 6 solver=collaborative
+v100/current-day 32 solver=collaborative
+CONFIGURATIONS_VERIFIED

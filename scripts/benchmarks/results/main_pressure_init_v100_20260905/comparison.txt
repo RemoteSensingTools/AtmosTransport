@@ -1,0 +1,5 @@
+Test Summary:                                                     | Pass  Total  Time
+Real ERA5 output before/after typed pressure-layer initialization |  280    280  4.6s
+Arrays compared: 196; exactly equal: 196
+Maximum scaled array difference: 0.0
+Maximum relative mass drift: 2.5718011894571768e-6

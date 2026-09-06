@@ -1,0 +1,4 @@
+Test Summary:                                    | Pass  Total  Time
+Full-day reusable initialization output identity |  454    454  4.3s
+/tmp/atmos-dkg-parallel-day-after median whole-run seconds=29.5433961335; median cumulative host bytes=6.414270756e9
+/tmp/atmos-initial-reuse-day-after median whole-run seconds=29.237570922; median cumulative host bytes=6.016210056e9

@@ -13,8 +13,7 @@
 using Test
 using Random
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Operators.Convection: _tm5_solve_column!,
                                              _tm5_diagnose_cloud_dims
 

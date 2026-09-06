@@ -15,7 +15,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 using .AtmosTransport.Grids: LatLonMesh, CubedSphereMesh, ReducedGaussianMesh,
                               GnomonicPanelConvention, GEOSNativePanelConvention
 using .AtmosTransport.Regridding: build_regridder, apply_regridder!,

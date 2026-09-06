@@ -1,0 +1,56 @@
+
+up to date, audited 319 packages in 957ms
+
+62 packages are looking for funding
+  run `npm fund` for details
+
+7 vulnerabilities (6 moderate, 1 high)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues possible (including breaking changes), run:
+  npm audit fix --force
+
+Some issues need review, and may require choosing
+a different dependency.
+
+Run `npm audit` for details.
+
+> env
+> env vitepress build /home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/docs/build/.documenter
+
+
+  vitepress v1.6.4
+
+- building client + server bundles...
+[32m✓[0m building client + server bundles...
+- rendering pages...
+[32m✓[0m rendering pages...
+build complete in 13.78s.
+Precompiling packages...
+  14278.1 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 15 seconds. 193 already precompiled.
+[ Info: generating markdown page from `~/code/gitHub/AtmosTransportModel-revamp-main/docs/literate/synthetic_latlon.jl`
+[ Info: writing result to `~/code/gitHub/AtmosTransportModel-revamp-main/docs/src/tutorials/_generated/synthetic_latlon.md`
+[ Info: SetupBuildDirectory: setting up build directory.
+[ Info: Doctest: running doctests.
+[ Info: ExpandTemplates: expanding markdown templates.
+[ Info: CrossReferences: building cross-references.
+[ Info: CheckDocument: running document checks.
+[ Info: Populate: populating indices.
+[ Info: RenderDocument: rendering document.
+[ Info: DocumenterVitepress: rendering MarkdownVitepress pages.
+┌ Warning: Documenter could not auto-detect the building environment. Skipping deployment.
+└ @ Documenter ~/.julia/packages/Documenter/13nbQ/src/deployconfig.jl:95
+[ Info: Automatic `version="0.3.0"` for inventory from ../Project.toml
+[ Info: Bases that will be built: [""]
+[ Info: DocumenterVitepress: Did not detect `docs/src/.vitepress/theme/index.ts` file. Substituting in the default file.
+[ Info: DocumenterVitepress: Did not detect `docs/src/.vitepress/theme/style.css` file. Substituting in the default file.
+[ Info: DocumenterVitepress: Did not detect `docs/src/.vitepress/theme/docstrings.css` file. Substituting in the default file.
+[ Info: Base is "" and ENV["CI"] is not set so this is a local build. Not adding any additional base prefix based on the repository or deploy url and instead using absolute path "/" to facilitate serving docs locally.
+[ Info: DocumenterVitepress: building Vitepress site 1 of 1 with base "".
+[ Info: Skipping docs deployment because ATMOSTR_DOCS_BUILD_ONLY is set
+Copied: /home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/docs/build/.documenter/components/AuthorBadge.vue
+Copied: /home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/docs/build/.documenter/components/Authors.vue
+Copied: /home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/docs/build/.documenter/components/VersionPicker.vue

@@ -1,0 +1,11 @@
+WARNING: using Trees.ncells in module Regridding conflicts with an existing identifier.
+WARNING: using Preprocessing.has_surface in module AtmosTransport conflicts with an existing identifier.
+WARNING: using Preprocessing.has_vdiff_fields in module AtmosTransport conflicts with an existing identifier.
+Test Summary:                                   | Pass  Total   Time
+Cubed-sphere initialization into packed storage |  558    558  34.3s
+Test Summary:                                                          | Pass  Total  Time
+Private CS VMR reuse preserves public ownership and mixed initializers |   54     54  0.5s
+Test Summary:                                                   | Pass  Total  Time
+Native CS file initialization can replace private reuse buffers |   14     14  4.5s
+Test Summary:                              | Pass  Total  Time
+Cubed-sphere pressure-layer initialization |  934    934  1.3s

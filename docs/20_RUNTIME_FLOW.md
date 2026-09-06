@@ -8,6 +8,7 @@ the [architecture tour](src/concepts/architecture.md).
 
 | Concern | Owner |
 | --- | --- |
+| Open drivers, staging, and output task lifetime | `DrivenRunner` |
 | Binary header, window loading, timing semantics | `TransportBinaryDriver` |
 | Current host/device forcing window and simulation clock | `DrivenSimulation` |
 | Air mass, conservative tracer storage, operators, reusable workspaces | `TransportModel` |
@@ -15,6 +16,25 @@ the [architecture tour](src/concepts/architecture.md).
 
 Tracer state is deliberately independent of file-I/O policy. The driver
 provides typed `TransportWindow`s; the model only consumes prepared fields.
+
+Cubed-sphere startup allocates packed tracer storage once and converts one
+initial VMR field at a time into that storage. The shared initial-condition
+packer retains signed values and zeros the halos; a small name-to-index map
+preserves the existing packed tracer order. This runner path requires dry-basis
+binaries because CS windows do not carry the humidity needed for moist packing.
+
+The runner retains numerical state and workspaces across input files. Each
+new simulation refreshes forcing and diffusion geometry, invalidates derived
+convection caches, and continues the accumulated clock. GPU startup reads the
+first window once and initializes independent active and prefetched buffers.
+Before closing a driver, the runner drains prefetch so it cannot read a closed
+input. Completed prefetch failures are observed once without swapping buffers.
+
+NetCDF capture selects requested layers and column diagnostics while preserving
+compensated tracer totals. Single-file output appends records without a frame
+history. Daily output owns at most one background write and drains it on exit.
+See `src/Models/runner/resources.jl` and `runner/output.jl` for resource lifetime;
+numerical stepping remains in `DrivenSimulation` and `TransportModel`.
 
 ## One `DrivenSimulation.step!`
 

@@ -1,0 +1,5 @@
+Test Summary:                                           | Pass  Total  Time
+Full-day ERA5 output before/after CUDA PPM launch tiles |  368    368  5.3s
+Arrays compared: 150; exactly equal: 150
+Maximum scaled array difference: 0.0
+Maximum relative mass drift: 2.565584820714352e-5

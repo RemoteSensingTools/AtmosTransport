@@ -1,20 +1,18 @@
 """
     BinaryPathExpander
 
-Expand a `[input]` TOML block into a sorted list of transport-binary
-file paths. Supports both an explicit-list shape and a folder +
-date-range shape with continuity verification. Keeps the runtime
-file-window contract unchanged; the
-CLI simply receives a longer or shorter `Vector{String}`.
+Expand an `[input]` TOML block into transport-binary file paths. Explicit
+lists retain the supplied order; folder/date selection sorts by date and
+checks continuity.
 
 ## Accepted TOML shapes
 
 ```toml
-# Shape A (current, preserved): explicit list
+# Shape A: explicit list, consumed in the supplied order
 [input]
 binary_paths = ["...a.bin", "...b.bin"]
 
-# Shape B (new): folder + inclusive date range
+# Shape B: folder + inclusive date range
 [input]
 folder       = "~/data/.../cs_c48/.../"
 start_date   = "2021-12-01"
@@ -34,17 +32,18 @@ When `folder` is supplied:
   where the date lives, and the surrounding text is matched
   literally (as a regex). Without `file_pattern`, any `\\d{8}` run
   anywhere in the filename is used.
-- Files parseable as dates within `[start_date, end_date]` are
-  kept; files outside the range are silently dropped; files that
-  don't match the pattern error out.
+- Files parseable as dates within `[start_date, end_date]` are kept;
+  files outside the range or not matching the pattern are ignored.
 - The resulting sorted list is verified for continuity: every date
   in the closed interval must be present. Missing days list in the
   error message.
 
 ## Returns
 
-`Vector{String}` of absolute paths, sorted chronologically by
-parsed date.
+`Vector{String}` with home/environment-variable expansion. Explicit paths
+retain their order and may remain relative to the working directory; their
+dates are not checked here. Folder selection sorts chronologically by parsed
+date and rejects missing or duplicate dates.
 """
 module BinaryPathExpander
 

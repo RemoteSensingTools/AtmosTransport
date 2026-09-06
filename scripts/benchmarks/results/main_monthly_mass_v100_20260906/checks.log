@@ -1,0 +1,5 @@
+Test Summary:                      | Pass  Total  Time
+Complete monthly mass measurements |   72     72  0.4s
+Test Summary:                                    | Pass  Total  Time
+Monthly full-precision fields and signed storage |  112    112  2.5s
+MONTHLY CHECKS COMPLETE: /home/cfranken/data/AtmosTransport/benchmarks/revamp-20260906/atmos-monthly-comparison

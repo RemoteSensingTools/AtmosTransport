@@ -8,7 +8,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 using .AtmosTransport.Preprocessing: BLDiffConstants, tm5_bldiff_kvh_column!,
                                      tm5_bldiff_center_kz_column!, BLDiffColumnScratch
 

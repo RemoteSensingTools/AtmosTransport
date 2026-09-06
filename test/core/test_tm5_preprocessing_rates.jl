@@ -24,8 +24,7 @@ All tests run core (no real data).
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 
 using .AtmosTransport.Preprocessing: ec2tm!, ec2tm_from_rates!,
                                        TM5CleanupStats,

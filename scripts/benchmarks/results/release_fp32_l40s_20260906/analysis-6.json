@@ -1,0 +1,104 @@
+{
+    "timings": [
+        {
+            "label": "l40_baseline",
+            "tracers": 6,
+            "min_seconds": 7.081022319,
+            "median_gc_seconds": 1.941551425,
+            "phases": {
+                "diffusion": 0.939259,
+                "convection": 0.999187,
+                "advection": 3.522051,
+                "window_backend_copy": 0.92862,
+                "prefetch_fetch_wait": 0.001763,
+                "window_load_host": 2.251961
+            },
+            "max_seconds": 7.574484467,
+            "median_host_allocated_bytes": 7250984128,
+            "median_seconds": 7.350301803,
+            "samples_seconds": [
+                7.574484467,
+                7.350301803,
+                7.374681159,
+                7.081022319,
+                7.228736081
+            ]
+        },
+        {
+            "label": "l40_current",
+            "tracers": 6,
+            "min_seconds": 4.470650746,
+            "median_gc_seconds": 1.355912675,
+            "phases": {
+                "diffusion": 0.467881,
+                "convection": 0.732563,
+                "advection": 2.85408,
+                "window_backend_copy": 0.682832,
+                "prefetch_fetch_wait": 8.0e-6,
+                "window_load_host": 2.274902
+            },
+            "max_seconds": 5.09700838,
+            "median_host_allocated_bytes": 5486972136,
+            "median_seconds": 4.540828977,
+            "samples_seconds": [
+                5.09700838,
+                4.692484671,
+                4.540828977,
+                4.470650746,
+                4.50493514
+            ]
+        },
+        {
+            "label": "v100_current",
+            "tracers": 6,
+            "min_seconds": 9.348183434,
+            "median_gc_seconds": 1.835569153,
+            "phases": {
+                "diffusion": 0.924833,
+                "convection": 2.036159,
+                "advection": 5.418306,
+                "window_backend_copy": 1.801142,
+                "prefetch_fetch_wait": 0.017929,
+                "window_load_host": 3.515062
+            },
+            "max_seconds": 9.918558425,
+            "median_host_allocated_bytes": 5484746392,
+            "median_seconds": 9.670475181,
+            "samples_seconds": [
+                9.918558425,
+                9.708418885,
+                9.348183434,
+                9.508863667,
+                9.670475181
+            ]
+        }
+    ],
+    "correctness": [
+        {
+            "label": "l40_baseline",
+            "tracers": 6,
+            "max_final_mass_drift": 2.2388955649787152e-5
+        },
+        {
+            "label": "l40_current",
+            "tracers": 6,
+            "max_final_mass_drift": 3.138139946426091e-7
+        },
+        {
+            "label": "v100_current",
+            "tracers": 6,
+            "max_final_mass_drift": 3.138139946426091e-7
+        },
+        {
+            "max_column_relative_L2": 0,
+            "tracers": 6,
+            "comparison": "current_L40S_vs_V100",
+            "max_column_absolute": 0
+        },
+        {
+            "max_column_relative_L2": 0.0008428853089400498,
+            "tracers": 6,
+            "comparison": "current_vs_main"
+        }
+    ]
+}

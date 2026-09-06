@@ -1,5 +1,6 @@
 # Julia
 /Manifest.toml
+/gpu-env/
 /benchmarking/Manifest.toml
 *.jl.cov
 *.jl.mem

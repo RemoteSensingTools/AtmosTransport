@@ -1,0 +1,32 @@
+Precompiling packages...
+  13166.9 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 15 seconds. 193 already precompiled.
+[ Info: Poisson balance: corrected 4/4 levels, max pre-balance residual: 0.0164 kg
+Test Summary:            | Pass  Total  Time
+CubedSphereMesh geometry |   36     36  0.6s
+Test Summary: | Pass  Total  Time
+Halo exchange |  496    496  0.6s
+Test Summary:                      | Pass  Total   Time
+CS Strang splitting — UpwindScheme |   28     28  19.8s
+Test Summary:                                       | Pass  Total  Time
+CS Strang splitting — SlopesScheme{MonotoneLimiter} |    9      9  3.5s
+Test Summary:                   | Pass  Total  Time
+CS Strang splitting — PPMScheme |    3      3  1.0s
+Test Summary:                                                   | Pass  Total  Time
+CS advection conserves structured tracers across mirrored seams |    8      8  7.4s
+Test Summary:                                                  | Pass  Total   Time
+CS schemes conserve across seams at appreciable Courant number |   40     40  25.2s
+Test Summary:                                   | Pass  Total  Time
+Lin-Rood q-space seam conservation at valid CFL |   32     32  6.5s
+Test Summary:                                         | Pass  Total  Time
+CS monotone advection preserves signed tracer offsets |   12     12  0.6s
+Test Summary:                      | Pass  Total  Time
+CS source mass closure — PPMScheme |   12     12  2.8s
+Test Summary:      | Pass  Total  Time
+CS halo validation |    2      2  0.5s
+Test Summary:                              | Pass  Total  Time
+LLPoissonWorkspace zero-allocation balance |    1      1  0.9s
+Test Summary:          | Pass  Total  Time
+CS advection — Float32 |    1      1  1.4s
+Test Summary:                                     | Pass  Total  Time
+Shared-seam horizontal adjoint at appreciable CFL |   12     12  7.0s

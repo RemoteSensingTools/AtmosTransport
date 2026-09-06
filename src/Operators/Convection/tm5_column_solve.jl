@@ -22,11 +22,10 @@
 #      into the solved coefficients.
 #   5. Back-substitute each tracer's active vertical profile.
 #
-# The matrix is dense lower + upper triangular within the cloud-coupled
-# window (no simple banded structure to exploit). The production
-# implementation skips the identity rows above the cloud window but
-# intentionally keeps the dense active block for TM5 parity and adjoint
-# replay.
+# General downdraft columns use dense LU in the active cloud window.
+# Without a diagnosed downdraft, the matrix is upper-Hessenberg and needs
+# only quadratic factorization work. Both paths retain the same factor and
+# pivot representation for the forward and adjoint triangular solves.
 # ---------------------------------------------------------------------------
 
 """
@@ -288,18 +287,11 @@ In-place partial-pivot Gaussian elimination on `conv1[1:Nz, 1:Nz]`.
 Writes the L and U factors into the same matrix and the row
 permutation into `pivots[1:Nz]`.
 
-We factorize the full matrix rather than restricting to
-`[icltop, Nz]` because the matrix has non-identity entries beyond
-the strict cloud window: the combine + subsidence step
-(`_tm5_build_conv1!` lines covering `do k = Nz:-1:2`) propagates
-fluxes into rows outside `[icltop, Nz]` whenever the updraft or
-downdraft passes touch adjacent layers. Identity rows (above the
-actively-modified range) factorize trivially — no row swap is
-needed and the back-substitution is a no-op. The `O(Nz³)` worst
-case is still cheap at production `Nz ≤ 72` (~370k flops / column).
+Only the active lower-right block beginning at `icltop_eff` is factored.
+Partial pivoting is retained for forward and adjoint replay.
 
-Partial pivoting is retained for adjoint replay, even though TM5's
-diagonally-dominant conv1 rarely needs swaps in practice.
+Columns with no diagnosed downdraft use `_tm5_hessenberg_lu!` instead.
+This routine remains the general dense reference and handles all downdrafts.
 """
 function _tm5_lu!(conv1::AbstractMatrix{FT},
                   pivots::AbstractVector{<:Integer},
@@ -362,6 +354,51 @@ function _tm5_lu!(conv1::AbstractMatrix{FT},
 end
 
 """
+    _tm5_hessenberg_lu!(A, pivots, Nz; icltop_eff=1)
+
+Partial-pivot LU for an active upper-Hessenberg block. The caller guarantees
+that entries below the first subdiagonal are zero. At step k, only rows k and
+k+1 can supply a nonzero pivot, and only row k+1 needs elimination, reducing
+factorization from cubic to quadratic work. Full active-row swaps preserve
+previous L multipliers. General triangular solves handle every pivot sequence;
+identity pivots allow specialized bidiagonal L and transpose-L solves.
+"""
+function _tm5_hessenberg_lu!(A::AbstractMatrix{FT},
+                            pivots::AbstractVector{<:Integer}, Nz::Integer;
+                            icltop_eff::Integer=1) where FT
+    lo = max(Int(icltop_eff), 1)
+    @inbounds for k in lo:Nz
+        p = k < Nz && abs(A[k+1,k]) > abs(A[k,k]) ? k+1 : k
+        pivots[k] = p
+        if p != k
+            for j in lo:Nz
+                A[k,j], A[p,j] = A[p,j], A[k,j]
+            end
+        end
+        diag = A[k,k]
+        (iszero(diag) || k == Nz) && continue
+        A[k+1,k] *= one(FT) / diag
+        multiplier = A[k+1,k]
+        for j in (k+1):Nz
+            A[k+1,j] -= multiplier * A[k,j]
+        end
+    end
+    return nothing
+end
+
+# Cloud diagnosis supplies an exact structural condition: if there is no
+# downdraft pass, the builder creates no entries below the first subdiagonal.
+# There is no small-flux threshold. Keep this branch outside both LU loops.
+@inline function _tm5_factorize!(A, pivots, Nz, icllfs; icltop_eff=1)
+    if icllfs > Nz
+        _tm5_hessenberg_lu!(A, pivots, Nz; icltop_eff)
+    else
+        _tm5_lu!(A, pivots, Nz; icltop_eff)
+    end
+    return nothing
+end
+
+"""
     _tm5_solve!(rm_col, conv1, pivots, Nz, Nt) -> nothing
 
 Apply the factored `conv1` + stored pivots to `rm_col` (shape
@@ -408,6 +445,41 @@ function _tm5_solve!(rm_col::AbstractMatrix{FT},
             end
             rm_col[k, t] = s / conv1[k, k]
         end
+    end
+    return nothing
+end
+
+# With no row swaps, Hessenberg elimination leaves a lower-bidiagonal L.
+# Check the actual pivot sequence; the structural property alone is not enough.
+@inline function _tm5_identity_pivots(pivots, Nz, lo)
+    @inbounds for k in lo:Nz
+        pivots[k] == k || return false
+    end
+    return true
+end
+
+# One independent RHS, shared by serial CPU and collaborative GPU callers.
+# Preconditions: Hessenberg factors, identity pivots, finite tracer input.
+@inline function _tm5_solve_bidiagonal_tracer!(q, A, Nz, lo, tracer)
+    @inbounds begin
+        for k in (lo+1):Nz
+            q[k,tracer] -= A[k,k-1] * q[k-1,tracer]
+        end
+        for k in Nz:-1:lo
+            value = q[k,tracer]
+            for j in (k+1):Nz
+                value -= A[k,j] * q[j,tracer]
+            end
+            q[k,tracer] = value / A[k,k]
+        end
+    end
+    return nothing
+end
+
+function _tm5_solve_bidiagonal!(q, A, Nz, Nt; icltop_eff=1)
+    lo = max(Int(icltop_eff), 1)
+    for tracer in 1:Nt
+        _tm5_solve_bidiagonal_tracer!(q, A, Nz, lo, tracer)
     end
     return nothing
 end
@@ -475,7 +547,11 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
                       cell_area = cell_area,
                       f = f_buf,
                       amu = amu_buf, amd = amd_buf)
-    _tm5_lu!(conv1_buf, pivots_buf, Nz; icltop_eff = icltop_eff)
-    _tm5_solve!(rm_col, conv1_buf, pivots_buf, Nz, Nt; icltop_eff = icltop_eff)
+    _tm5_factorize!(conv1_buf, pivots_buf, Nz, icllfs; icltop_eff = icltop_eff)
+    if icllfs > Nz && _tm5_identity_pivots(pivots_buf, Nz, icltop_eff)
+        _tm5_solve_bidiagonal!(rm_col, conv1_buf, Nz, Nt; icltop_eff = icltop_eff)
+    else
+        _tm5_solve!(rm_col, conv1_buf, pivots_buf, Nz, Nt; icltop_eff = icltop_eff)
+    end
     return nothing
 end

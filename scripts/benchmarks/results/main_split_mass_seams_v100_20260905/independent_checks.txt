@@ -1,0 +1,6 @@
+Test Summary:                                         | Pass  Total   Time
+CS seam exchange agrees with independent scalar loops |  240    240  20.0s
+Test Summary:                                               | Pass  Total   Time
+CS seam adjoint differentiates the coupled production sweep |   16     16  10.5s
+Test Summary:                                                      | Pass  Total  Time
+CS seam cache follows its scheme and rejects incompatible geometry |    4      4  0.3s

@@ -2,8 +2,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 
 @testset "curated top-level public API" begin
     exported = Set(names(AtmosTransport))

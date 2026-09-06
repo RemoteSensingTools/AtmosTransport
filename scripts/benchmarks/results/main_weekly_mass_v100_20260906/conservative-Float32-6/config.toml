@@ -1,0 +1,63 @@
+[numerics]
+float_type = "Float32"
+
+[tracers.tracer02.init]
+kind = "pressure_layer"
+psurf_fraction = 0.33999999999999997
+total_molecules = 1.0e35
+
+[tracers.tracer04.init]
+kind = "pressure_layer"
+psurf_fraction = 0.6199999999999999
+total_molecules = 1.0e35
+
+[tracers.tracer06.init]
+kind = "pressure_layer"
+psurf_fraction = 0.8999999999999999
+total_molecules = 1.0e35
+
+[tracers.tracer03.init]
+kind = "pressure_layer"
+psurf_fraction = 0.48
+total_molecules = 1.0e35
+
+[tracers.tracer01.init]
+kind = "pressure_layer"
+psurf_fraction = 0.2
+total_molecules = 1.0e35
+
+[tracers.tracer05.init]
+kind = "pressure_layer"
+psurf_fraction = 0.76
+total_molecules = 1.0e35
+
+[architecture]
+backend = "cuda"
+
+[diffusion]
+kind = "tm5_dkg"
+
+[convection]
+kind = "tm5"
+use_collab_lu = true
+
+[run]
+air_mass_reset_mode = "preserve_tracer_mass"
+
+[advection]
+scheme = "ppm"
+
+[output]
+snapshot_hours = [0, 24, 48, 72, 96, 120, 144, 168]
+path = "/tmp/atmos-weekly-drift-conservative-Float32-6/weekly.nc"
+
+    [output.fields]
+    column_air_mass_per_area = false
+    air_mass = false
+    column_mean = true
+    air_mass_per_area = false
+    layers = "none"
+    column_mass = false
+
+[input]
+binary_paths = ["/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour/era5_n320_transport_20181201_float32.bin", "/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour/era5_n320_transport_20181202_float32.bin", "/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour/era5_n320_transport_20181203_float32.bin", "/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour/era5_n320_transport_20181204_float32.bin", "/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour/era5_n320_transport_20181205_float32.bin", "/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour/era5_n320_transport_20181206_float32.bin", "/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour/era5_n320_transport_20181207_float32.bin"]

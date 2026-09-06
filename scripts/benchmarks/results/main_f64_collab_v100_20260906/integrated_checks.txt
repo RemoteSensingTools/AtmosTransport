@@ -1,0 +1,29 @@
+Precompiling packages...
+  13616.5 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 15 seconds. 193 already precompiled.
+[ Info: JET hot-path modules: 152 reports (baseline 152)
+[ Info: Skipping real N320 archive smoke (set ATMOS_ERA5_N320_ROOT to enable).
+Test Summary:        | Pass  Total   Time
+Aqua: package health |   10     10  11.3s
+Test Summary:                    | Pass  Total   Time
+JET: hot-path inference snapshot |    1      1  44.9s
+Test Summary:                                            | Pass  Total  Time
+Public capability queries include preprocessing settings |   12     12  0.0s
+Test Summary:                          | Pass  Total  Time
+Plan 41 P0a — typed met-reader surface |   43     43  0.4s
+Test Summary:                        | Pass  Total  Time
+binary_capabilities + inspect_binary |   42     42  8.3s
+Test Summary:    | Pass  Total  Time
+Met source trait |   18     18  0.0s
+Test Summary:     | Pass  Total  Time
+Met source loader |   32     32  0.3s
+Test Summary: | Pass  Total  Time
+GEOS reader   |   48     48  9.1s
+Test Summary:                          | Pass  Broken  Total  Time
+ERA5 native-GRIB reader — breakpoint A |   52       1     53  0.9s
+Test Summary:                                  | Pass  Total  Time
+maintained documentation has valid local links |   75     75  0.5s
+Test Summary:                                  | Pass  Total  Time
+home page exposes VitePress front matter first |    1      1  0.0s
+Test Summary:           | Pass  Total  Time
+Module README freshness |   84     84  0.1s

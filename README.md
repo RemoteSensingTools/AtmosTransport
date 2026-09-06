@@ -1,9 +1,11 @@
 # AtmosTransport.jl
 
-> **Work in Progress.** This project is under rapid active development. We
-> regularly break things and fix them afterwards. APIs, file formats, and
-> physics implementations may change without notice. If you are interested
-> in contributing or following along, feel free to open an issue.
+> **Actively developed research software.** Supported CPU and NVIDIA CUDA
+> workflows have regression tests and documented numerical checks. Interfaces
+> and numerical results can change between releases; pin a version for
+> reproducible experiments and read the [release notes](CHANGELOG.md) before
+> upgrading. Broader Metal coverage and some inversion workflows still have
+> validation gaps, described in the status tables below.
 
 [![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/)
 
@@ -45,7 +47,8 @@ The reading order:
 4. **[Workflows](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/config/toml_schema)** — runtime configuration and meteorology preprocessing.
 5. **[Examples](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/tutorials/_generated/synthetic_latlon)** — executable, Literate-driven tutorials.
 6. **[Theory & Validation](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/theory/mass_conservation)** — conservation, numerics, evidence, and known gaps.
-7. **[API Reference](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/api/)** — the curated public API and per-module docstrings.
+7. **[Learn adjoints](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/getting_started/adjoints)** — a checked emission footprint, then a synthetic inversion with explained observations, controls and priors.
+8. **[API Reference](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/api/)** — the curated public API and per-module docstrings.
 
 ## Features
 
@@ -138,16 +141,16 @@ consistent approach (Holton synthesis): horizontal mass fluxes are derived
 from the spectral fields, and vertical fluxes are diagnosed from horizontal
 convergence to guarantee column mass conservation. Transport uses TM5-faithful
 mass-flux advection (Russell-Lerner slopes scheme with Strang splitting) and
-boundary-layer diffusion (implicit Thomas solver). The entire simulation loop
-— advection, diffusion, source injection, air-mass bookkeeping, and
-column-mean diagnostics — runs on a single NVIDIA L40S GPU via
+boundary-layer diffusion (implicit Thomas solver). Transport, diffusion, source
+injection and air-mass bookkeeping run on a single NVIDIA L40S GPU via
 [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl)
-in Float32 arithmetic.
+in Float32 arithmetic. The current output path uses Float64 accumulation for
+column and global mass diagnostics, independently of transport precision.
 
 ## Status tracker
 
 Single source of truth for what is production-ready, what is preview /
-experimental, and what is planned. Updated `2026-07-13`. Items move out
+experimental, and what is planned. Reviewed `2026-09-06`. Items move out
 of "experimental" only after a passing CPU+GPU regression suite and a
 documented validation run.
 
@@ -227,7 +230,7 @@ documented validation run.
 
 | Capability | Status | Notes |
 | --- | :---: | --- |
-| Forward tape + checkpoint (revolve) | ✅ | `:device`, `:pinned_host`, `:mmap` storage |
+| Forward tape + checkpoints | ✅ | Full, stride and bisection policies; split-sweep supports device/host/mmap tape, Lin–Rood requires device tape |
 | Surface-emission footprints (LinRood ORD=5) | ✅ | `cs_surface_emission_footprint` |
 | Lin-Rood ORD=7 adjoint | 🟡 | Panel-edge VJP and checkpoint parity tests ship; campaign validation remains open |
 | TM5 convection adjoint | 🟡 | Default full-column/unmerged footprint and 4D-Var gradients are finite-difference tested |
@@ -243,7 +246,7 @@ documented validation run.
 | --- | :---: | --- |
 | CPU (multi-threaded) | ✅ | Reference path; deterministic behavior is regression-tested |
 | NVIDIA CUDA | ✅ | End-to-end; production runs on L40S / A100 |
-| Apple Silicon Metal | 🟡 | Float32 only; weakdep extension |
+| Apple Silicon Metal | 🟡 | Float32 forward smoke passed on M5 Pro with 6/32 tracers; broader coverage and adjoints pending |
 | AMD ROCm | 📐 | Backend axis in place; not wired |
 | mmap binary reader | ✅ | Read-only mmap with typed host-window copies |
 | NetCDF snapshot writer | ✅ | Typed `SingleOutputFile` / `DailyOutputFiles` |
@@ -258,7 +261,7 @@ documented validation run.
 | Concepts (grids, state, operators, binary) | ✅ | |
 | Preprocessing reference | ✅ | Unified driver, ERA5 spectral, GEOS native, regridding, and conventions |
 | Theory (mass conservation, advection) | ✅ | |
-| Tutorials | 🟡 | Synthetic LL only; real-data tutorials planned |
+| Tutorials | 🟡 | Executed synthetic LL and CS footprint lessons; synthetic inversion walkthrough; real-data inversion tutorial remains open |
 | API reference (auto-generated) | ✅ | Strictly checked against every exported docstring |
 | Validation campaigns / inter-comparison | 🟡 | Status page ships; full multi-model campaign reports remain open |
 
@@ -288,10 +291,11 @@ documented validation run.
 
 ## Validation
 
-- **Verification (synthetic-fixture suite):** the core test tier runs on every
-  push and PR. It covers uniform-tracer invariance, mass budgets,
-  cross-window replay, conservative regridding, and CPU/GPU comparisons for
-  the scheme/backend combinations listed in the validation guide.
+- **Verification (synthetic-fixture suite):** GitHub CI runs the CPU core and
+  regridding tiers on pull requests and pushes to `main`, on Julia 1.10 and the
+  current Julia release. It covers uniform-tracer invariance, mass budgets and
+  cross-window replay. CUDA comparisons and the ten maintained GPU diagnostics
+  run separately on GPU hardware; they are not exercised by the hosted CPU jobs.
 - **Real-data preprocessing:** opt-in ERA5 and GEOS workflows exercise the
   write-time replay contract; these are not a substitute for a full
   cross-model validation campaign.

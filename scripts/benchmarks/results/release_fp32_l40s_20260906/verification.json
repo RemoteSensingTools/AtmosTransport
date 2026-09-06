@@ -1,0 +1,39 @@
+{
+  "all_outputs_validated": true,
+  "baseline_32_solver": "legacy; released collaborative path capped at 6 tracers",
+  "baseline_commit": "a0698dde6c97ea3e157ece6ca2d0eca7a0db3465",
+  "baseline_tag": "v0.3.0",
+  "current_commit": "2a19501c3e2292725007854aa97ace2e663d33a5",
+  "current_solver": "collaborative, full 66 levels, n_merge=1",
+  "dependency_versions_match": true,
+  "gpu_diagnostic_files": 10,
+  "gpu_passing_assertions": 6996964,
+  "l40_uuid": "GPU-c353397f-bf7b-b51e-d882-9071fb19321c",
+  "max_current_cross_gpu_column_absolute_difference": 0.0,
+  "max_current_final_mass_drift": 3.138139946426091e-07,
+  "measured_samples_per_case": 5,
+  "numerical_source_changed": false,
+  "precision": "Float32",
+  "shared_cache_error_followed_by_isolated_passing_rerun": true,
+  "speedups": [
+    {
+      "current_wurst_vs_tofu": 2.1296717471594833,
+      "software_on_l40": 1.6187136402252569,
+      "tracers": 6
+    },
+    {
+      "current_wurst_vs_tofu": 2.1070228288156225,
+      "software_on_l40": 3.429496950192503,
+      "tracers": 32
+    }
+  ],
+  "steps": 255,
+  "tracer_counts": [
+    6,
+    32
+  ],
+  "v100_uuid": "GPU-59ee7ef9-898f-524a-dde1-7a0426a41ecb",
+  "verified_at_utc": "2026-09-06T20:14:19.524194+00:00",
+  "warmups_per_case": 1,
+  "windows": 24
+}

@@ -1,0 +1,239 @@
+GRADIENT Float64 PPMScheme{AtmosTransport.Operators.Advection.NoLimiter}(AtmosTransport.Operators.Advection.NoLimiter()) predicted=0.3115497736108267 fd=0.3115497736079498 relative_error=9.234225691755592e-12
+COMPLETED Float64 PPMScheme{AtmosTransport.Operators.Advection.NoLimiter}(AtmosTransport.Operators.Advection.NoLimiter())
+GRADIENT Float64 PPMScheme{AtmosTransport.Operators.Advection.MonotoneLimiter}(AtmosTransport.Operators.Advection.MonotoneLimiter()) predicted=0.31185750297253534 fd=0.31185750297771375 relative_error=1.6605062261815075e-11
+COMPLETED Float64 PPMScheme{AtmosTransport.Operators.Advection.MonotoneLimiter}(AtmosTransport.Operators.Advection.MonotoneLimiter())
+Float64 LinRoodPPMScheme{5}(): Error During Test at /tmp/atmos-release-resume-20260906/gpu-transport.jl:11
+  Got exception outside of a @test
+  Scalar indexing is disallowed.
+  Invocation of getindex resulted in scalar indexing of a GPU array.
+  This is typically caused by calling an iterating implementation of a method.
+  Such implementations *do not* execute on the GPU, but very slowly on the CPU,
+  and therefore should be avoided.
+  
+  If you want to allow scalar iteration, use `allowscalar` or `@allowscalar`
+  to enable scalar iteration globally or for the operations in question.
+  Stacktrace:
+    [1] error(s::String)
+      @ Base ./error.jl:44
+    [2] errorscalar(op::String)
+      @ GPUArraysCore ~/.julia/packages/GPUArraysCore/aNaXo/src/GPUArraysCore.jl:151
+    [3] _assertscalar(op::String, behavior::GPUArraysCore.ScalarIndexing)
+      @ GPUArraysCore ~/.julia/packages/GPUArraysCore/aNaXo/src/GPUArraysCore.jl:124
+    [4] assertscalar(op::String)
+      @ GPUArraysCore ~/.julia/packages/GPUArraysCore/aNaXo/src/GPUArraysCore.jl:112
+    [5] getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:50 [inlined]
+    [6] scalar_getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:36 [inlined]
+    [7] _getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:19 [inlined]
+    [8] getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:17 [inlined]
+    [9] _record_linrood_horizontal_substep!(panels_rm::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, panels_m::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, panels_am::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, panels_bm::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, mesh::CubedSphereMesh{Float64, GnomonicPanelConvention, AtmosTransport.Grids.CubedSphereDefinition{AtmosTransport.Grids.EquiangularGnomonic, AtmosTransport.Grids.AngularMidpointCenter, GnomonicPanelConvention}}, flux_scale::Float64, ord::Val{5}; record_ops::Bool)
+      @ AtmosTransport.Adjoints /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:252
+   [10] _record_linrood_horizontal_substep!
+      @ /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:115 [inlined]
+   [11] _record_cs_linrood_tape(panels_rm0::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, panels_m0::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, panels_am_steps::Vector{NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}}, panels_bm_steps::Vector{NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}}, panels_cm_steps::Vector{NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}}, mesh::CubedSphereMesh{Float64, GnomonicPanelConvention, AtmosTransport.Grids.CubedSphereDefinition{AtmosTransport.Grids.EquiangularGnomonic, AtmosTransport.Grids.AngularMidpointCenter, GnomonicPanelConvention}}, scheme::LinRoodPPMScheme{5}; flux_scale::Float64, dt::Float64, cfl_limit::Float64, base_emission_rates::Nothing, diffusion_op::NoDiffusion, diffusion_workspace::Nothing, diffusion_meteo::Nothing, convection_op::NoConvection, convection_forcing::Nothing, convection_workspace::Nothing, tape_storage::AtmosTransport.Tape.DeviceCSTapeStorage, step_offset::Int64, record_ops::Bool)
+      @ AtmosTransport.Adjoints /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:441
+   [12] _record_cs_linrood_tape
+      @ /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:353 [inlined]
+   [13] #_record_cs_adjoint_tape#96
+      @ /tmp/atmos-release-resume-20260906/src/Footprint/TapeRecording.jl:549 [inlined]
+   [14] cs_surface_emission_footprint(panels_rm0::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, panels_m0::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, panels_am_steps::Vector{NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}}, panels_bm_steps::Vector{NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}}, panels_cm_steps::Vector{NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}}, mesh::CubedSphereMesh{Float64, GnomonicPanelConvention, AtmosTransport.Grids.CubedSphereDefinition{AtmosTransport.Grids.EquiangularGnomonic, AtmosTransport.Grids.AngularMidpointCenter, GnomonicPanelConvention}}, objective::AtmosTransport.Adjoints.CSColumnMeanObjective; scheme::LinRoodPPMScheme{5}, dt::Float64, epsilon::Nothing, flux_scale::Float64, cfl_limit::Float64, base_emission_rates::Nothing, diffusion_op::NoDiffusion, diffusion_workspace::Nothing, diffusion_meteo::Nothing, convection_op::NoConvection, convection_forcing::Nothing, convection_workspace::Nothing, tape_storage::Symbol, tape_path::Nothing, checkpoint::AtmosTransport.Tape.FullCheckpoint)
+      @ AtmosTransport.Adjoints /tmp/atmos-release-resume-20260906/src/Footprint/FootprintAPI.jl:228
+   [15] top-level scope
+      @ /tmp/atmos-release-resume-20260906/gpu-transport.jl:10
+   [16] macro expansion
+      @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+   [17] macro expansion
+      @ /tmp/atmos-release-resume-20260906/gpu-transport.jl:12 [inlined]
+   [18] macro expansion
+      @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+   [19] macro expansion
+      @ /tmp/atmos-release-resume-20260906/gpu-transport.jl:20 [inlined]
+   [20] include(mod::Module, _path::String)
+      @ Base ./Base.jl:306
+   [21] exec_options(opts::Base.JLOptions)
+      @ Base ./client.jl:317
+   [22] _start()
+      @ Base ./client.jl:550
+Float64 LinRoodPPMScheme{7}(): Error During Test at /tmp/atmos-release-resume-20260906/gpu-transport.jl:11
+  Got exception outside of a @test
+  Scalar indexing is disallowed.
+  Invocation of getindex resulted in scalar indexing of a GPU array.
+  This is typically caused by calling an iterating implementation of a method.
+  Such implementations *do not* execute on the GPU, but very slowly on the CPU,
+  and therefore should be avoided.
+  
+  If you want to allow scalar iteration, use `allowscalar` or `@allowscalar`
+  to enable scalar iteration globally or for the operations in question.
+  Stacktrace:
+    [1] error(s::String)
+      @ Base ./error.jl:44
+    [2] errorscalar(op::String)
+      @ GPUArraysCore ~/.julia/packages/GPUArraysCore/aNaXo/src/GPUArraysCore.jl:151
+    [3] _assertscalar(op::String, behavior::GPUArraysCore.ScalarIndexing)
+      @ GPUArraysCore ~/.julia/packages/GPUArraysCore/aNaXo/src/GPUArraysCore.jl:124
+    [4] assertscalar(op::String)
+      @ GPUArraysCore ~/.julia/packages/GPUArraysCore/aNaXo/src/GPUArraysCore.jl:112
+    [5] getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:50 [inlined]
+    [6] scalar_getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:36 [inlined]
+    [7] _getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:19 [inlined]
+    [8] getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:17 [inlined]
+    [9] _record_linrood_horizontal_substep!(panels_rm::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, panels_m::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, panels_am::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, panels_bm::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, mesh::CubedSphereMesh{Float64, GnomonicPanelConvention, AtmosTransport.Grids.CubedSphereDefinition{AtmosTransport.Grids.EquiangularGnomonic, AtmosTransport.Grids.AngularMidpointCenter, GnomonicPanelConvention}}, flux_scale::Float64, ord::Val{7}; record_ops::Bool)
+      @ AtmosTransport.Adjoints /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:252
+   [10] _record_linrood_horizontal_substep!
+      @ /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:115 [inlined]
+   [11] _record_cs_linrood_tape(panels_rm0::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, panels_m0::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, panels_am_steps::Vector{NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}}, panels_bm_steps::Vector{NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}}, panels_cm_steps::Vector{NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}}, mesh::CubedSphereMesh{Float64, GnomonicPanelConvention, AtmosTransport.Grids.CubedSphereDefinition{AtmosTransport.Grids.EquiangularGnomonic, AtmosTransport.Grids.AngularMidpointCenter, GnomonicPanelConvention}}, scheme::LinRoodPPMScheme{7}; flux_scale::Float64, dt::Float64, cfl_limit::Float64, base_emission_rates::Nothing, diffusion_op::NoDiffusion, diffusion_workspace::Nothing, diffusion_meteo::Nothing, convection_op::NoConvection, convection_forcing::Nothing, convection_workspace::Nothing, tape_storage::AtmosTransport.Tape.DeviceCSTapeStorage, step_offset::Int64, record_ops::Bool)
+      @ AtmosTransport.Adjoints /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:441
+   [12] _record_cs_linrood_tape
+      @ /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:353 [inlined]
+   [13] #_record_cs_adjoint_tape#96
+      @ /tmp/atmos-release-resume-20260906/src/Footprint/TapeRecording.jl:549 [inlined]
+   [14] cs_surface_emission_footprint(panels_rm0::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, panels_m0::NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}, panels_am_steps::Vector{NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}}, panels_bm_steps::Vector{NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}}, panels_cm_steps::Vector{NTuple{6, CuArray{Float64, 3, CUDA.DeviceMemory}}}, mesh::CubedSphereMesh{Float64, GnomonicPanelConvention, AtmosTransport.Grids.CubedSphereDefinition{AtmosTransport.Grids.EquiangularGnomonic, AtmosTransport.Grids.AngularMidpointCenter, GnomonicPanelConvention}}, objective::AtmosTransport.Adjoints.CSColumnMeanObjective; scheme::LinRoodPPMScheme{7}, dt::Float64, epsilon::Nothing, flux_scale::Float64, cfl_limit::Float64, base_emission_rates::Nothing, diffusion_op::NoDiffusion, diffusion_workspace::Nothing, diffusion_meteo::Nothing, convection_op::NoConvection, convection_forcing::Nothing, convection_workspace::Nothing, tape_storage::Symbol, tape_path::Nothing, checkpoint::AtmosTransport.Tape.FullCheckpoint)
+      @ AtmosTransport.Adjoints /tmp/atmos-release-resume-20260906/src/Footprint/FootprintAPI.jl:228
+   [15] top-level scope
+      @ /tmp/atmos-release-resume-20260906/gpu-transport.jl:10
+   [16] macro expansion
+      @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+   [17] macro expansion
+      @ /tmp/atmos-release-resume-20260906/gpu-transport.jl:12 [inlined]
+   [18] macro expansion
+      @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+   [19] macro expansion
+      @ /tmp/atmos-release-resume-20260906/gpu-transport.jl:20 [inlined]
+   [20] include(mod::Module, _path::String)
+      @ Base ./Base.jl:306
+   [21] exec_options(opts::Base.JLOptions)
+      @ Base ./client.jl:317
+   [22] _start()
+      @ Base ./client.jl:550
+COMPLETED Float32 PPMScheme{AtmosTransport.Operators.Advection.NoLimiter}(AtmosTransport.Operators.Advection.NoLimiter())
+COMPLETED Float32 PPMScheme{AtmosTransport.Operators.Advection.MonotoneLimiter}(AtmosTransport.Operators.Advection.MonotoneLimiter())
+ERROR: LoadError: Some tests did not pass: 290 passed, 0 failed, 4 errored, 0 broken.
+in expression starting at /tmp/atmos-release-resume-20260906/gpu-transport.jl:9
+Float32 LinRoodPPMScheme{5}(): Error During Test at /tmp/atmos-release-resume-20260906/gpu-transport.jl:11
+  Got exception outside of a @test
+  Scalar indexing is disallowed.
+  Invocation of getindex resulted in scalar indexing of a GPU array.
+  This is typically caused by calling an iterating implementation of a method.
+  Such implementations *do not* execute on the GPU, but very slowly on the CPU,
+  and therefore should be avoided.
+  
+  If you want to allow scalar iteration, use `allowscalar` or `@allowscalar`
+  to enable scalar iteration globally or for the operations in question.
+  Stacktrace:
+    [1] error(s::String)
+      @ Base ./error.jl:44
+    [2] errorscalar(op::String)
+      @ GPUArraysCore ~/.julia/packages/GPUArraysCore/aNaXo/src/GPUArraysCore.jl:151
+    [3] _assertscalar(op::String, behavior::GPUArraysCore.ScalarIndexing)
+      @ GPUArraysCore ~/.julia/packages/GPUArraysCore/aNaXo/src/GPUArraysCore.jl:124
+    [4] assertscalar(op::String)
+      @ GPUArraysCore ~/.julia/packages/GPUArraysCore/aNaXo/src/GPUArraysCore.jl:112
+    [5] getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:50 [inlined]
+    [6] scalar_getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:36 [inlined]
+    [7] _getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:19 [inlined]
+    [8] getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:17 [inlined]
+    [9] _record_linrood_horizontal_substep!(panels_rm::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, panels_m::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, panels_am::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, panels_bm::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, mesh::CubedSphereMesh{Float32, GnomonicPanelConvention, AtmosTransport.Grids.CubedSphereDefinition{AtmosTransport.Grids.EquiangularGnomonic, AtmosTransport.Grids.AngularMidpointCenter, GnomonicPanelConvention}}, flux_scale::Float32, ord::Val{5}; record_ops::Bool)
+      @ AtmosTransport.Adjoints /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:252
+   [10] _record_linrood_horizontal_substep!
+      @ /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:115 [inlined]
+   [11] _record_cs_linrood_tape(panels_rm0::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, panels_m0::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, panels_am_steps::Vector{NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}}, panels_bm_steps::Vector{NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}}, panels_cm_steps::Vector{NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}}, mesh::CubedSphereMesh{Float32, GnomonicPanelConvention, AtmosTransport.Grids.CubedSphereDefinition{AtmosTransport.Grids.EquiangularGnomonic, AtmosTransport.Grids.AngularMidpointCenter, GnomonicPanelConvention}}, scheme::LinRoodPPMScheme{5}; flux_scale::Float32, dt::Float32, cfl_limit::Float64, base_emission_rates::Nothing, diffusion_op::NoDiffusion, diffusion_workspace::Nothing, diffusion_meteo::Nothing, convection_op::NoConvection, convection_forcing::Nothing, convection_workspace::Nothing, tape_storage::AtmosTransport.Tape.DeviceCSTapeStorage, step_offset::Int64, record_ops::Bool)
+      @ AtmosTransport.Adjoints /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:441
+   [12] _record_cs_linrood_tape
+      @ /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:353 [inlined]
+   [13] #_record_cs_adjoint_tape#96
+      @ /tmp/atmos-release-resume-20260906/src/Footprint/TapeRecording.jl:549 [inlined]
+   [14] cs_surface_emission_footprint(panels_rm0::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, panels_m0::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, panels_am_steps::Vector{NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}}, panels_bm_steps::Vector{NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}}, panels_cm_steps::Vector{NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}}, mesh::CubedSphereMesh{Float32, GnomonicPanelConvention, AtmosTransport.Grids.CubedSphereDefinition{AtmosTransport.Grids.EquiangularGnomonic, AtmosTransport.Grids.AngularMidpointCenter, GnomonicPanelConvention}}, objective::AtmosTransport.Adjoints.CSColumnMeanObjective; scheme::LinRoodPPMScheme{5}, dt::Float32, epsilon::Nothing, flux_scale::Float32, cfl_limit::Float64, base_emission_rates::Nothing, diffusion_op::NoDiffusion, diffusion_workspace::Nothing, diffusion_meteo::Nothing, convection_op::NoConvection, convection_forcing::Nothing, convection_workspace::Nothing, tape_storage::Symbol, tape_path::Nothing, checkpoint::AtmosTransport.Tape.FullCheckpoint)
+      @ AtmosTransport.Adjoints /tmp/atmos-release-resume-20260906/src/Footprint/FootprintAPI.jl:228
+   [15] top-level scope
+      @ /tmp/atmos-release-resume-20260906/gpu-transport.jl:10
+   [16] macro expansion
+      @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+   [17] macro expansion
+      @ /tmp/atmos-release-resume-20260906/gpu-transport.jl:12 [inlined]
+   [18] macro expansion
+      @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+   [19] macro expansion
+      @ /tmp/atmos-release-resume-20260906/gpu-transport.jl:20 [inlined]
+   [20] include(mod::Module, _path::String)
+      @ Base ./Base.jl:306
+   [21] exec_options(opts::Base.JLOptions)
+      @ Base ./client.jl:317
+   [22] _start()
+      @ Base ./client.jl:550
+Float32 LinRoodPPMScheme{7}(): Error During Test at /tmp/atmos-release-resume-20260906/gpu-transport.jl:11
+  Got exception outside of a @test
+  Scalar indexing is disallowed.
+  Invocation of getindex resulted in scalar indexing of a GPU array.
+  This is typically caused by calling an iterating implementation of a method.
+  Such implementations *do not* execute on the GPU, but very slowly on the CPU,
+  and therefore should be avoided.
+  
+  If you want to allow scalar iteration, use `allowscalar` or `@allowscalar`
+  to enable scalar iteration globally or for the operations in question.
+  Stacktrace:
+    [1] error(s::String)
+      @ Base ./error.jl:44
+    [2] errorscalar(op::String)
+      @ GPUArraysCore ~/.julia/packages/GPUArraysCore/aNaXo/src/GPUArraysCore.jl:151
+    [3] _assertscalar(op::String, behavior::GPUArraysCore.ScalarIndexing)
+      @ GPUArraysCore ~/.julia/packages/GPUArraysCore/aNaXo/src/GPUArraysCore.jl:124
+    [4] assertscalar(op::String)
+      @ GPUArraysCore ~/.julia/packages/GPUArraysCore/aNaXo/src/GPUArraysCore.jl:112
+    [5] getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:50 [inlined]
+    [6] scalar_getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:36 [inlined]
+    [7] _getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:19 [inlined]
+    [8] getindex
+      @ ~/.julia/packages/GPUArrays/uBUgB/src/host/indexing.jl:17 [inlined]
+    [9] _record_linrood_horizontal_substep!(panels_rm::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, panels_m::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, panels_am::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, panels_bm::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, mesh::CubedSphereMesh{Float32, GnomonicPanelConvention, AtmosTransport.Grids.CubedSphereDefinition{AtmosTransport.Grids.EquiangularGnomonic, AtmosTransport.Grids.AngularMidpointCenter, GnomonicPanelConvention}}, flux_scale::Float32, ord::Val{7}; record_ops::Bool)
+      @ AtmosTransport.Adjoints /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:252
+   [10] _record_linrood_horizontal_substep!
+      @ /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:115 [inlined]
+   [11] _record_cs_linrood_tape(panels_rm0::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, panels_m0::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, panels_am_steps::Vector{NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}}, panels_bm_steps::Vector{NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}}, panels_cm_steps::Vector{NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}}, mesh::CubedSphereMesh{Float32, GnomonicPanelConvention, AtmosTransport.Grids.CubedSphereDefinition{AtmosTransport.Grids.EquiangularGnomonic, AtmosTransport.Grids.AngularMidpointCenter, GnomonicPanelConvention}}, scheme::LinRoodPPMScheme{7}; flux_scale::Float32, dt::Float32, cfl_limit::Float64, base_emission_rates::Nothing, diffusion_op::NoDiffusion, diffusion_workspace::Nothing, diffusion_meteo::Nothing, convection_op::NoConvection, convection_forcing::Nothing, convection_workspace::Nothing, tape_storage::AtmosTransport.Tape.DeviceCSTapeStorage, step_offset::Int64, record_ops::Bool)
+      @ AtmosTransport.Adjoints /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:441
+   [12] _record_cs_linrood_tape
+      @ /tmp/atmos-release-resume-20260906/src/Adjoints/LinRoodTape.jl:353 [inlined]
+   [13] #_record_cs_adjoint_tape#96
+      @ /tmp/atmos-release-resume-20260906/src/Footprint/TapeRecording.jl:549 [inlined]
+   [14] cs_surface_emission_footprint(panels_rm0::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, panels_m0::NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}, panels_am_steps::Vector{NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}}, panels_bm_steps::Vector{NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}}, panels_cm_steps::Vector{NTuple{6, CuArray{Float32, 3, CUDA.DeviceMemory}}}, mesh::CubedSphereMesh{Float32, GnomonicPanelConvention, AtmosTransport.Grids.CubedSphereDefinition{AtmosTransport.Grids.EquiangularGnomonic, AtmosTransport.Grids.AngularMidpointCenter, GnomonicPanelConvention}}, objective::AtmosTransport.Adjoints.CSColumnMeanObjective; scheme::LinRoodPPMScheme{7}, dt::Float32, epsilon::Nothing, flux_scale::Float32, cfl_limit::Float64, base_emission_rates::Nothing, diffusion_op::NoDiffusion, diffusion_workspace::Nothing, diffusion_meteo::Nothing, convection_op::NoConvection, convection_forcing::Nothing, convection_workspace::Nothing, tape_storage::Symbol, tape_path::Nothing, checkpoint::AtmosTransport.Tape.FullCheckpoint)
+      @ AtmosTransport.Adjoints /tmp/atmos-release-resume-20260906/src/Footprint/FootprintAPI.jl:228
+   [15] top-level scope
+      @ /tmp/atmos-release-resume-20260906/gpu-transport.jl:10
+   [16] macro expansion
+      @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+   [17] macro expansion
+      @ /tmp/atmos-release-resume-20260906/gpu-transport.jl:12 [inlined]
+   [18] macro expansion
+      @ ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]
+   [19] macro expansion
+      @ /tmp/atmos-release-resume-20260906/gpu-transport.jl:20 [inlined]
+   [20] include(mod::Module, _path::String)
+      @ Base ./Base.jl:306
+   [21] exec_options(opts::Base.JLOptions)
+      @ Base ./client.jl:317
+   [22] _start()
+      @ Base ./client.jl:550
+Test Summary:                                                                                                                 | Pass  Error  Total     Time
+V100 transporting footprint gradients                                                                                         |  290      4    294  2m19.4s
+  Float64 PPMScheme{AtmosTransport.Operators.Advection.NoLimiter}(AtmosTransport.Operators.Advection.NoLimiter())             |   73            73    59.0s
+  Float64 PPMScheme{AtmosTransport.Operators.Advection.MonotoneLimiter}(AtmosTransport.Operators.Advection.MonotoneLimiter()) |   73            73    12.2s
+  Float64 LinRoodPPMScheme{5}()                                                                                               |           1      1    12.6s
+  Float64 LinRoodPPMScheme{7}()                                                                                               |           1      1     5.1s
+  Float32 PPMScheme{AtmosTransport.Operators.Advection.NoLimiter}(AtmosTransport.Operators.Advection.NoLimiter())             |   72            72    24.8s
+  Float32 PPMScheme{AtmosTransport.Operators.Advection.MonotoneLimiter}(AtmosTransport.Operators.Advection.MonotoneLimiter()) |   72            72    10.5s
+  Float32 LinRoodPPMScheme{5}()                                                                                               |           1      1    10.0s
+  Float32 LinRoodPPMScheme{7}()                                                                                               |           1      1     5.1s
+RNG of the outermost testset: Random.Xoshiro(0x19188aabdb7eee8a, 0xcb312521d7ede9f5, 0x274d550cc67e33ff, 0x97871c97f942a0c8, 0x63e06b79149215dc)

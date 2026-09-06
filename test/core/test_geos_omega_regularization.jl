@@ -2,7 +2,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 using .AtmosTransport.Preprocessing: build_target_geometry
 
 const P = AtmosTransport.Preprocessing

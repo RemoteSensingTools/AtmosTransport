@@ -1,0 +1,39 @@
+Baseline: 5cb5a7f9; branch revamp/current-main includes origin/main a0698dde.
+All production-source hashes below describe the tested candidate.
+
+CPU, Julia 1.12.6, exit 0:
+CUDA_VISIBLE_DEVICES= JULIA_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1
+/home/cfranken/.juliaup/bin/julia --startup-file=no --project=test test/runtests.jl
+120 core files plus regridding (628 regridding assertions).
+Aqua: 10 pass. JET: 152 reports, baseline 152.
+Full log retained locally: /tmp/atmos-dkg-ratios-full-cpu.log.
+
+Focused diffusion on Julia 1.12.6 and 1.10.12: 12087 pass each.
+Julia 1.10 uses an isolated environment developed against this worktree;
+Adapt and KernelAbstractions exposed from already resolved dependencies.
+No repository environment files changed.
+
+V100, Julia 1.12.6, CUDA.jl 5.11.3/runtime 12.6: 6989800 pass.
+Only tofu GPU0, UUID GPU-59ee7ef9-898f-524a-dde1-7a0426a41ecb used.
+No local GPUs or tofu GPU1 used.
+
+NetCDF validation: 140 six-tracer and 369 32-tracer checks pass.
+Exploratory absolute Float32 1e-7 daily target: NOT MET (4 initial failures).
+See exploratory_target_failure.txt and README for the adopted comparison.
+Archived small-TOML recheck: 40 pass.
+
+Strict Documenter/VitePress build: exit 0.
+CUDA_VISIBLE_DEVICES= ATMOSTR_DOCS_BUILD_ONLY=true JULIA_NUM_THREADS=4
+OPENBLAS_NUM_THREADS=1 /home/cfranken/.juliaup/bin/julia --startup-file=no
+--project=/tmp/atmos-lr-seams-docs-env -e 'include("docs/make.jl")'
+No deployment; strict build log: /tmp/atmos-dkg-docs.log.
+Documentation links and README maps: 160 pass.
+Critical Codex self-review recorded in docs/memos/2026-09-05_main_dkg_mass.md.
+
+SHA256 production sources:
+4065615678c1b04155497fdaa92953f88a8107f18d38d2445d00ff05048a8845  src/Operators/Diffusion/conservative_dkg.jl
+ef02da534645fb3563b27168b19a73bef7a1ff0c1c4fb4a699a7267efcfbe066  src/Operators/Diffusion/operators.jl
+ac65718935507fed36b0edaac7e978f77e7fb5d21599c7ffe735bf16630902ba  src/Adjoints/DiffusionAdjoint.jl
+af50f44e3b44b4b3b74aa586f3e386a6e814d04f72cd81f868df4992e3c9b73d  src/Adjoints/Adjoints.jl
+552dcfee677e15e5c00c6926f85edaa5623c3d3da43ad316cce09b65d5ff665b  src/Operators/Diffusion/Diffusion.jl
+2de5c14af794bde7f4642937097f6fe52e9cf0726cfc6574db154074ca11034e  src/Operators/Diffusion/workspace.jl

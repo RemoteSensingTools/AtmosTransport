@@ -1,0 +1,27 @@
+Precompiling packages...
+    AtmosTransport Being precompiled by another process (pid: 3197176, pidfile: /home/cfranken/.julia/compiled/v1.12/AtmosTransport/EPpqJ_BLbwW.ji.pidfile)
+  24478.2 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 26 seconds. 193 already precompiled.
+┌ Warning: Assignment to `r` in soft scope is ambiguous because a global variable by the same name exists: `r` will be treated as a new local. Disambiguate by using `local r` to suppress this warning or `global r` to assign to the existing global variable.
+└ @ /tmp/atmos-split-seam-reference.jl:16
+┌ Warning: Assignment to `total` in soft scope is ambiguous because a global variable by the same name exists: `total` will be treated as a new local. Disambiguate by using `local total` to suppress this warning or `global total` to assign to the existing global variable.
+└ @ /tmp/atmos-split-seam-reference.jl:16
+PROBE: F64 Nc8 Nz2, m about 1e9 kg, seam Courant about 0.1 per half step
+GROUPED 1 drift=1.9149674210837437e-16 reference_error=6.151523847499184e-5 min_air=6.810162619298368e8
+GROUPED 2 drift=-1.9149674210837437e-16 reference_error=3.107526619242288e-5 min_air=6.810162619298368e8
+GROUPED 4 drift=-1.9149674210837437e-16 reference_error=1.566689297421734e-5 min_air=6.810162619298372e8
+GROUPED 8 drift=-1.9149674210837437e-16 reference_error=7.797521036845657e-6 min_air=6.810162619298382e8
+GROUPED 16 drift=-5.744902263251231e-16 reference_error=3.850621769022694e-6 min_air=6.810162619298363e8
+GROUPED 32 drift=0.0 reference_error=1.865957471730982e-6 min_air=6.810162619298401e8
+GROUPED 64 drift=-5.744902263251231e-16 reference_error=8.714221405532703e-7 min_air=6.810162619298401e8
+GROUPED 128 drift=-1.9149674210837437e-16 reference_error=3.736190914138424e-7 min_air=6.810162619298401e8
+UNIFORM drift=1.8984886142683434e-16 vmr_error=2.168404344971009e-19
+LIMIT_DIFF 9.43026547094488e-8
+ORIGINAL 1 drift=-3.949845079307702e-6 reference_error=7.271689290154754e-5 grouped_error_same_reference=6.152997057241744e-5
+ORIGINAL 2 drift=-1.9760035530295605e-6 reference_error=3.5995112611348405e-5 grouped_error_same_reference=3.1091534602299086e-5
+ORIGINAL 4 drift=-9.983553491012448e-7 reference_error=1.804509211580964e-5 grouped_error_same_reference=1.5683282604202574e-5
+ORIGINAL 8 drift=-4.991712070354028e-7 reference_error=8.96929585781328e-6 grouped_error_same_reference=7.814175496355509e-6
+ORIGINAL 16 drift=-2.4842756900333586e-7 reference_error=4.419554718217267e-6 grouped_error_same_reference=3.8678287294753184e-6
+ORIGINAL 32 drift=-1.2435458602399285e-7 reference_error=2.1400461832003675e-6 grouped_error_same_reference=1.8843842749599397e-6
+ORIGINAL 64 drift=-6.222436674114151e-8 reference_error=9.992599332751086e-7 grouped_error_same_reference=8.924054106154374e-7
+ORIGINAL 128 drift=-3.110342440533509e-8 reference_error=4.28353990812612e-7 grouped_error_same_reference=4.0067143277507025e-7

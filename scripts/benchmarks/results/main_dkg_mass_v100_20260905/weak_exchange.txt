@@ -1,0 +1,5 @@
+Precompiling packages...
+  13469.0 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 15 seconds. 192 already precompiled.
+Float32 weak transfer=0.04 expected=0.03999999920000001
+Float64 weak transfer=0.03999999920000002 expected=0.03999999920000001

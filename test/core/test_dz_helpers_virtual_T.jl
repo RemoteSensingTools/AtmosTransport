@@ -24,7 +24,7 @@ the kernel-level helper tests.
 """
 
 using Test
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 using .AtmosTransport.Operators.Diffusion: fill_dz_hydrostatic_virtualT!,
                                             fill_dz_hydrostatic_constT!
 

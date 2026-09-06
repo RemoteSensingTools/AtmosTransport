@@ -15,6 +15,18 @@ include other tiers.
 
 ## Usage
 
+For direct `--project=test` invocations, prepare the test environment from the
+repository root first (also required on Julia 1.10, which does not use the
+`[sources]` entry):
+
+```bash
+julia --project=test -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
+```
+
+The test environment intentionally has no version bound for AtmosTransport
+itself: `Pkg.test()` supplies the checkout, and direct invocations develop it
+with the command above. Release version bumps need no matching test bound.
+
 ```bash
 julia --project=. -e 'using Pkg; Pkg.test()'         # CI-equivalent default
 julia --project=test test/runtests.jl                # core + regridding
@@ -31,11 +43,10 @@ julia --project=test test/runtests.jl --tiers=core,orphan # only listed tiers
    doesn't need external data and is part of a production code path.
 2. Drop the file into the matching folder. The orchestrator picks up
    anything matching `test_*.jl` automatically — no manual roster edit.
-3. Test files are included into anonymous modules, so they can `using
-   .AtmosTransport` freely without polluting each other.
-4. Use `joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl")` (note
-   the **two** `..`) when including `AtmosTransport.jl` directly — the
-   extra hop accounts for the tier subfolder.
+3. Import the cached package with `using AtmosTransport` or
+   `import AtmosTransport`. Each test file runs in its own module to isolate
+   helpers and constants without creating new copies of package types.
+4. Include shared test fixtures with paths relative to `@__DIR__`.
 
 ## Promotion / retirement workflow
 
@@ -46,3 +57,31 @@ julia --project=test test/runtests.jl --tiers=core,orphan # only listed tiers
 - A `core/` file becomes archivable when the code path it tests is
   deleted or has been fully subsumed by a newer test. Move it into
   `archived/` with a note in `archived/legacy_README.md`.
+
+Core tests load the installed development package with `using AtmosTransport`
+or `import AtmosTransport`. The runner isolates each file's test helpers in its
+own module while reusing Julia's package cache. Avoid including the package
+source separately in each core test: that repeats compilation and gives each
+copy distinct type identities.
+
+The snapshot contract suite was promoted from `orphan/` to
+`core/test_output_snapshots.jl` during the current-main output port. It retains
+main's signed-total and ATMSNAP-header checks alongside the new selected-capture,
+streaming, and asynchronous write-lifetime suites. The opt-in
+`diagnostic/test_snapshot_totals_gpu.jl` checks signed cancellation on the
+explicitly selected CUDA device (including V100 with CUDA runtime 12.6).
+
+Shared synthetic runtime inputs live in `test/fixtures/`. The window-prefetch
+and cubed-sphere file-handoff fixtures are used by both CPU core tests and
+explicitly enabled GPU diagnostics. They need no external meteorology files.
+
+The transporting adjoint GPU diagnostic checks unlimited/monotone PPM and
+Lin-Rood ORD=5/7 footprints in both precisions, including CPU/GPU agreement,
+Float64 directional finite differences, and full/stride/revolve replay. It
+also checks single-panel recording and reverse propagation with nonzero halo
+seeds. Run it on an explicitly selected device, with scalar indexing disabled:
+
+```bash
+ATMOSTR_RUN_TRANSPORT_ADJOINT_GPU_TESTS=1 ATMOSTR_ADJOINT_GPU_NAME=V100 \
+CUDA_VISIBLE_DEVICES=<authorized UUID> julia --project=. test/diagnostic/test_cs_transport_adjoint_gpu.jl
+```

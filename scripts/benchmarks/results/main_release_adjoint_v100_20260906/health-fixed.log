@@ -1,0 +1,5 @@
+[ Info: JET hot-path modules: 154 reports (baseline 154)
+Test Summary:        | Pass  Total   Time
+Aqua: package health |   10     10  11.4s
+Test Summary:                    | Pass  Total   Time
+JET: hot-path inference snapshot |    1      1  44.4s

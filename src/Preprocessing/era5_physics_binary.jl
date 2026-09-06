@@ -425,7 +425,7 @@ end
 
 function _git_sha_or_empty()
     try
-        read(`git -C $(@__DIR__) rev-parse --short HEAD`, String) |> strip
+        read(pipeline(`git -C $(@__DIR__) rev-parse --short HEAD`; stderr=devnull), String) |> strip
     catch
         ""
     end

@@ -1,0 +1,189 @@
+CUDA toolchain: 
+- runtime 12.6, artifact installation
+- driver 610.57.4 for 13.3
+- compiler 12.9, artifact installation
+
+CUDA libraries: 
+- CUBLAS: 12.6.4
+- CURAND: 10.3.7
+- CUFFT: 11.3.0
+- CUSOLVER: 11.7.1
+- CUSPARSE: 12.5.4
+- CUPTI: 2024.3.2 (API 12.6.0)
+- NVML: 13.0.0+610.57.4
+
+Julia packages: 
+- CUDA: 5.11.3
+- GPUArrays: 11.5.14
+- GPUCompiler: 1.17.1
+- KernelAbstractions: 0.9.42
+- CUDA_Driver_jll: 13.3.4+0
+- CUDA_Compiler_jll: 0.4.4+1
+- CUDA_Runtime_jll: 0.21.0+1
+
+Toolchain:
+- Julia: 1.12.6
+- LLVM: 18.1.7
+
+Preferences:
+- CUDA_Runtime_jll.version: 12.6
+
+1 device:
+  0: NVIDIA L40S (sm_89, 43.996 GiB / 44.988 GiB available)
+RUNNING test_cs_transport_adjoint_gpu.jl
+Test Summary:                                       | Pass  Total     Time
+CS split-sweep surface-emission footprint prototype |   91     91  1m21.7s
+Test Summary:                         | Pass  Total     Time
+CUDA transporting footprint gradients |  580    580  1m08.3s
+Test Summary:                                    | Pass  Total  Time
+CUDA single-panel Lin-Rood recording and reverse |   32     32  9.9s
+PASSED test_cs_transport_adjoint_gpu.jl
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+┌ Info: GPU directional gradient
+│   scheme = PPMScheme{AtmosTransport.Operators.Advection.NoLimiter}(AtmosTransport.Operators.Advection.NoLimiter())
+│   predicted = 0.3115497736108267
+│   fd = 0.3115497736079498
+└   relative_error = 9.234225691755592e-12
+┌ Info: GPU directional gradient
+│   scheme = PPMScheme{AtmosTransport.Operators.Advection.MonotoneLimiter}(AtmosTransport.Operators.Advection.MonotoneLimiter())
+│   predicted = 0.31185750297253534
+│   fd = 0.31185750297771375
+└   relative_error = 1.6605062261815075e-11
+┌ Info: GPU directional gradient
+│   scheme = LinRoodPPMScheme{5}()
+│   predicted = 0.31179908429374686
+│   fd = 0.31179910030265656
+└   relative_error = 5.134366867109263e-8
+┌ Info: GPU directional gradient
+│   scheme = LinRoodPPMScheme{7}()
+│   predicted = 0.31184663751010905
+│   fd = 0.31184665351749463
+└   relative_error = 5.133095193794714e-8
+RUNNING test_window_prefetch_gpu.jl
+Test Summary:                                                | Pass  Total  Time
+GPU startup reads once and owns independent prefetch storage |  140    140  5.7s
+PASSED test_window_prefetch_gpu.jl
+RUNNING test_window_prefetch_failure_gpu.jl
+Test Summary:                                            | Pass  Total  Time
+Failed prefetch is consumed once before resource cleanup |    8      8  0.9s
+PASSED test_window_prefetch_failure_gpu.jl
+RUNNING test_cs_multifile_gpu.jl
+Test Summary:                              | Pass  Total     Time
+CS multifile GPU physics and CPU reference |   75     75  1m39.3s
+PASSED test_cs_multifile_gpu.jl
+┌ Info: CS file-boundary comparison
+│   adv = "upwind"
+│   conv = "cmfmc"
+│   panel = 1
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "upwind"
+│   conv = "cmfmc"
+│   panel = 2
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "upwind"
+│   conv = "cmfmc"
+│   panel = 3
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "upwind"
+│   conv = "cmfmc"
+│   panel = 4
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "upwind"
+│   conv = "cmfmc"
+│   panel = 5
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "upwind"
+│   conv = "cmfmc"
+│   panel = 6
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "ppm"
+│   conv = "cmfmc_matrix"
+│   panel = 1
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "ppm"
+│   conv = "cmfmc_matrix"
+│   panel = 2
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "ppm"
+│   conv = "cmfmc_matrix"
+│   panel = 3
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "ppm"
+│   conv = "cmfmc_matrix"
+│   panel = 4
+│   max_abs = 8.0f0
+└   max_rel = 5.7853303f-8
+┌ Info: CS file-boundary comparison
+│   adv = "ppm"
+│   conv = "cmfmc_matrix"
+│   panel = 5
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "ppm"
+│   conv = "cmfmc_matrix"
+│   panel = 6
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "linrood"
+│   conv = "tm5"
+│   panel = 1
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "linrood"
+│   conv = "tm5"
+│   panel = 2
+│   max_abs = 16.0f0
+└   max_rel = 1.071713f-7
+┌ Info: CS file-boundary comparison
+│   adv = "linrood"
+│   conv = "tm5"
+│   panel = 3
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "linrood"
+│   conv = "tm5"
+│   panel = 4
+│   max_abs = 16.0f0
+└   max_rel = 1.071713f-7
+┌ Info: CS file-boundary comparison
+│   adv = "linrood"
+│   conv = "tm5"
+│   panel = 5
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+┌ Info: CS file-boundary comparison
+│   adv = "linrood"
+│   conv = "tm5"
+│   panel = 6
+│   max_abs = 0.0f0
+└   max_rel = 0.0f0
+L40_GPU_REGRESSIONS_PASSED

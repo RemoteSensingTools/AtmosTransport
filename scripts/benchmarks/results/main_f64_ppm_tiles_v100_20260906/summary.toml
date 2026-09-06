@@ -1,0 +1,36 @@
+[[measurements]]
+tracers = 6
+tile = "256"
+median_seconds = 21.5896822255
+median_host_bytes = 1.0781430184e10
+samples_seconds = [21.561930381, 21.61743407]
+[[measurements]]
+tracers = 6
+tile = "32"
+median_seconds = 17.4550746445
+median_host_bytes = 1.0780740832e10
+samples_seconds = [17.907412745, 17.002736544]
+[[measurements]]
+tracers = 6
+tile = "32x2"
+median_seconds = 17.2365149065
+median_host_bytes = 1.0780851272e10
+samples_seconds = [17.309962387, 17.163067426]
+[[measurements]]
+tracers = 32
+tile = "256"
+median_seconds = 63.061268346
+median_host_bytes = 1.1719912456e10
+samples_seconds = [63.506863775, 62.615672917]
+[[measurements]]
+tracers = 32
+tile = "32"
+median_seconds = 47.4821009775
+median_host_bytes = 1.171842306e10
+samples_seconds = [47.004858553, 47.959343402]
+[[measurements]]
+tracers = 32
+tile = "32x2"
+median_seconds = 48.473893651
+median_host_bytes = 1.1719218888e10
+samples_seconds = [48.58848746, 48.359299842]

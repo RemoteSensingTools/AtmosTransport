@@ -1,0 +1,5 @@
+Starting package health probe
+Package loaded
+Aqua complete
+Test Summary:        | Pass  Total   Time
+Aqua: package health |   10     10  11.0s

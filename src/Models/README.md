@@ -61,8 +61,8 @@ read.
 - [`BinaryPathExpander.jl`](BinaryPathExpander.jl) —
   `expand_binary_paths(input_cfg)` resolves either an explicit
   `binary_paths = [...]` list or a `folder + start_date + end_date
-  (+ file_pattern)` shape to a sorted `Vector{String}`; continuity
-  check on the closed date range
+  (+ file_pattern)` shape. Explicit lists retain their order; folder selection
+  sorts by date and checks continuity on the closed date range.
 - [`DrivenRunner.jl`](DrivenRunner.jl) — library-level
   `run_driven_simulation(cfg)` entry point for all driven runs. Owns the
   runtime flow behind `scripts/run_transport.jl`: first-driver
@@ -71,13 +71,59 @@ read.
   `pack_initial_tracer_mass`, surface-source wiring, GPU-residency
   assertion (`feedback_verify_gpu_runs_on_gpu`), per-window loop,
   and snapshot NetCDF output
+- [`runner/`](runner/) — the runner's progress timer, configuration validation,
+  runtime summary, owned input/output resources, and model setup. These files are included
+  inside `DrivenRunner`; the top-level file retains the transport loops.
+  Single-file NetCDF appends selected snapshots without retaining past frames;
+  daily output owns and drains at most one background write. Input cleanup
+  drains window prefetch before closing the driver and releasing mapped pages.
+  Numerical state, flux arrays, and workspaces persist across input files;
+  `DrivenSimulation` refreshes forcing, diffusion geometry, and caches.
+  CS GPU setup transfers state first so workspace constructors allocate scratch
+  directly on the device, avoiding temporary CPU workspaces. CS initialization
+  converts one tracer at a time directly into its final packed state slot,
+  using the shared VMR-to-storage conversion and preserving signed values,
+  zero halos, and the existing tracer order. Analytic initializers reuse one
+  private tuple of interior VMR panels across tracers. Native/file builders
+  may replace that tuple; the public allocating builder always returns
+  independent output arrays.
+- [`initial_conditions/`](initial_conditions/) — cubed-sphere initialization,
+  surface-inventory loading and storage-unit conversion, and conservative
+  surface-flux remapping, included inside `InitialConditionIO`.
 - [`InputStaging.jl`](InputStaging.jl) — opt-in rolling NVMe input staging
   (`InputStager`, `staged_path_for!`, `cleanup_staging!`) for the per-day
   binary loop: copies upcoming days NAS→local NVMe ahead of the GPU loop and
   evicts processed days, bounding local-disk use for multi-month/year runs.
+  A directory has one active owner, and retained-copy reuse checks source
+  identity metadata. Unavailable staging falls back to original source paths.
   Default off ⇒ bit-identical to a non-staged run
 
 ## Common Tasks
+
+To follow a TOML physics option from input to execution:
+
+| Stage | Read here | Responsibility |
+|---|---|---|
+| Parse the option | [`RuntimePhysicsSpecs.jl`](RuntimePhysicsSpecs.jl) | Convert section values into a typed specification; validate values and combinations. |
+| Build an operator | `materialize` methods in the same file | Apply topology gates and construct the scheme; diffusion also needs driver context and tracer precision. |
+| Check the forcing | [`RuntimePhysicsRecipe.jl`](RuntimePhysicsRecipe.jl) | Assemble operators and check required binary capabilities. |
+| Allocate state and workspaces | [`runner/model_setup.jl`](runner/model_setup.jl) | Initialize tracer storage and build workspaces on its backend. |
+| Advance the model | [`TransportModel.jl`](TransportModel.jl), [`DrivenSimulation.jl`](DrivenSimulation.jl) | Execute operator blocks and refresh forcing across meteorological windows. |
+
+The public runner calls `validate_config` before the startup handoff into its
+runtime implementation. Its checks live in
+[`runner/configuration.jl`](runner/configuration.jl): table shapes first,
+then path existence, precision/backend compatibility, and integer window
+bounds. Tracer initialization and surface-flux values must be subtables.
+The validator opens no binaries or model state; GPU auto-detection can still
+probe optional runtimes. The CLI checks architecture shape before its separate
+backend preload.
+
+Matrix-convection solver eligibility is checked when the state backend,
+precision, and vertical depth are known. Parsing `use_collab_lu=true` is a
+request, not proof that a particular GPU kernel will run; see
+[`../Operators/Convection/TM5Convection.jl`](../Operators/Convection/TM5Convection.jl)
+for the support gates and fallback diagnostics.
 
 - Changing operator block order:
   start in [`TransportModel.jl`](TransportModel.jl) and the runtime

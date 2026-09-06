@@ -1,0 +1,29 @@
+RUNNING baseline 6 0
+PASSED baseline 6 0
+RUNNING current 6 0
+PASSED current 6 0
+RUNNING current 6 1
+PASSED current 6 1
+RUNNING baseline 6 1
+PASSED baseline 6 1
+RUNNING baseline 6 2
+PASSED baseline 6 2
+RUNNING current 6 2
+PASSED current 6 2
+RUNNING current 6 3
+PASSED current 6 3
+RUNNING baseline 6 3
+PASSED baseline 6 3
+RUNNING baseline 6 4
+PASSED baseline 6 4
+RUNNING current 6 4
+PASSED current 6 4
+RUNNING current 6 5
+PASSED current 6 5
+RUNNING baseline 6 5
+PASSED baseline 6 5
+RUNNING baseline 32 0
+Traceback (most recent call last):
+  File "/tmp/atmos-l40-release-20260906/run-profile.py", line 28, in <module>
+    if proc.poll() is not None: raise RuntimeError(label+' exited '+str(proc.returncode))
+RuntimeError: baseline exited 1

@@ -20,7 +20,7 @@ using NCDatasets
 using Random
 using Statistics: mean
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 using .AtmosTransport.Preprocessing: GEOSITSettings, open_day, close_day!,
                                       open_geos_day, close_geos_day!,
                                       read_window!, allocate_raw_window,

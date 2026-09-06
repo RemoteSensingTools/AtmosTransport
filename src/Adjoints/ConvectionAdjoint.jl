@@ -84,6 +84,42 @@ end
     return min(Int(icllfs), max(Int(icltop), 2) - 1)
 end
 
+# Unpivoted Hessenberg LU has bidiagonal L. U and the active-row convention
+# remain unchanged; these helpers use the same ordering as the general solves.
+function _tm5_solve_vector_bidiagonal!(q, A, Nz; icltop_eff=1)
+    lo = max(Int(icltop_eff), 1)
+    @inbounds begin
+        for k in (lo+1):Nz
+            q[k] -= A[k,k-1] * q[k-1]
+        end
+        for k in Nz:-1:lo
+            value = q[k]
+            for j in (k+1):Nz
+                value -= A[k,j] * q[j]
+            end
+            q[k] = value / A[k,k]
+        end
+    end
+    return nothing
+end
+
+function _tm5_solve_vector_transpose_bidiagonal!(q, A, Nz; icltop_eff=1)
+    lo = max(Int(icltop_eff), 1)
+    @inbounds begin
+        for k in lo:Nz
+            value = q[k]
+            for j in lo:(k-1)
+                value -= A[j,k] * q[j]
+            end
+            q[k] = value / A[k,k]
+        end
+        for k in (Nz-1):-1:lo
+            q[k] -= A[k+1,k] * q[k+1]
+        end
+    end
+    return nothing
+end
+
 function _tm5_solve_column_vector!(rm_col, m_col,
                                    entu_col, detu_col, entd_col, detd_col,
                                    conv1_buf, pivots_buf, cloud_dims, dt;
@@ -106,9 +142,12 @@ function _tm5_solve_column_vector!(rm_col, m_col,
                       icltop, icllfs, FT(dt), Nz;
                       cell_area = FT(cell_area),
                       f = f_buf, amu = amu_buf, amd = amd_buf)
-    _tm5_lu!(conv1_buf, pivots_buf, Nz; icltop_eff = icltop_eff)
-    _tm5_solve_vector!(rm_col, conv1_buf, pivots_buf, Nz;
-                       icltop_eff = icltop_eff)
+    _tm5_factorize!(conv1_buf, pivots_buf, Nz, icllfs; icltop_eff = icltop_eff)
+    if icllfs > Nz && _tm5_identity_pivots(pivots_buf, Nz, icltop_eff)
+        _tm5_solve_vector_bidiagonal!(rm_col, conv1_buf, Nz; icltop_eff)
+    else
+        _tm5_solve_vector!(rm_col, conv1_buf, pivots_buf, Nz; icltop_eff)
+    end
     return nothing
 end
 
@@ -134,9 +173,12 @@ function _tm5_solve_column_vector_adjoint!(lambda_col, m_col,
                       icltop, icllfs, FT(dt), Nz;
                       cell_area = FT(cell_area),
                       f = f_buf, amu = amu_buf, amd = amd_buf)
-    _tm5_lu!(conv1_buf, pivots_buf, Nz; icltop_eff = icltop_eff)
-    _tm5_solve_vector_transpose!(lambda_col, conv1_buf, pivots_buf, Nz;
-                                 icltop_eff = icltop_eff)
+    _tm5_factorize!(conv1_buf, pivots_buf, Nz, icllfs; icltop_eff = icltop_eff)
+    if icllfs > Nz && _tm5_identity_pivots(pivots_buf, Nz, icltop_eff)
+        _tm5_solve_vector_transpose_bidiagonal!(lambda_col, conv1_buf, Nz; icltop_eff)
+    else
+        _tm5_solve_vector_transpose!(lambda_col, conv1_buf, pivots_buf, Nz; icltop_eff)
+    end
     return nothing
 end
 
@@ -682,6 +724,7 @@ function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
     Nc = mesh.Nc
     Hp = mesh.Hp
     N_total = Nc * Nc
+    _ensure_tm5_scratch!(workspace)
     B = size(workspace.conv1, 3)
     backend = get_backend(panels_rm[1])
     kernel! = _tm5_cs_panel_column_single_kernel!(backend)
@@ -771,6 +814,7 @@ function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
     Nc = mesh.Nc
     Hp = mesh.Hp
     N_total = Nc * Nc
+    _ensure_tm5_scratch!(workspace)
     B = size(workspace.conv1, 3)
     backend = get_backend(lambda_panels[1])
     kernel! = _tm5_cs_panel_column_adjoint_kernel!(backend)

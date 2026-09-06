@@ -77,7 +77,7 @@
 
 using TOML
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 const AT = AtmosTransport
 const Adv = AtmosTransport.Operators.Advection
 

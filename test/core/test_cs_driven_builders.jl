@@ -5,8 +5,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Models:
     build_runtime_advection, build_runtime_diffusion, build_runtime_convection,
     build_runtime_physics_recipe, validate_runtime_physics_recipe,

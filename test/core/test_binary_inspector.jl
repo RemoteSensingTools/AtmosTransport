@@ -3,8 +3,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 
 const _INSPECTOR_AIR_MASS = 1e16
 

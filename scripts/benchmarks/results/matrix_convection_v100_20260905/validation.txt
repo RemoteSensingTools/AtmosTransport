@@ -1,0 +1,20 @@
+Test Summary:                       | Pass  Total  Time
+Deferred scratch adaptation on V100 |    7      7  0.8s
+Test Summary:                         | Pass  Total   Time
+Collaborative tracer batching on V100 |  480    480  35.7s
+
+memcheck (CUDA 12.6 Compute Sanitizer)
+========= COMPUTE-SANITIZER
+========= ERROR SUMMARY: 0 errors
+Test Summary:                                  | Broken  Total  Time
+Collaborative tracer batching on CUDA (opt-in) |      1      1  0.0s
+Test Summary:                       | Pass  Total   Time
+V100 deep-column sanitizer fixtures |   40     40  28.7s
+
+racecheck (CUDA 12.6 Compute Sanitizer)
+========= COMPUTE-SANITIZER
+========= RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)
+Test Summary:                                  | Broken  Total  Time
+Collaborative tracer batching on CUDA (opt-in) |      1      1  0.0s
+Test Summary:                       | Pass  Total     Time
+V100 deep-column sanitizer fixtures |   40     40  2m04.7s

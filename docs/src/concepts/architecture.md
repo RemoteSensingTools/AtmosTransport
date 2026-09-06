@@ -110,6 +110,17 @@ At a high level, each meteorological window follows this sequence:
 5. The next forcing window is loaded and checked against the same binary and
    model contracts.
 
+During cubed-sphere startup, each tracer's initial dry VMR is converted directly
+into its slot in the packed model state. This avoids retaining a second complete
+set of tracer-mass arrays. Signed values and zero initial halos are preserved.
+The current cubed-sphere runner requires dry-basis transport binaries.
+
+Across input files, the runner retains the model's state and numerical
+workspaces. A new `DrivenSimulation` refreshes forcing, diffusion layer
+thickness, and convection caches for the next file. It carries the accumulated
+simulation clock forward, so time-varying emissions continue at the correct
+time. GPU prefetch is drained before the runner closes an input driver.
+
 The detailed operator ordering is documented in [Operators](@ref Operator-concepts). The mass
 invariant is derived in [Mass conservation](@ref).
 

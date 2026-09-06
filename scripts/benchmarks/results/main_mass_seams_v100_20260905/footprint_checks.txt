@@ -1,0 +1,23 @@
+Precompiling packages...
+  13058.8 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 14 seconds. 193 already precompiled.
+Precompiling packages...
+   2997.8 ms  ✓ AtmosTransportNVTXExt (serial)
+  1 dependency successfully precompiled in 3 seconds
+Precompiling packages...
+   4389.3 ms  ✓ AtmosTransportCUDAExt (serial)
+  1 dependency successfully precompiled in 4 seconds
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+Test Summary:                                       | Pass  Total   Time
+CS split-sweep surface-emission footprint prototype |   72     72  43.3s
+Test Summary:                                       | Pass  Total  Time
+Plan 25 Commit 6 — LinRoodPPMScheme footprint vs FD |    1      1  5.0s
+Test Summary:                                           | Pass  Total  Time
+Plan 25 Commit 3b — LinRoodPPMScheme(7) footprint vs FD |    1      1  2.7s

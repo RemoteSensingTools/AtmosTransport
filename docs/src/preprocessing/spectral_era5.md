@@ -196,7 +196,7 @@ The synthetic-RG variant uses
 ## What's next
 
 - [GEOS native cubed-sphere](@ref) — the FV3-native path (no
-  spectral synthesis, no Poisson balance; column-balanced fluxes with
+  spectral synthesis; a column-integrated Poisson correction closes fluxes against
   the raw next-hour dry endpoint).
 - [Regridding](@ref) — how the conservative weights are built and
   cached.

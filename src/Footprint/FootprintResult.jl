@@ -17,8 +17,10 @@
 
 Reverse-mode footprint result for one scalar objective. `footprints[t]`
 is an `NTuple{6}` of `(Nc, Nc)` arrays containing `dJ / dE`, where `E` is
-the per-cell surface-emission rate [kg s^-1] applied at the midpoint of
-model step `t`. `lag_steps[t] == nsteps - t`.
+the per-cell model-storage emission rate applied at the midpoint of model
+step `t`. Storage is dry mixing ratio × carrier-air mass; these rates are
+not physical kg-species per second and are not divided by cell area.
+The derivative includes the timestep factor. `lag_steps[t] == nsteps - t`.
 """
 struct CSFootprintResult{FT, O <: AbstractCSFootprintObjective, A2 <: AbstractArray{FT, 2}}
     objective::O

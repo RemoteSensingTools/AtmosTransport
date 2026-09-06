@@ -1,0 +1,7 @@
+WARNING: using Trees.ncells in module Regridding conflicts with an existing identifier.
+WARNING: using Preprocessing.has_surface in module AtmosTransport conflicts with an existing identifier.
+WARNING: using Preprocessing.has_vdiff_fields in module AtmosTransport conflicts with an existing identifier.
+Test Summary:                                     | Pass  Total  Time
+Collaborative convection batching: host selection |   18     18  0.1s
+Test Summary:                                               | Pass  Total  Time
+Shared RHS helper: partial batches, pivots, and active rows |  964    964  2.1s

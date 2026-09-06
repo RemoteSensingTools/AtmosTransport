@@ -2,8 +2,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Preprocessing: ERA5C180RegridFields,
     ERA5C180RawConvectionFields, ERA5C180TM5ConvectionFields,
     allocate_tm5_convection_column_scratch, derive_c180_tm5_convection!,

@@ -1,0 +1,415 @@
+WARNING: using Trees.ncells in module Regridding conflicts with an existing identifier.
+WARNING: using Trees.ncells in module Regridding conflicts with an existing identifier.
+ Downloading artifact: LLVMExtra
+ERROR: LoadError: InitError: Artifact "NVTX" was not found by looking in the paths:
+  ~/.julia/artifacts/0b6483311b60bc85d320f64bb66fd2e310916fb1
+  ~/.julia/juliaup/julia-1.10.12+0.x64.linux.gnu/local/share/julia/artifacts/0b6483311b60bc85d320f64bb66fd2e310916fb1
+  ~/.julia/juliaup/julia-1.10.12+0.x64.linux.gnu/share/julia/artifacts/0b6483311b60bc85d320f64bb66fd2e310916fb1
+Try `using Pkg; Pkg.instantiate()` to re-install all missing resources if the artifact is part of a package or call `Pkg.ensure_artifact_installed` (https://pkgdocs.julialang.org/v1/api/#Pkg.Artifacts.ensure_artifact_installed) if not.
+Stacktrace:
+  [1] error(s::String)
+    @ Base ./error.jl:35
+  [2] _artifact_str(__module__::Module, artifacts_toml::String, name::SubString{String}, path_tail::String, artifact_dict::Dict{String, Any}, hash::Base.SHA1, platform::Base.BinaryPlatforms.Platform, lazyartifacts::Any)
+    @ Artifacts ~/.julia/juliaup/julia-1.10.12+0.x64.linux.gnu/share/julia/stdlib/v1.10/Artifacts/src/Artifacts.jl:575
+  [3] invokelatest(::Any, ::Any, ::Vararg{Any}; kwargs::@Kwargs{})
+    @ Base ./essentials.jl:892
+  [4] invokelatest(::Any, ::Any, ::Vararg{Any})
+    @ Base ./essentials.jl:889
+  [5] macro expansion
+    @ ~/.julia/juliaup/julia-1.10.12+0.x64.linux.gnu/share/julia/stdlib/v1.10/Artifacts/src/Artifacts.jl:704 [inlined]
+  [6] find_artifact_dir()
+    @ NVTX_jll ~/.julia/packages/JLLWrappers/Kp7TC/src/wrapper_generators.jl:17
+  [7] __init__()
+    @ NVTX_jll ~/.julia/packages/NVTX_jll/W9h82/src/wrappers/x86_64-linux-gnu.jl:7
+  [8] run_module_init(mod::Module, i::Int64)
+    @ Base ./loading.jl:1197
+  [9] register_restored_modules(sv::Core.SimpleVector, pkg::Base.PkgId, path::String)
+    @ Base ./loading.jl:1185
+ [10] _include_from_serialized(pkg::Base.PkgId, path::String, ocachepath::String, depmods::Vector{Any})
+    @ Base ./loading.jl:1129
+ [11] _tryrequire_from_serialized(pkg::Base.PkgId, path::String, ocachepath::String)
+    @ Base ./loading.jl:1605
+ [12] _require(pkg::Base.PkgId, env::String)
+    @ Base ./loading.jl:2074
+ [13] __require_prelocked(uuidkey::Base.PkgId, env::String)
+    @ Base ./loading.jl:1886
+ [14] #invoke_in_world#3
+    @ ./essentials.jl:926 [inlined]
+ [15] invoke_in_world
+    @ ./essentials.jl:923 [inlined]
+ [16] _require_prelocked(uuidkey::Base.PkgId, env::String)
+    @ Base ./loading.jl:1877
+ [17] macro expansion
+    @ ./loading.jl:1864 [inlined]
+ [18] macro expansion
+    @ ./lock.jl:270 [inlined]
+ [19] __require(into::Module, mod::Symbol)
+    @ Base ./loading.jl:1827
+ [20] #invoke_in_world#3
+    @ ./essentials.jl:926 [inlined]
+ [21] invoke_in_world
+    @ ./essentials.jl:923 [inlined]
+ [22] require(into::Module, mod::Symbol)
+    @ Base ./loading.jl:1820
+ [23] include
+    @ ./Base.jl:495 [inlined]
+ [24] include_package_for_output(pkg::Base.PkgId, input::String, depot_path::Vector{String}, dl_load_path::Vector{String}, load_path::Vector{String}, concrete_deps::Vector{Pair{Base.PkgId, UInt128}}, source::String)
+    @ Base ./loading.jl:2306
+ [25] top-level scope
+    @ stdin:5
+during initialization of module NVTX_jll
+in expression starting at /home/cfranken/.julia/packages/NVTX/pfSOQ/src/NVTX.jl:1
+in expression starting at stdin:5
+ERROR: LoadError: Failed to precompile NVTX [5da4648a-3479-48b8-97b9-01cb529c0a1f] to "/home/cfranken/.julia/compiled/v1.10/NVTX/jl_84hOLE".
+Stacktrace:
+  [1] error(s::String)
+    @ Base ./error.jl:35
+  [2] compilecache(pkg::Base.PkgId, path::String, internal_stderr::IO, internal_stdout::IO, keep_loaded_modules::Bool; loadable_exts::Nothing)
+    @ Base ./loading.jl:2547
+  [3] compilecache
+    @ ./loading.jl:2414 [inlined]
+  [4] (::Base.var"#973#974"{Base.PkgId})()
+    @ Base ./loading.jl:2058
+  [5] mkpidlock(f::Base.var"#973#974"{Base.PkgId}, at::String, pid::Int32; kwopts::@Kwargs{stale_age::Int64, wait::Bool})
+    @ FileWatching.Pidfile ~/.julia/juliaup/julia-1.10.12+0.x64.linux.gnu/share/julia/stdlib/v1.10/FileWatching/src/pidfile.jl:93
+  [6] #mkpidlock#6
+    @ ~/.julia/juliaup/julia-1.10.12+0.x64.linux.gnu/share/julia/stdlib/v1.10/FileWatching/src/pidfile.jl:88 [inlined]
+  [7] trymkpidlock(::Function, ::Vararg{Any}; kwargs::@Kwargs{stale_age::Int64})
+    @ FileWatching.Pidfile ~/.julia/juliaup/julia-1.10.12+0.x64.linux.gnu/share/julia/stdlib/v1.10/FileWatching/src/pidfile.jl:111
+  [8] #invokelatest#2
+    @ ./essentials.jl:894 [inlined]
+  [9] invokelatest
+    @ ./essentials.jl:889 [inlined]
+ [10] maybe_cachefile_lock(f::Base.var"#973#974"{Base.PkgId}, pkg::Base.PkgId, srcpath::String; stale_age::Int64)
+    @ Base ./loading.jl:3062
+ [11] maybe_cachefile_lock
+    @ ./loading.jl:3059 [inlined]
+ [12] _require(pkg::Base.PkgId, env::String)
+    @ Base ./loading.jl:2044
+ [13] __require_prelocked(uuidkey::Base.PkgId, env::String)
+    @ Base ./loading.jl:1886
+ [14] #invoke_in_world#3
+    @ ./essentials.jl:926 [inlined]
+ [15] invoke_in_world
+    @ ./essentials.jl:923 [inlined]
+ [16] _require_prelocked(uuidkey::Base.PkgId, env::String)
+    @ Base ./loading.jl:1877
+ [17] macro expansion
+    @ ./loading.jl:1864 [inlined]
+ [18] macro expansion
+    @ ./lock.jl:270 [inlined]
+ [19] __require(into::Module, mod::Symbol)
+    @ Base ./loading.jl:1827
+ [20] #invoke_in_world#3
+    @ ./essentials.jl:926 [inlined]
+ [21] invoke_in_world
+    @ ./essentials.jl:923 [inlined]
+ [22] require(into::Module, mod::Symbol)
+    @ Base ./loading.jl:1820
+ [23] include
+    @ ./Base.jl:495 [inlined]
+ [24] include_package_for_output(pkg::Base.PkgId, input::String, depot_path::Vector{String}, dl_load_path::Vector{String}, load_path::Vector{String}, concrete_deps::Vector{Pair{Base.PkgId, UInt128}}, source::String)
+    @ Base ./loading.jl:2306
+ [25] top-level scope
+    @ stdin:5
+in expression starting at /home/cfranken/.julia/packages/CUDA/2kjXI/src/CUDA.jl:1
+in expression starting at stdin:5
+   Resolving package versions...
+    Updating `/tmp/atmos-release-resume-20260906/env110-fixed/Project.toml`
+  [79e6a3ab] + Adapt v4.7.0
+  [4c88cf16] + Aqua v0.8.16
+  [c7e460c6] + ArgParse v1.2.0
+  [fcfdcc98] + AtmosTransport v0.3.0 `~/code/gitHub/AtmosTransportModel-revamp-main`
+⌅ [8e50ac2c] + ConservativeRegridding v0.2.0
+  [7445602f] + CubedSphere v0.3.4
+  [ffbed154] + DocStringExtensions v0.9.5
+  [7a1cc6ca] + FFTW v1.10.0
+  [442a2c76] + FastGaussQuadrature v1.3.0
+  [b16dfd50] + GRIB v0.4.0
+  [cf35fbd7] + GeoInterface v1.6.2
+⌅ [3251bfac] + GeometryOps v0.1.38
+⌅ [05efe853] + GeometryOpsCore v0.1.10
+⌅ [c3a54625] + JET v0.9.18
+  [033835bb] + JLD2 v0.6.6
+  [0f8b85d8] + JSON3 v1.14.3
+  [63c18a36] + KernelAbstractions v0.9.42
+  [85f8d34a] + NCDatasets v0.14.15
+  [6fe1bfb0] + OffsetArrays v1.17.0
+  [429524aa] + Optim v2.3.1
+⌅ [aea7be01] + PrecompileTools v1.2.1
+  [92933f4c] + ProgressMeter v1.11.0
+  [90137ffa] + StaticArrays v1.9.20
+  [0234f1f7] + HDF5_jll v2.2.1+0
+  [f43a241f] ~ Downloads ⇒ v1.6.0
+  [ea8e919c] ~ SHA ⇒ v0.7.0
+  [2f01184e] ~ SparseArrays ⇒ v1.10.0
+  [10745b16] ~ Statistics ⇒ v1.10.0
+  [fa267f1f] ~ TOML ⇒ v1.0.3
+    Updating `/tmp/atmos-release-resume-20260906/env110-fixed/Manifest.toml`
+  [47edcb42] + ADTypes v1.24.0
+  [621f4979] + AbstractFFTs v1.5.0
+  [1520ce14] + AbstractTrees v0.4.5
+  [79e6a3ab] + Adapt v4.7.0
+  [35492f91] + AdaptivePredicates v1.2.0
+  [4c88cf16] + Aqua v0.8.16
+  [c7e460c6] + ArgParse v1.2.0
+  [4fba245c] + ArrayInterface v7.30.1
+  [fcfdcc98] + AtmosTransport v0.3.0 `~/code/gitHub/AtmosTransportModel-revamp-main`
+  [a9b6321e] + Atomix v1.1.3
+  [179af706] + CFTime v0.2.10
+  [96374032] + CRlibm v1.0.2
+  [0b6fb165] + ChunkCodecCore v1.0.2
+  [4c0bbee4] + ChunkCodecLibZlib v1.1.0
+  [55437552] + ChunkCodecLibZstd v1.0.0
+  [ae650224] + ChunkSplitters v3.2.0
+⌅ [da1fd8a2] + CodeTracking v1.3.9
+  [1fbeeb36] + CommonDataModel v0.4.4
+  [34da2185] + Compat v4.18.1
+⌅ [8e50ac2c] + ConservativeRegridding v0.2.0
+  [187b0558] + ConstructionBase v1.6.0
+  [150eb455] + CoordinateTransformations v0.6.4
+  [b7a15901] + CoreMath v0.1.0
+  [7445602f] + CubedSphere v0.3.4
+  [9a962f9c] + DataAPI v1.16.0
+  [864edb3b] + DataStructures v0.19.6
+  [e2d170a0] + DataValueInterfaces v1.0.0
+  [927a84f5] + DelaunayTriangulation v1.6.6
+  [a0c0ee7d] + DifferentiationInterface v0.7.21
+  [3c3547ce] + DiskArrays v0.4.22
+  [b4f34e82] + Distances v0.10.12
+  [ffbed154] + DocStringExtensions v0.9.5
+  [4e289a0a] + EnumX v1.0.7
+  [429591f6] + ExactPredicates v2.2.9
+  [411431e0] + Extents v0.1.6
+  [7a1cc6ca] + FFTW v1.10.0
+  [442a2c76] + FastGaussQuadrature v1.3.0
+  [5789e2e9] + FileIO v1.20.0
+  [1a297f60] + FillArrays v1.17.0
+  [6a86dc24] + FiniteDiff v2.33.0
+  [b16dfd50] + GRIB v0.4.0
+  [68eda718] + GeoFormatTypes v0.4.5
+  [cf35fbd7] + GeoInterface v1.6.2
+⌅ [3251bfac] + GeometryOps v0.1.38
+⌅ [05efe853] + GeometryOpsCore v0.1.10
+  [076d061b] + HashArrayMappedTries v0.2.0
+  [d1acc4aa] + IntervalArithmetic v1.0.11
+  [92d709cd] + IrrationalConstants v0.2.6
+  [82899510] + IteratorInterfaceExtensions v1.0.0
+⌅ [c3a54625] + JET v0.9.18
+  [033835bb] + JLD2 v0.6.6
+  [692b3bcd] + JLLWrappers v1.8.0
+  [0f8b85d8] + JSON3 v1.14.3
+⌅ [aa1ae85d] + JuliaInterpreter v0.9.46
+⌅ [70703baa] + JuliaSyntax v0.4.10
+  [63c18a36] + KernelAbstractions v0.9.42
+  [8ac3fa9e] + LRUCache v1.6.2
+  [d3d80556] + LineSearches v7.8.1
+  [2ab3a3ac] + LogExpFunctions v1.0.1
+⌃ [6f1432cf] + LoweredCodeUtils v3.2.2
+  [3da0fdf6] + MPIPreferences v0.1.12
+  [1914dd2f] + MacroTools v0.5.16
+  [85f8d34a] + NCDatasets v0.14.15
+  [d41bc354] + NLSolversBase v8.0.1
+  [77ba4419] + NaNMath v1.1.4
+  [6fe1bfb0] + OffsetArrays v1.17.0
+  [429524aa] + Optim v2.3.1
+  [bac558e1] + OrderedCollections v2.0.1
+⌅ [69de0a69] + Parsers v2.8.8
+  [85a6dd25] + PositiveFactorizations v0.2.4
+⌅ [aea7be01] + PrecompileTools v1.2.1
+  [21216c6a] + Preferences v1.5.2
+  [92933f4c] + ProgressMeter v1.11.0
+  [189a3867] + Reexport v1.2.2
+  [ae029012] + Requires v1.3.1
+  [5eaf0fd0] + RoundingEmulator v0.2.1
+  [431bcebd] + SciMLPublic v1.3.0
+  [7e506255] + ScopedValues v1.6.2
+  [efcf1570] + Setfield v1.1.2
+  [746ee33f] + SortTileRecursiveTree v0.1.4
+  [276daf66] + SpecialFunctions v2.9.0
+  [91464d47] + StableTasks v0.1.7
+  [90137ffa] + StaticArrays v1.9.20
+  [1e83bf80] + StaticArraysCore v1.4.4
+  [82ae8749] + StatsAPI v1.8.0
+  [856f2bd8] + StructTypes v1.11.0
+  [3783bdb8] + TableTraits v1.0.1
+  [bd369af6] + Tables v1.14.0
+⌅ [6aa5eb33] + TaylorSeries v0.20.10
+  [b718987f] + TextWrap v1.0.2
+  [013be700] + UnsafeAtomics v0.3.2
+  [0b7ba130] + Blosc_jll v1.21.7+0
+  [6e34b625] + Bzip2_jll v1.0.9+0
+  [4e9b3aee] + CRlibm_jll v1.0.1+0
+  [a38c48d9] + CoreMath_jll v0.1.0+0
+  [f5851436] + FFTW_jll v3.3.12+0
+  [0234f1f7] + HDF5_jll v2.2.1+0
+  [e33a78d0] + Hwloc_jll v2.14.0+0
+  [1d5cc7b8] + IntelOpenMP_jll v2025.2.0+0
+  [aacddb02] + JpegTurbo_jll v3.2.0+1
+  [88015f11] + LERC_jll v4.1.0+0
+  [94ce4f54] + Libiconv_jll v1.18.0+0
+  [89763e89] + Libtiff_jll v4.7.3+0
+  [d3a379c0] + LittleCMS_jll v2.19.1+0
+  [5ced341a] + Lz4_jll v1.10.1+0
+  [856f044c] + MKL_jll v2025.2.0+0
+  [b5ada748] + MPIABI_jll v1.0.0+0
+  [7cb0a576] + MPICH_jll v5.0.1+0
+  [f1f71cc9] + MPItrampoline_jll v5.5.6+0
+  [9237b28f] + MicrosoftMPI_jll v10.1.4+3
+  [7243133f] + NetCDF_jll v401.1000.101+0
+⌅ [6cdc7f73] + OpenBLASConsistentFPCSR_jll v0.3.29+0
+  [643b3616] + OpenJpeg_jll v2.5.5+0
+  [fe0851c0] + OpenMPI_jll v5.0.11+0
+  [458c3c95] + OpenSSL_jll v3.5.8+0
+  [efe28fd5] + OpenSpecFun_jll v0.5.6+0
+⌅ [02c8fc9c] + XML2_jll v2.13.9+0
+  [ffd25f8a] + XZ_jll v5.8.3+0
+  [a65dc6b1] + Xorg_libpciaccess_jll v0.19.0+0
+  [3161d3a3] + Zstd_jll v1.5.7+1
+⌅ [2b3700d1] + aws_c_auth_jll v0.9.6+0
+⌅ [70f11efc] + aws_c_cal_jll v0.9.13+0
+⌅ [73048d1d] + aws_c_common_jll v0.12.6+0
+⌅ [73a04cd5] + aws_c_compression_jll v0.3.2+0
+⌅ [3254fc65] + aws_c_http_jll v0.10.15+0
+⌅ [13c41daa] + aws_c_io_jll v0.26.3+0
+⌅ [bd1f34fb] + aws_c_s3_jll v0.11.5+0
+⌅ [1282aa60] + aws_c_sdkutils_jll v0.2.4+1
+⌅ [b2a88e68] + aws_checksums_jll v0.2.10+0
+  [c4b69c83] + dlfcn_win32_jll v1.4.2+0
+  [b04048ba] + eccodes_jll v2.45.0+0
+  [477f73a3] + libaec_jll v1.1.7+0
+  [b53b4c65] + libpng_jll v1.6.58+0
+  [337d8026] + libzip_jll v1.11.4+0
+  [9aeb927a] + mpif_jll v1.0.0+0
+  [1317d2d5] + oneTBB_jll v2022.3.0+0
+  [cddc5d3d] + s2n_tls_jll v1.7.8+0
+  [0dad84c5] + ArgTools v1.1.1
+  [56f22d72] + Artifacts
+  [2a0f44e3] + Base64
+  [ade2ca70] + Dates
+  [8ba89e20] + Distributed
+  [f43a241f] + Downloads v1.6.0
+  [7b1f6079] + FileWatching
+  [9fa8497b] + Future
+  [b77e0a4c] + InteractiveUtils
+  [4af54fe1] + LazyArtifacts
+  [b27032c2] + LibCURL v0.6.4
+  [76f85450] + LibGit2
+  [8f399da3] + Libdl
+  [37e2e46d] + LinearAlgebra
+  [56ddb016] + Logging
+  [d6f4376e] + Markdown
+  [a63ad114] + Mmap
+  [ca575930] + NetworkOptions v1.2.0
+  [44cfe95a] + Pkg v1.10.0
+  [de0858da] + Printf
+  [3fa0cd96] + REPL
+  [9a3f8284] + Random
+  [ea8e919c] + SHA v0.7.0
+  [9e88b42a] + Serialization
+  [6462fe0b] + Sockets
+  [2f01184e] + SparseArrays v1.10.0
+  [10745b16] + Statistics v1.10.0
+  [fa267f1f] + TOML v1.0.3
+  [a4e569a6] + Tar v1.10.0
+  [8dfed614] + Test
+  [cf7118a7] + UUIDs
+  [4ec0a83e] + Unicode
+  [e66e0078] + CompilerSupportLibraries_jll v1.1.2+1
+  [deac9b47] + LibCURL_jll v8.4.0+0
+  [e37daf67] + LibGit2_jll v1.6.4+0
+  [29816b5a] + LibSSH2_jll v1.11.0+1
+  [c8ffd9c3] + MbedTLS_jll v2.28.1010+0
+  [14a3606d] + MozillaCACerts_jll v2025.12.2
+  [4536629a] + OpenBLAS_jll v0.3.23+5
+  [05823500] + OpenLibm_jll v0.8.5+0
+  [bea87d4a] + SuiteSparse_jll v7.2.1+1
+  [83775a58] + Zlib_jll v1.2.13+1
+  [8e850b90] + libblastrampoline_jll v5.11.0+0
+  [8e850ede] + nghttp2_jll v1.52.0+1
+  [3f19e933] + p7zip_jll v17.6.1+0
+        Info Packages marked with ⌃ and ⌅ have new versions available. Those with ⌃ may be upgradable, but those with ⌅ are restricted by compatibility constraints from upgrading. To see why use `status --outdated -m`
+[ Info: JET hot-path modules: 0 reports (baseline 130)
+[ Info: JET baseline can be tightened: 0 < 130. Lower JET_HOT_PATH_BASELINE in test_jet.jl when this is stable.
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+Test Summary:        | Pass  Total  Time
+Aqua: package health |   10     10  7.7s
+Test Summary:                    | Pass  Total     Time
+JET: hot-path inference snapshot |    1      1  2m33.9s
+Test Summary:                                    | Pass  Total  Time
+Plan 25 Commit 1 — LinRood update kernel adjoint |    8      8  3.0s
+Test Summary:                                 | Pass  Total  Time
+Plan 25 Commit 2 — pre-advect kernel adjoints |    7      7  1.5s
+Test Summary:                                                 | Pass  Total  Time
+Plan 25 Commit 3 — PPM `_from_q` face kernel adjoints (ORD=5) |    7      7  7.4s
+Test Summary:                                                 | Pass  Total  Time
+Plan 25 Commit 3b — PPM rm-input face kernel adjoints (ORD=5) |    6      6  5.3s
+Test Summary:                                                  | Pass  Total  Time
+Plan 25 Commit 4 — single-panel horizontal adjoint composition |    1      1  0.3s
+Test Summary:                                               | Pass  Total  Time
+Plan 25 Commit 5 — multi-substep LinRood horizontal adjoint |    1      1  3.5s
+Test Summary:                                                             | Pass  Total  Time
+Plan 25 Commit 5 (ORD=7) — multi-substep LinRood adjoint, no Val(7) kwarg |    1      1  0.7s
+Test Summary:                                       | Pass  Total     Time
+CS split-sweep surface-emission footprint prototype |   72     72  1m19.0s
+Test Summary:                                       | Pass  Total  Time
+Plan 25 Commit 6 — LinRoodPPMScheme footprint vs FD |    1      1  2.3s
+Test Summary:                                           | Pass  Total  Time
+Plan 25 Commit 3b — LinRoodPPMScheme(7) footprint vs FD |    1      1  1.0s
+Test Summary:                                     | Pass  Total  Time
+checkpoint_window_count / checkpoint_window_range |   14     14  0.0s
+Test Summary:                                                   | Pass  Total  Time
+StrideCheckpoint vs FullCheckpoint — linear PPM, transport flow |   13     13  0.8s
+Test Summary:                          | Pass  Total  Time
+StrideCheckpoint with CMFMC convection |    3      3  0.8s
+Test Summary:                                   | Pass  Total  Time
+StrideCheckpoint with ImplicitVerticalDiffusion |    3      3  0.7s
+Test Summary:                                                   | Pass  Total  Time
+StrideCheckpoint vs FullCheckpoint — monotone PPM (tracer tape) |   10     10  0.5s
+Test Summary:                                        | Pass  Total  Time
+StrideCheckpoint nonlinear PPM + base_emission_rates |    3      3  0.6s
+Test Summary:                                                          | Pass  Total  Time
+StrideCheckpoint nonlinear PPM + implicit diffusion + CMFMC convection |    3      3  1.0s
+Test Summary:                                         | Pass  Total  Time
+StrideCheckpoint vs FullCheckpoint — LinRoodPPMScheme |    5      5  0.2s
+Test Summary:                                                       | Pass  Total  Time
+StrideCheckpoint LinRood + base_emission_rates + implicit diffusion |    3      3  0.8s
+Test Summary:                                       | Pass  Total  Time
+StrideCheckpoint LinRood rejects :mmap tape_storage |    3      3  0.1s
+Test Summary:                                               | Pass  Total  Time
+StrideCheckpoint vs FullCheckpoint — LinRoodPPMScheme ORD=7 |    5      5  0.2s
+Test Summary:                                          | Pass  Total  Time
+LinRood non-unit flux_scale — FD and checkpoint parity |    6      6  0.9s
+Test Summary:                               | Pass  Total  Time
+stride rejects pre-constructed tape_storage |    1      1  0.1s
+Test Summary:                        | Pass  Total  Time
+from-seed stride parity — linear PPM |    5      5  0.3s
+Test Summary:                                                | Pass  Total  Time
+from-seed stride parity — nonlinear PPM with base_panels_rm0 |    3      3  0.3s
+Test Summary:                                                   | Pass  Total  Time
+from-seed stride parity — LinRoodPPMScheme with base_panels_rm0 |    4      4  0.3s
+Test Summary:                                                                 | Pass  Total  Time
+from-seed stride nonlinear PPM with base_panels_rm0 = nothing (zero fallback) |    3      3  0.2s
+Test Summary:                                              | Pass  Total  Time
+from-seed stride rejects unsupported scheme/storage combos |    4      4  0.1s
+Test Summary:                         | Pass  Total  Time
+RevolveCheckpoint parity — linear PPM |    2      2  0.3s
+Test Summary:                            | Pass  Total  Time
+RevolveCheckpoint parity — nonlinear PPM |    1      1  0.1s
+Test Summary:                               | Pass  Total  Time
+RevolveCheckpoint parity — LinRoodPPMScheme |    1      1  0.1s
+Test Summary:                                                        | Pass  Total  Time
+RevolveCheckpoint with implicit diffusion — nonlinear PPM (FD-grade) |   36     36  0.6s
+Test Summary:                      | Pass  Total  Time
+from-seed RevolveCheckpoint parity |    2      2  0.3s
+Test Summary:                                      | Pass  Total  Time
+RevolveCheckpoint rejects unsupported tape_storage |    5      5  0.2s
+Test Summary:                                                 | Pass  Total  Time
+RevolveCheckpoint handles nsteps == 1 (single-step base case) |    2      2  0.0s

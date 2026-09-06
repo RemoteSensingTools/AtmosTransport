@@ -1,0 +1,3 @@
+PROBE mass (96, 96, 66) Float32 mass33=2.829608e12 kg; dkg (90, 90, 66) max=2.0023729e11 kg/s
+Test Summary:                                                      | Pass  Total  Time
+Conservative LU matches backward Euler on signed and stiff columns |  440    440  2.1s

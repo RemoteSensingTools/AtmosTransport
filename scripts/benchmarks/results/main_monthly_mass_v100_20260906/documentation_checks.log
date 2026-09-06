@@ -1,0 +1,10 @@
+Test Summary:                                  | Pass  Total  Time
+maintained documentation has valid local links |   75     75  0.6s
+Test Summary:                                  | Pass  Total  Time
+home page exposes VitePress front matter first |    1      1  0.0s
+Test Summary:           | Pass  Total  Time
+Module README freshness |   84     84  0.1s
+Test Summary:                           | Pass  Total  Time
+core public API has attached docstrings |   18     18  0.1s
+Test Summary:                          | Pass  Total  Time
+met-driver API has attached docstrings |   13     13  0.0s

@@ -1,10 +1,9 @@
 #!/usr/bin/env julia
 
 using Test
-using Logging
+using Logging, Random
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Grids: reciprocal_edge
 using .AtmosTransport.Operators: MonotoneLimiter, required_halo_width
 using .AtmosTransport.Operators.Advection: fill_panel_halos!, strang_split_cs!,
@@ -71,8 +70,8 @@ function total_cs_surface_rate(rates)
     return s
 end
 
-function make_structured_cs_state(; FT=Float64, Nc=8, Hp=1, Nz=2)
-    mesh = CubedSphereMesh(; FT, Nc, Hp)
+function make_structured_cs_state(; FT=Float64, Nc=8, Hp=1, Nz=2, convention=nothing)
+    mesh = CubedSphereMesh(; FT, Nc, Hp, convention)
     N = Nc + 2Hp
     panels_m = ntuple(6) do p
         m = zeros(FT, N, N, Nz)
@@ -138,10 +137,13 @@ function make_mirrored_cs_horizontal_fluxes(mesh::CubedSphereMesh{FT}, Nz::Int) 
     return panels_am, panels_bm, panels_cm
 end
 
-function run_mirrored_seam_advection_conservation(scheme; FT=Float64, Nc=8, Nz=2, steps=2)
+function run_mirrored_seam_advection_conservation(scheme; FT=Float64, Nc=8, Nz=2, steps=2,
+                                                  flux_gain=1, convention=nothing)
     Hp = required_halo_width(scheme)
-    mesh, panels_m, panels_rm = make_structured_cs_state(; FT, Nc, Hp, Nz)
+    mesh, panels_m, panels_rm = make_structured_cs_state(; FT, Nc, Hp, Nz, convention)
     panels_am, panels_bm, panels_cm = make_mirrored_cs_horizontal_fluxes(mesh, Nz)
+    panels_am = map(a -> a .* FT(flux_gain), panels_am)
+    panels_bm = map(a -> a .* FT(flux_gain), panels_bm)
     if scheme isa LinRoodPPMScheme
         vertical = HybridSigmaPressure(FT[0, 100, 500], FT[0, 0.2, 1])
         grid = AtmosGrid(mesh, vertical, CPU(); FT)
@@ -156,7 +158,7 @@ function run_mirrored_seam_advection_conservation(scheme; FT=Float64, Nc=8, Nz=2
         return (total_air_mass(state) - m0) / m0, (total_mass(state, :tracer) - rm0) / rm0
     end
 
-    ws = CSAdvectionWorkspace(mesh, Nz)
+    ws = CSAdvectionWorkspace(mesh, Nz; FT)
     m0 = total_interior(panels_m, Nc, Hp, Nz)
     rm0 = total_interior(panels_rm, Nc, Hp, Nz)
     for _ in 1:steps
@@ -404,11 +406,8 @@ end
             rm_ref = deepcopy(rm_in)
             m_ref = deepcopy(m_in)
             ws_ref = CSAdvectionWorkspace(mesh, Nz; n_tracers = Nt)
-            for p in 1:6
-                _sweep_x_panel_mt!(rm_ref[p], m_ref[p], panels_am[p],
-                                   scheme, ws_ref.rm_4d_A, ws_ref.m_A,
-                                   Nc, Hp, Nz, Nt; flux_scale = 0.75)
-            end
+            AtmosTransport.Operators.Advection._sweep_cs_horizontal!(
+                rm_ref, m_ref, panels_am, mesh, scheme, ws_ref, Val(1); flux_scale=0.75)
             fill_panel_halos!(rm_ref, mesh; dir = 1)
             fill_panel_halos!(m_ref, mesh; dir = 1)
 
@@ -424,11 +423,8 @@ end
 
             rm_ref = deepcopy(rm_in)
             m_ref = deepcopy(m_in)
-            for p in 1:6
-                _sweep_y_panel_mt!(rm_ref[p], m_ref[p], panels_bm[p],
-                                   scheme, ws_ref.rm_4d_A, ws_ref.m_A,
-                                   Nc, Hp, Nz, Nt; flux_scale = 0.75)
-            end
+            AtmosTransport.Operators.Advection._sweep_cs_horizontal!(
+                rm_ref, m_ref, panels_bm, mesh, scheme, ws_ref, Val(2); flux_scale=0.75)
             fill_panel_halos!(rm_ref, mesh; dir = 2)
             fill_panel_halos!(m_ref, mesh; dir = 2)
 
@@ -804,6 +800,51 @@ end
     end
 end
 
+@testset "CS schemes conserve across seams at appreciable Courant number" begin
+    # The old seam fixture used ~0.001 Courant numbers and loose tolerances,
+    # hiding a truncation error from independently evaluated boundary fluxes.
+    for convention in (AtmosTransport.Grids.GnomonicPanelConvention(),
+                       AtmosTransport.Grids.GEOSNativePanelConvention()),
+            FT in (Float32, Float64), scheme in
+            (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(),
+             LinRoodPPMScheme(5), LinRoodPPMScheme(7))
+        air_rel, tracer_rel = run_mirrored_seam_advection_conservation(
+            scheme; FT, flux_gain=100, convention)
+        tolerance = FT == Float32 ? 3e-7 : 2e-14
+        @test abs(air_rel) < tolerance
+        @test abs(tracer_rel) < tolerance
+    end
+end
+
+@testset "Lin-Rood q-space seam conservation at valid CFL" begin
+    Adv = AtmosTransport.Operators.Advection
+    for FT in (Float32, Float64), ord in (5, 7), convention in
+            (AtmosTransport.Grids.GnomonicPanelConvention(),
+             AtmosTransport.Grids.GEOSNativePanelConvention())
+        Nc, Hp, Nz = 8, 3, 2
+        mesh, m, rm = make_structured_cs_state(; FT, Nc, Hp, Nz, convention)
+        am, bm, _ = make_mirrored_cs_horizontal_fluxes(mesh, Nz)
+        am = map(a -> Adv._cs_flux_x_interior(a .* FT(100), Nc, Hp), am)
+        bm = map(a -> Adv._cs_flux_y_interior(a .* FT(100), Nc, Hp), bm)
+        q = map((r, a) -> r ./ a, rm, m)
+        mq = map(copy, m)
+        ws = Adv.CSLinRoodAdvectionWorkspace(mesh, m[1])
+        wsq = Adv.CSLinRoodAdvectionWorkspace(mesh, m[1])
+        total0 = total_interior(rm, Nc, Hp, Nz)
+        air0 = total_interior(m, Nc, Hp, Nz)
+        for _ in 1:2
+            Adv.fv_tp_2d_cs!(rm, m, am, bm, mesh, Val(ord), ws.cs, ws.linrood)
+            Adv.fv_tp_2d_cs_q!(q, mq, am, bm, mesh, Val(ord), wsq.cs, wsq.linrood)
+        end
+        mass_from_q = map((v, a) -> v .* a, q, mq)
+        tol = FT == Float32 ? 2e-7 : 2e-14
+        @test abs(total_interior(mass_from_q, Nc, Hp, Nz) / total0 - 1) < tol
+        @test abs(total_interior(mq, Nc, Hp, Nz) / air0 - 1) < tol
+        @test max_interior_absdiff(mass_from_q, rm, Nc, Hp, Nz) / (total0 / (6Nc^2*Nz)) < 5tol
+        @test max_interior_absdiff(mq, m, Nc, Hp, Nz) / (air0 / (6Nc^2*Nz)) < 5tol
+    end
+end
+
 @testset "CS monotone advection preserves signed tracer offsets" begin
     FT = Float64
     Nc, Nz = 8, 2
@@ -1030,4 +1071,55 @@ end
 
     dev = max_vmr_deviation(panels_rm, panels_m, Nc, Hp, Nz, 411.0)
     @test dev < 1f-4  # F32 has ~7 digits
+end
+
+@testset "Shared-seam horizontal adjoint at appreciable CFL" begin
+    Adv = AtmosTransport.Operators.Advection
+    Adj = AtmosTransport.Adjoints
+    for ord in (5, 7), convention in
+            (AtmosTransport.Grids.GnomonicPanelConvention(),
+             AtmosTransport.Grids.GEOSNativePanelConvention())
+        Nc, Hp, Nz = 8, 3, 2
+        mesh, m, rm = make_structured_cs_state(; Nc, Hp, Nz, convention)
+        # Perturb the smooth field reproducibly to avoid symmetric limiter ties.
+        # The transport adjoint differentiates tracers at fixed meteorology.
+        rng = MersenneTwister(1918)
+        for p in 1:6, k in 1:Nz, j in Hp+1:Hp+Nc, i in Hp+1:Hp+Nc
+            rm[p][i, j, k] *= 1 + 0.002randn(rng)
+        end
+        am, bm, _ = make_mirrored_cs_horizontal_fluxes(mesh, Nz)
+        am = map(a -> a .* 100, am)
+        bm = map(a -> a .* 100, bm)
+        inner_am = map(a -> Adv._cs_flux_x_interior(a, Nc, Hp), am)
+        inner_bm = map(a -> Adv._cs_flux_y_interior(a, Nc, Hp), bm)
+        out, mout = map(copy, rm), map(copy, m)
+        record = Adj._record_linrood_horizontal_substep!(
+            out, mout, am, bm, mesh, 1.0, Val(ord))
+        production, pm = map(copy, rm), map(copy, m)
+        ws = Adv.CSLinRoodAdvectionWorkspace(mesh, m[1])
+        Adv.fv_tp_2d_cs!(production, pm, inner_am, inner_bm,
+                        mesh, Val(ord), ws.cs, ws.linrood)
+        @test max_interior_absdiff(production, out, Nc, Hp, Nz) == 0
+        @test max_interior_absdiff(pm, mout, Nc, Hp, Nz) == 0
+
+        direction, seed = ntuple(_ -> map(a -> zero(a), m), 2)
+        for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
+            ii, jj = Hp+i, Hp+j
+            direction[p][ii, jj, k] = rm[p][ii, jj, k] * 0.02sin(0.3i + 0.2j + 0.1k + p)
+            seed[p][ii, jj, k] = sin(0.4i + 0.3j + 0.2k + p)
+        end
+        adjoint_rm, adjoint_m = map(copy, seed), map(a -> zero(a), m)
+        Adj._apply_cs_linrood_horizontal_adjoint!(adjoint_rm, adjoint_m, record, mesh)
+        predicted = sum(sum(adjoint_rm[p] .* direction[p]) for p in 1:6)
+        function objective(h)
+            perturbed = map((r, d) -> r .+ h .* d, rm, direction)
+            mass = map(copy, m)
+            Adv.fv_tp_2d_cs!(perturbed, mass, inner_am, inner_bm,
+                            mesh, Val(ord), ws.cs, ws.linrood)
+            return sum(sum(seed[p] .* perturbed[p]) for p in 1:6)
+        end
+        h = 1e-5
+        fd = (objective(h) - objective(-h)) / (2h)
+        @test predicted ≈ fd rtol=2e-8
+    end
 end

@@ -23,8 +23,11 @@ hero:
 
 AtmosTransport transports atmospheric trace gases through prescribed
 meteorology. It supports regular latitude-longitude, reduced-Gaussian, and
-cubed-sphere grids; ERA5 and GEOS meteorology; and the same typed model on a
-CPU, NVIDIA GPU, or Apple GPU.
+cubed-sphere grids; ERA5 and GEOS meteorology; and a shared typed model for CPU
+and GPU execution. CPU and NVIDIA CUDA paths have release verification; the
+Apple Metal extension requires Float32 and has passed the C90/L66 forward
+smoke test on an M5 Pro with six and 32 tracers. See [Validation status](@ref)
+for measured errors and remaining coverage gaps.
 
 The package is under active development. It is a good fit for research and
 method development when you want the mass budget, preprocessing assumptions,
@@ -73,6 +76,7 @@ for the objects and source directories behind this flow.
 |---|---|
 | Try the model on any laptop | [Installation](@ref Installation) → [Quickstart](@ref Quickstart) |
 | Learn just enough Julia to follow examples | [Julia orientation](@ref Julia-orientation) |
+| Learn sensitivities and emission estimation | [Learning adjoints and inversions](@ref Learning-adjoints) → [first emission footprint](@ref First-emission-footprint) |
 | Run with your own ERA5 or GEOS data | [Run with real meteorology](@ref Run-with-real-meteorology) → [Preprocessing overview](@ref) |
 | Understand mass, grids, and physics choices | [Architecture tour](@ref Architecture-tour) → [State & basis](@ref) → [Operators](@ref Operator-concepts) |
 | Map familiar TM5/GCHP concepts onto this code | [Design philosophy](@ref Design-philosophy) |
@@ -88,7 +92,7 @@ for the objects and source directories behind this flow.
   fluxes, and simple chemistry are typed operators selected at configuration
   time.
 - **Portable execution.** CPU is the simplest starting point; CUDA and Metal
-  are optional backends. Metal uses `Float32`.
+  are optional backends. Metal uses `Float32` and remains a preview.
 - **Explicit provenance.** Only transport-binary format version 4 is accepted;
   incompatible forcing fails at load time rather than being guessed.
 

@@ -1,0 +1,23 @@
+	Command being timed: "/home/cfranken/.juliaup/bin/julia --startup-file=no --project=. /tmp/atmos-monthly-mass/run.jl conservative Float32 6"
+	User time (seconds): 675.15
+	System time (seconds): 48.04
+	Percent of CPU this job got: 135%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 8:52.80
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 6544424
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 571739
+	Minor (reclaiming a frame) page faults: 5408038
+	Voluntary context switches: 1099699
+	Involuntary context switches: 2434
+	Swaps: 0
+	File system inputs: 146002256
+	File system outputs: 271152
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

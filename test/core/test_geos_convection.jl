@@ -20,7 +20,7 @@ using Test
 using Dates
 using NCDatasets
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 using .AtmosTransport.Grids: GEOSNativePanelConvention
 using .AtmosTransport.Preprocessing: GEOSITSettings, open_day, close_day!,
                                       read_window!, allocate_raw_window,

@@ -1,0 +1,4 @@
+Test Summary:                                       | Pass  Total     Time
+CUDA conservative PPM palindrome through 65 tracers | 2552   2552  1m54.8s
+Test Summary:                       | Pass  Total   Time
+CUDA paired-seam adjoints match CPU |   24     24  25.4s

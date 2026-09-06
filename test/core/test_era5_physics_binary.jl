@@ -23,8 +23,7 @@ using Test
 using Dates
 using NCDatasets
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 
 using .AtmosTransport.Preprocessing: convert_era5_physics_nc_to_bin,
                                        open_era5_physics_binary,

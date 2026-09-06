@@ -81,12 +81,16 @@ specialized kernels via Julia's multiple dispatch on the grid type.
 `AbstractAdvectionScheme` is the root; the concrete schemes live in
 `src/Operators/Advection/schemes.jl`:
 
-| Subtype | Order | Notes |
+| Subtype | Smooth-region reconstruction | Notes |
 | --- | --- | --- |
-| `UpwindScheme` | 1 | Donor-cell; cheap, very diffusive. |
-| `SlopesScheme{L}` | 2 | Russell-Lerner slopes (TM5 `sl_advection` port). Limiter parameter `L`. |
-| `PPMScheme{L}` | 3 in smooth regions | Putman-Lin Piecewise Parabolic. Limiter parameter `L`. Supported on LL and CS split-sweep; RG supports upwind only. |
-| `LinRoodPPMScheme` | 5 or 7 | FV3 Lin-Rood PPM with cross-term advection (CS only); ORD=7 adds a panel-boundary correction. Selectable `ppm_order ∈ {5, 7}`. |
+| `UpwindScheme` | First order | Donor-cell; cheap, very diffusive. |
+| `SlopesScheme{L}` | Second order | Russell-Lerner slopes (TM5 `sl_advection` port). Limiter parameter `L`. |
+| `PPMScheme{L}` | Third order | Putman-Lin Piecewise Parabolic. Limiter parameter `L`. Supported on LL and CS split-sweep, including vertical PPM; RG supports upwind only. |
+| `LinRoodPPMScheme` | Piecewise parabolic | FV3 horizontal cross terms (CS only), paired with vertical upwind. `ppm_order=5` or `7` selects the edge-value family; both share the same interior reconstruction. |
+
+Reconstruction order does not establish the temporal order or positivity of
+the complete transport update. See [Advection schemes](@ref) for the boundary
+treatment and [Validation status](@ref) for measured scheme coverage.
 
 Limiter parameter `L` ranges over `NoLimiter`, `MonotoneLimiter`,
 `PositivityLimiter` — declared in the same file. `PPMScheme()` defaults
@@ -99,7 +103,7 @@ equivariant; only `PositivityLimiter` uses tracer zero as a bound.
 [advection]
 scheme = "slopes"     # "upwind" | "slopes" | "ppm" | "linrood"
 
-# Cubed-sphere only: pick the LinRoodPPM order (5 or 7).
+# Cubed-sphere only: pick the Lin–Rood edge-value family (5 or 7).
 # Only valid with scheme = "linrood"; setting ppm_order with
 # scheme = "ppm" errors at config-parse time.
 # scheme    = "linrood"
@@ -121,11 +125,11 @@ palindrome and are therefore rejected with `NoAdvection`.
 | `NoDiffusion()` | Identity no-op; default when `[diffusion]` is absent or `kind = "none"`. |
 | `ImplicitVerticalDiffusion{FT, KzF, SFC}` | Backward-Euler vertical diffusion driven by an `AbstractTimeVaryingField` Kz. `SFC` chooses midpoint source splitting or source-before-full-solve ordering. |
 
-The implicit solver runs a per-column Thomas tridiagonal solve; the
-column kernel is exposed as `solve_tridiagonal!` for tests and
-adjoint variants. The `(a, b, c)` tridiagonal coefficients are kept
-as named locals (rather than fused into a pre-factored form) so a
-future adjoint kernel can transpose them mechanically.
+Generic Kz diffusion uses a per-column backward-Euler tridiagonal solve with
+a supported transpose in the CS adjoint. The exact TM5 Dkg path instead uses
+column-conservative bidiagonal factors directly on tracer storage, preserving
+weak transfers and signed mass budgets. Its reverse applies the factor
+transposes in reverse order. See [Adjoint status](@ref) for supported combinations.
 
 **TOML config** (`[diffusion]` block):
 
@@ -156,9 +160,10 @@ Profile / derived / precomputed Kz fields exist in `src/State/Fields/` — see
 | --- | --- | --- |
 | `NoConvection()` | — | Identity no-op; default. |
 | `CMFMCConvection()` | `ConvectionForcing.{cmfmc, dtrain}` | GCHP-style upwind moist convection; mass flux + optional detrainment. |
+| `CMFMCMatrixConvection()` | `ConvectionForcing.{cmfmc, dtrain}` | Implicit matrix solve assembled from GEOS cloud-mass flux and detrainment. |
 | `TM5Convection{FT}()` | `ConvectionForcing.tm5_fields.{entu, detu, entd, detd}` | TM5 Tiedtke-1989 four-field entrainment / detrainment with an implicit column solve. Parametric on `FT`. |
 
-Both real subtypes consume a `ConvectionForcing` carrier (declared in
+The convection subtypes consume a `ConvectionForcing` carrier (declared in
 `src/MetDrivers/ConvectionForcing.jl`) — different physics, identical
 plumbing. `_refresh_forcing!` populates `model.convection_forcing`
 each substep by copying from the current met window; the operator
@@ -168,7 +173,7 @@ does not call `current_time` itself.
 
 ```toml
 [convection]
-kind = "cmfmc"     # or "tm5" / "none"
+kind = "cmfmc"     # or "cmfmc_matrix" / "tm5" / "none"
 ```
 
 The runtime picks `:cmfmc` only against binaries whose header carries

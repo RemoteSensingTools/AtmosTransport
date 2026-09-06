@@ -3,8 +3,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Architectures: CPU
 using .AtmosTransport.Grids: AtmosGrid, HybridSigmaPressure, ncells, nfaces
 using .AtmosTransport.MetDrivers: open_streaming_transport_binary,

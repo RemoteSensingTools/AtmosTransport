@@ -15,7 +15,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 const ADV = AtmosTransport.Operators.Advection
 
 const _edges = ADV._ppm_edge_values

@@ -1,0 +1,102 @@
+{
+  "files": [
+    "test_cs_ppm_launch_gpu.jl",
+    "test_conservative_dkg_gpu.jl",
+    "test_tm5_tracer_batching_gpu.jl",
+    "test_cs_seam_exchange_gpu.jl",
+    "test_linrood_seams_gpu.jl",
+    "test_snapshot_totals_gpu.jl",
+    "test_cs_transport_adjoint_gpu.jl",
+    "test_window_prefetch_gpu.jl",
+    "test_window_prefetch_failure_gpu.jl",
+    "test_cs_multifile_gpu.jl"
+  ],
+  "summaries": [
+    {
+      "name": "CS PPM launch layout preserves signed storage and halos",
+      "passed": 540
+    },
+    {
+      "name": "CUDA Dkg launch preserves serial results and halos",
+      "passed": 36
+    },
+    {
+      "name": "CUDA conservative Dkg through 65 tracers",
+      "passed": 6989800
+    },
+    {
+      "name": "Float64 CUDA collaborative contract on L40S",
+      "passed": 22
+    },
+    {
+      "name": "Float64 positive and signed tracer batching on L40S",
+      "passed": 1920
+    },
+    {
+      "name": "Deferred scratch adaptation on L40S",
+      "passed": 7
+    },
+    {
+      "name": "Collaborative tracer batching on L40S",
+      "passed": 480
+    },
+    {
+      "name": "Signed tracer batching on L40S",
+      "passed": 240
+    },
+    {
+      "name": "CUDA conservative PPM palindrome through 65 tracers",
+      "passed": 2552
+    },
+    {
+      "name": "CUDA paired-seam adjoints match CPU",
+      "passed": 24
+    },
+    {
+      "name": "Lin-Rood shared faces preserve interiors and transpose",
+      "passed": 12
+    },
+    {
+      "name": "CUDA Lin-Rood shared faces match the independent contact map",
+      "passed": 16
+    },
+    {
+      "name": "Column reductions retain signed residuals with and without device Float64",
+      "passed": 14
+    },
+    {
+      "name": "Compensated device totals retain signed residuals",
+      "passed": 33
+    },
+    {
+      "name": "Selected GPU capture and streaming preserve signed output",
+      "passed": 342
+    },
+    {
+      "name": "CS split-sweep surface-emission footprint prototype",
+      "passed": 91
+    },
+    {
+      "name": "CUDA transporting footprint gradients",
+      "passed": 580
+    },
+    {
+      "name": "CUDA single-panel Lin-Rood recording and reverse",
+      "passed": 32
+    },
+    {
+      "name": "GPU startup reads once and owns independent prefetch storage",
+      "passed": 140
+    },
+    {
+      "name": "Failed prefetch is consumed once before resource cleanup",
+      "passed": 8
+    },
+    {
+      "name": "CS multifile GPU physics and CPU reference",
+      "passed": 75
+    }
+  ],
+  "total_assertions": 6996964,
+  "initial_issue": "One missing shared GPUCompiler runtime file; affected and remaining tests passed with isolated writable depot."
+}

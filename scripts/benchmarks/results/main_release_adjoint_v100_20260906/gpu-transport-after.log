@@ -1,0 +1,21 @@
+GRADIENT Float64 PPMScheme{AtmosTransport.Operators.Advection.NoLimiter}(AtmosTransport.Operators.Advection.NoLimiter()) predicted=0.3115497736108267 fd=0.3115497736079498 relative_error=9.234225691755592e-12
+COMPLETED Float64 PPMScheme{AtmosTransport.Operators.Advection.NoLimiter}(AtmosTransport.Operators.Advection.NoLimiter())
+GRADIENT Float64 PPMScheme{AtmosTransport.Operators.Advection.MonotoneLimiter}(AtmosTransport.Operators.Advection.MonotoneLimiter()) predicted=0.31185750297253534 fd=0.31185750297771375 relative_error=1.6605062261815075e-11
+COMPLETED Float64 PPMScheme{AtmosTransport.Operators.Advection.MonotoneLimiter}(AtmosTransport.Operators.Advection.MonotoneLimiter())
+GRADIENT Float64 LinRoodPPMScheme{5}() predicted=0.31179908429374686 fd=0.31179910030265656 relative_error=5.134366867109263e-8
+COMPLETED Float64 LinRoodPPMScheme{5}()
+GRADIENT Float64 LinRoodPPMScheme{7}() predicted=0.31184663751010905 fd=0.31184665351749463 relative_error=5.133095193794714e-8
+COMPLETED Float64 LinRoodPPMScheme{7}()
+COMPLETED Float32 PPMScheme{AtmosTransport.Operators.Advection.NoLimiter}(AtmosTransport.Operators.Advection.NoLimiter())
+COMPLETED Float32 PPMScheme{AtmosTransport.Operators.Advection.MonotoneLimiter}(AtmosTransport.Operators.Advection.MonotoneLimiter())
+COMPLETED Float32 LinRoodPPMScheme{5}()
+COMPLETED Float32 LinRoodPPMScheme{7}()
+Precompiling packages...
+  18275.1 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 34 seconds. 192 already precompiled.
+Precompiling packages...
+  11871.9 ms  ✓ AtmosTransportCUDAExt (serial)
+  1 dependency successfully precompiled in 12 seconds
+Test Summary:                         | Pass  Total     Time
+V100 transporting footprint gradients |  580    580  2m39.2s
+GPU_TRANSPORT_GRADIENTS_PASSED

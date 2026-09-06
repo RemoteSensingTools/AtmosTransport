@@ -1,0 +1,88 @@
+julia_threads = 16
+julia_version = "1.12.6"
+pivot_stress_swaps = 1958
+cpu = "Intel(R) Xeon(R) Platinum 8462Y+"
+scope = "Synthetic CPU columns; timings include buffer copies; no GPU speed claim"
+gpu_used = false
+
+[[benchmark]]
+levels = 60
+tracers = 6
+dense_column_us = 45.7986
+dense_factor_us = 27.919
+factor_speedup = 31.757412603321455
+hessenberg_factor_us = 0.8791333333333333
+hessenberg_column_us = 17.600466666666666
+column_speedup = 2.6021241861011264
+[[benchmark]]
+levels = 60
+tracers = 32
+dense_column_us = 101.69346666666665
+dense_factor_us = 27.9338
+factor_speedup = 30.832008830022076
+hessenberg_factor_us = 0.906
+hessenberg_column_us = 70.73533333333333
+column_speedup = 1.437661517581972
+[[benchmark]]
+levels = 60
+tracers = 65
+dense_column_us = 172.87746666666666
+dense_factor_us = 27.930233333333334
+factor_speedup = 31.7822409346078
+hessenberg_factor_us = 0.8788
+hessenberg_column_us = 137.9528
+column_speedup = 1.2531638840724266
+[[benchmark]]
+levels = 85
+tracers = 6
+dense_column_us = 107.71846666666667
+dense_factor_us = 74.48049999999999
+factor_speedup = 34.73309912794764
+hessenberg_factor_us = 2.144366666666667
+hessenberg_column_us = 33.918633333333325
+column_speedup = 3.1757902981547024
+[[benchmark]]
+levels = 85
+tracers = 32
+dense_column_us = 215.51506666666668
+dense_factor_us = 74.37793333333333
+factor_speedup = 35.05967569605932
+hessenberg_factor_us = 2.121466666666667
+hessenberg_column_us = 136.0774
+column_speedup = 1.5837682573790113
+[[benchmark]]
+levels = 85
+tracers = 65
+dense_column_us = 352.9782666666667
+dense_factor_us = 74.30026666666667
+factor_speedup = 35.02526712759271
+hessenberg_factor_us = 2.1213333333333333
+hessenberg_column_us = 267.7209
+column_speedup = 1.3184561484242237
+[[benchmark]]
+levels = 137
+tracers = 6
+dense_column_us = 385.25260000000003
+dense_factor_us = 299.66443333333336
+factor_speedup = 51.46073442285126
+hessenberg_factor_us = 5.823166666666666
+hessenberg_column_us = 85.70853333333334
+column_speedup = 4.494915325428507
+[[benchmark]]
+levels = 137
+tracers = 32
+dense_column_us = 696.8994666666666
+dense_factor_us = 303.1343
+factor_speedup = 43.507312592394136
+hessenberg_factor_us = 6.967433333333333
+hessenberg_column_us = 373.7965333333333
+column_speedup = 1.8643818348235084
+[[benchmark]]
+levels = 137
+tracers = 65
+dense_column_us = 1005.6416
+dense_factor_us = 299.09233333333333
+factor_speedup = 51.64867867401153
+hessenberg_factor_us = 5.7909
+hessenberg_column_us = 674.1497999999999
+column_speedup = 1.4917183094914515

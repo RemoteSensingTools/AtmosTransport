@@ -19,8 +19,9 @@
 # (a) deriving non-negative entrainment/detrainment rates from the GEOS
 # binary's `cmfmc/dtrain` and (b) solving the resulting backward-Euler
 # matrix LU — the same conservative core used by `TM5Convection`. The
-# matrix is column-stochastic by the `Σ entu = Σ detu` closure that the
-# derivation kernels enforce defensively per column.
+# backward-Euler matrix has unit column sums under the `Σ entu = Σ detu`
+# closure enforced by the derivation kernels. Its off-diagonal entries need
+# not be nonnegative, so the matrix itself is not column-stochastic.
 #
 # It is NOT GCHP RAS numerics — it is GEOS-derived rates through TM5
 # transport numerics. Use it where the conservation contract is required
@@ -50,9 +51,10 @@ result in [`CMFMCMatrixWorkspace`](@ref) for reuse across all substeps.
 # Conservation contract
 
 `Σ(m·q)` is preserved to floating-point roundoff for any inert tracer:
-the TM5 LU matrix is column-stochastic once `Σ entu = Σ detu`, which the
-derivation kernels guarantee by absorbing any boundary-residual at the
-surface layer.
+the backward-Euler matrix has unit column sums once `Σ entu = Σ detu`,
+which the derivation kernels guarantee by absorbing any boundary residual
+at the surface layer. The solve therefore preserves the sum of its
+right-hand side up to rounding.
 
 # Adjoint
 
@@ -171,12 +173,14 @@ function CMFMCMatrixWorkspace(air_mass;
                               tile_workspace_gib::Union{Real, Nothing} = nothing,
                               tile_columns::Union{Integer, Nothing} = nothing,
                               cell_metrics = nothing,
-                              halo_width::Integer = 0)
+                              halo_width::Integer = 0,
+                              defer_scratch::Bool = false)
     FT = eltype(_tm5_template(air_mass))
     tm5_ws = TM5Workspace(air_mass;
                           tile_workspace_gib = tile_workspace_gib,
                           tile_columns = tile_columns,
-                          cell_metrics = cell_metrics)
+                          cell_metrics = cell_metrics,
+                          defer_scratch = defer_scratch)
     Hp = Int(halo_width)
     derived_entu = _cmfmc_matrix_rate_like(air_mass, FT, Hp)
     derived_detu = _cmfmc_matrix_rate_like(air_mass, FT, Hp)

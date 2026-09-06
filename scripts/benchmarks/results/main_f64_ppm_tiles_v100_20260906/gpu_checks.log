@@ -1,0 +1,12 @@
+Precompiling packages...
+  18321.0 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 20 seconds. 192 already precompiled.
+Precompiling packages...
+  11825.2 ms  ✓ AtmosTransportCUDAExt (serial)
+  1 dependency successfully precompiled in 12 seconds
+Test Summary:                                           | Pass  Total   Time
+CS PPM launch layout preserves signed storage and halos |  540    540  39.0s
+Test Summary:                                       | Pass  Total   Time
+CUDA conservative PPM palindrome through 65 tracers | 2552   2552  52.6s
+Test Summary:                       | Pass  Total   Time
+CUDA paired-seam adjoints match CPU |   24     24  24.7s

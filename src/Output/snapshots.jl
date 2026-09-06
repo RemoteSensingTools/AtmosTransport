@@ -1,3 +1,5 @@
+abstract type AbstractSnapshotFrame end
+
 """
     SnapshotFrame
 
@@ -20,7 +22,7 @@ Snapshot storage must be CPU-resident. Use [`capture_snapshot`](@ref) for model
 state on any backend; it strips cubed-sphere halos and copies device arrays to
 the host before constructing the frame.
 """
-struct SnapshotFrame{A}
+struct SnapshotFrame{A} <: AbstractSnapshotFrame
     time_hours::Float64
     air_mass::A
     tracers::Dict{Symbol, A}
@@ -29,7 +31,7 @@ struct SnapshotFrame{A}
 end
 
 function _require_cpu_snapshot_storage(field::AbstractArray, label)
-    get_backend(field) isa CPU || throw(ArgumentError(
+    get_backend(field) isa KA_CPU || throw(ArgumentError(
         "$(label) must be CPU-resident snapshot storage; use capture_snapshot " *
         "for model state or copy the array with Array(...)"))
     return nothing
@@ -169,16 +171,19 @@ function _extract_for_output(a::NTuple{6, <:Any}, mesh::CubedSphereMesh;
 end
 
 """
-    capture_snapshot(model; time_hours=0, halo_width=0) -> SnapshotFrame
+    capture_snapshot(model; time_hours=0, halo_width=0, fields=nothing)
 
-Capture full air-mass and conservative tracer-storage fields from a
-`TransportModel`.
+Capture air-mass and conservative tracer-storage fields from a `TransportModel`.
+Without `fields`, return a full `SnapshotFrame`. Passing an `OutputFieldSpec`
+returns a `SelectedSnapshotFrame` containing only requested layers and column
+diagnostics, plus compensated Float64 totals for the selected tracers.
 
 The result is CPU-resident and topology-native. For cubed-sphere states,
 `halo_width` strips panel halos before writing. GPU-backed arrays are copied to
 host memory by `Array(...)`.
 """
-function capture_snapshot(model; time_hours::Real=0, halo_width::Integer=0)
+function capture_snapshot(model; time_hours::Real=0, halo_width::Integer=0, fields=nothing)
+    fields === nothing || return _capture_selected_snapshot(model, fields; time_hours, halo_width)
     mesh = model.grid.horizontal
     air = _extract_for_output(model.state.air_mass, mesh; halo_width=halo_width)
     names = tracer_names(model.state)
@@ -191,7 +196,7 @@ function capture_snapshot(model; time_hours::Real=0, halo_width::Integer=0)
                          _basis_symbol(mass_basis(model.state)))
 end
 
-function _frame_tracer_names(frame::SnapshotFrame)
+function _frame_tracer_names(frame::AbstractSnapshotFrame)
     return sort!(collect(keys(frame.tracers)))
 end
 

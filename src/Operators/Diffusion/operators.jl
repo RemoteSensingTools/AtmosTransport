@@ -82,7 +82,8 @@ Concrete examples:
   `delp` and surface temperature.
 - `PrecomputedCSDkgField` bypasses Kz/geometry reconstruction and does not read
   `layer_thickness`; its interface exchange [kg s⁻¹] is already complete.
-- Uses `workspace.factors` as Thomas-forward-elimination storage.
+- Uses `workspace.factors` for Thomas elimination or Dkg mass-retention factors.
+  The Dkg mass path does not use the packed reference scratch.
 - Launches a topology-specific mass-flux kernel. Packed layouts factor each
   atmospheric column once and advance every tracer with those factors.
 
@@ -558,10 +559,74 @@ end
     apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, dt, meteo; halo_width)
 
 Cubed-sphere helper for state variables stored as tracer mass. The implicit
-vertical solver acts on mixing ratio; this wrapper converts tracer mass to VMR
-using the current dry air mass, applies the existing column solve, then restores
-tracer mass before advection resumes.
+solver uses the current dry air mass. Precomputed Dkg uses conservative
+bidiagonal factors directly on tracer mass. Other fields convert mass to VMR,
+apply the column solve, then restore tracer mass before advection resumes.
 """
+function apply_vertical_diffusion_vmr!(rm::NTuple{6, A}, air_mass::NTuple{6},
+                                       op::ImplicitVerticalDiffusion{FT, KzF},
+                                       workspace::DiffusionWorkspace, dt, meteo=nothing;
+                                       halo_width::Integer) where {
+                                           FT, A <: AbstractArray{FT, 3},
+                                           KzF <: PrecomputedCSDkgField{FT}}
+    _apply_cs_dkg_mass!(rm, air_mass, op, workspace, dt, meteo, halo_width)
+end
+
+function apply_vertical_diffusion_vmr!(rm::NTuple{6, A}, air_mass::NTuple{6},
+                                       op::ImplicitVerticalDiffusion{FT, KzF},
+                                       workspace::DiffusionWorkspace, dt, meteo=nothing;
+                                       halo_width::Integer) where {
+                                           FT, A <: AbstractArray{FT, 4},
+                                           KzF <: PrecomputedCSDkgField{FT}}
+    _apply_cs_dkg_mass!(rm, air_mass, op, workspace, dt, meteo, halo_width)
+end
+
+function _apply_cs_dkg_mass!(rm::NTuple{6}, air_mass::NTuple{6}, op,
+                             workspace::DiffusionWorkspace, dt, meteo, halo_width)
+    FT = eltype(rm[1])
+    Hp = Int(halo_width)
+    Hp >= 0 || throw(ArgumentError("halo_width must be nonnegative"))
+    packed = ndims(rm[1]) == 4
+    length(workspace.factors) == 6 || throw(DimensionMismatch("Dkg requires six factor panels"))
+    # Check every panel before changing any tracer values.
+    for p in 1:6
+        N, Ny, Nz, Nt = size(rm[p], 1), size(rm[p], 2), size(rm[p], 3), size(rm[p], 4)
+        Nc, Nj = N - 2Hp, Ny - 2Hp
+        Nc > 0 && Nj > 0 && Nz > 0 || throw(DimensionMismatch("Dkg panel $p has no physical interior"))
+        size(air_mass[p]) == (N, Ny, Nz) || throw(DimensionMismatch("Dkg panel $p tracer and air shapes differ"))
+        size(workspace.factors[p]) == (Nc, Nj, Nz) ||
+            throw(DimensionMismatch("Dkg factor panel $p must have shape $((Nc, Nj, Nz))"))
+    end
+    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+    for p in 1:6
+        Nc, Ny = size(rm[p], 1) - 2Hp, size(rm[p], 2) - 2Hp
+        Nz, Nt = size(rm[p], 3), size(rm[p], 4)
+        backend = get_backend(rm[p])
+        dkg = panel_field(op.kz_field, p)
+        column_tile = _cs_dkg_mass_workgroupsize(backend, FT)
+        tracer_tile = _cs_dkg_tracer_workgroupsize(backend, FT)
+        if packed && Nt > 1 && tracer_tile !== nothing
+            factor! = _vertical_diffusion_cs_dkg_factors_kernel!(backend, column_tile)
+            solve! = _vertical_diffusion_cs_mass_dkg_tracers_kernel!(backend, tracer_tile)
+            # Queue the read-only tracer solves after factor construction on
+            # the same backend stream. The panel synchronization completes both.
+            factor!(workspace.factors[p], air_mass[p], dkg, FT(dt), Nz, Hp;
+                    ndrange=(Nc, Ny))
+            solve!(rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Hp;
+                   ndrange=(Nc, Ny, Nt))
+        elseif packed
+            kernel! = _vertical_diffusion_cs_mass_dkg_packed_kernel!(backend, column_tile)
+            kernel!(rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Nt, Hp; ndrange=(Nc, Ny))
+        else
+            kernel! = _vertical_diffusion_cs_mass_dkg_kernel!(backend, column_tile)
+            kernel!(rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Hp;
+                    ndrange=(Nc, Ny))
+        end
+        synchronize(backend)
+    end
+    return nothing
+end
+
 function apply_vertical_diffusion_vmr!(q_raw::NTuple{6, A},
                                        air_mass::NTuple{6},
                                        op::ImplicitVerticalDiffusion{FT, KzF},

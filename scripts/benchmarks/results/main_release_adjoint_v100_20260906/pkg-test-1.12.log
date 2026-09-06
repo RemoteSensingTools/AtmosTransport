@@ -1,0 +1,1916 @@
+┌ Warning: The project dependencies or compat requirements have changed since the manifest was last resolved.
+│ It is recommended to `Pkg.resolve()` or consider `Pkg.update()` if necessary.
+└ @ Pkg.API ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/API.jl:1322
+     Testing AtmosTransport
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "JpegTurbo_jll" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "SciMLPublic" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "FiniteDiff" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "JLD2" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "OpenBLASConsistentFPCSR_jll" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "ADTypes" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "Hwloc_jll" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "ChunkCodecLibZlib" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "Parsers" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "Libtiff_jll" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "ArrayInterface" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "CommonDataModel" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "IntervalArithmetic" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "KernelAbstractions" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "DifferentiationInterface" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "Adapt" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "Tables" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+┌ Warning: Entry in manifest at "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/test" for package "DiskArrays" differs from that in "/home/cfranken/code/gitHub/AtmosTransportModel-revamp-main/Manifest.toml"
+└ @ Pkg.Operations ~/.julia/juliaup/julia-1.12.6+0.x64.linux.gnu/share/julia/stdlib/v1.12/Pkg/src/Operations.jl:2262
+      Status `/tmp/jl_k0pRUy/Project.toml`
+⌃ [79e6a3ab] Adapt v4.6.1
+  [4c88cf16] Aqua v0.8.16
+  [c7e460c6] ArgParse v1.2.0
+  [fcfdcc98] AtmosTransport v0.3.0 `~/code/gitHub/AtmosTransportModel-revamp-main`
+⌅ [8e50ac2c] ConservativeRegridding v0.2.0
+  [7445602f] CubedSphere v0.3.4
+  [ffbed154] DocStringExtensions v0.9.5
+  [7a1cc6ca] FFTW v1.10.0
+  [442a2c76] FastGaussQuadrature v1.3.0
+  [b16dfd50] GRIB v0.4.0
+⌃ [cf35fbd7] GeoInterface v1.6.1
+⌅ [3251bfac] GeometryOps v0.1.38
+⌅ [05efe853] GeometryOpsCore v0.1.10
+⌃ [c3a54625] JET v0.11.5
+⌃ [033835bb] JLD2 v0.6.4
+  [0f8b85d8] JSON3 v1.14.3
+⌃ [63c18a36] KernelAbstractions v0.9.41
+  [85f8d34a] NCDatasets v0.14.15
+  [6fe1bfb0] OffsetArrays v1.17.0
+⌃ [429524aa] Optim v2.2.1
+  [aea7be01] PrecompileTools v1.3.4
+  [92933f4c] ProgressMeter v1.11.0
+⌃ [90137ffa] StaticArrays v1.9.18
+⌃ [10745b16] Statistics v1.11.1
+⌃ [0234f1f7] HDF5_jll v2.1.2+0
+  [ade2ca70] Dates v1.11.0
+  [f43a241f] Downloads v1.7.0
+  [7b1f6079] FileWatching v1.11.0
+  [37e2e46d] LinearAlgebra v1.12.0
+  [56ddb016] Logging v1.11.0
+  [a63ad114] Mmap v1.11.0
+  [de0858da] Printf v1.11.0
+  [9a3f8284] Random v1.11.0
+  [ea8e919c] SHA v0.7.0
+  [9e88b42a] Serialization v1.11.0
+  [2f01184e] SparseArrays v1.12.0
+  [fa267f1f] TOML v1.0.3
+  [8dfed614] Test v1.11.0
+      Status `/tmp/jl_k0pRUy/Manifest.toml`
+⌃ [47edcb42] ADTypes v1.22.0
+  [621f4979] AbstractFFTs v1.5.0
+  [1520ce14] AbstractTrees v0.4.5
+⌃ [79e6a3ab] Adapt v4.6.1
+  [35492f91] AdaptivePredicates v1.2.0
+  [4c88cf16] Aqua v0.8.16
+  [c7e460c6] ArgParse v1.2.0
+⌃ [4fba245c] ArrayInterface v7.25.0
+  [fcfdcc98] AtmosTransport v0.3.0 `~/code/gitHub/AtmosTransportModel-revamp-main`
+  [a9b6321e] Atomix v1.1.3
+  [179af706] CFTime v0.2.10
+  [96374032] CRlibm v1.0.2
+⌃ [0b6fb165] ChunkCodecCore v1.0.1
+⌃ [4c0bbee4] ChunkCodecLibZlib v1.0.0
+  [55437552] ChunkCodecLibZstd v1.0.0
+  [ae650224] ChunkSplitters v3.2.0
+  [da1fd8a2] CodeTracking v3.0.2
+⌃ [1fbeeb36] CommonDataModel v0.4.3
+  [34da2185] Compat v4.18.1
+  [807dbc54] Compiler v0.1.1
+⌅ [8e50ac2c] ConservativeRegridding v0.2.0
+  [187b0558] ConstructionBase v1.6.0
+  [150eb455] CoordinateTransformations v0.6.4
+  [b7a15901] CoreMath v0.1.0
+  [7445602f] CubedSphere v0.3.4
+  [9a962f9c] DataAPI v1.16.0
+⌃ [864edb3b] DataStructures v0.19.5
+  [e2d170a0] DataValueInterfaces v1.0.0
+  [927a84f5] DelaunayTriangulation v1.6.6
+⌃ [a0c0ee7d] DifferentiationInterface v0.7.18
+⌃ [3c3547ce] DiskArrays v0.4.21
+  [b4f34e82] Distances v0.10.12
+  [ffbed154] DocStringExtensions v0.9.5
+  [4e289a0a] EnumX v1.0.7
+  [429591f6] ExactPredicates v2.2.9
+  [411431e0] Extents v0.1.6
+  [7a1cc6ca] FFTW v1.10.0
+  [442a2c76] FastGaussQuadrature v1.3.0
+⌃ [5789e2e9] FileIO v1.19.0
+⌃ [1a297f60] FillArrays v1.16.0
+⌃ [6a86dc24] FiniteDiff v2.31.0
+  [b16dfd50] GRIB v0.4.0
+  [68eda718] GeoFormatTypes v0.4.5
+⌃ [cf35fbd7] GeoInterface v1.6.1
+⌅ [3251bfac] GeometryOps v0.1.38
+⌅ [05efe853] GeometryOpsCore v0.1.10
+  [076d061b] HashArrayMappedTries v0.2.0
+⌃ [d1acc4aa] IntervalArithmetic v1.0.9
+  [92d709cd] IrrationalConstants v0.2.6
+  [82899510] IteratorInterfaceExtensions v1.0.0
+⌃ [c3a54625] JET v0.11.5
+⌃ [033835bb] JLD2 v0.6.4
+  [692b3bcd] JLLWrappers v1.8.0
+  [0f8b85d8] JSON3 v1.14.3
+⌅ [aa1ae85d] JuliaInterpreter v0.10.12
+  [70703baa] JuliaSyntax v1.0.2
+⌃ [63c18a36] KernelAbstractions v0.9.41
+  [8ac3fa9e] LRUCache v1.6.2
+⌃ [d3d80556] LineSearches v7.7.1
+  [2ab3a3ac] LogExpFunctions v1.0.1
+⌃ [6f1432cf] LoweredCodeUtils v3.6.2
+  [3da0fdf6] MPIPreferences v0.1.12
+  [1914dd2f] MacroTools v0.5.16
+  [85f8d34a] NCDatasets v0.14.15
+⌃ [d41bc354] NLSolversBase v8.0.0
+  [77ba4419] NaNMath v1.1.4
+  [6fe1bfb0] OffsetArrays v1.17.0
+⌃ [429524aa] Optim v2.2.1
+⌅ [bac558e1] OrderedCollections v1.8.2
+⌅ [69de0a69] Parsers v2.8.5
+  [85a6dd25] PositiveFactorizations v0.2.4
+  [aea7be01] PrecompileTools v1.3.4
+  [21216c6a] Preferences v1.5.2
+  [92933f4c] ProgressMeter v1.11.0
+  [189a3867] Reexport v1.2.2
+  [ae029012] Requires v1.3.1
+⌃ [295af30f] Revise v3.15.1
+  [5eaf0fd0] RoundingEmulator v0.2.1
+⌃ [431bcebd] SciMLPublic v1.0.1
+  [7e506255] ScopedValues v1.6.2
+  [efcf1570] Setfield v1.1.2
+  [746ee33f] SortTileRecursiveTree v0.1.4
+⌃ [276daf66] SpecialFunctions v2.8.0
+  [91464d47] StableTasks v0.1.7
+⌃ [90137ffa] StaticArrays v1.9.18
+  [1e83bf80] StaticArraysCore v1.4.4
+⌃ [10745b16] Statistics v1.11.1
+  [82ae8749] StatsAPI v1.8.0
+  [856f2bd8] StructTypes v1.11.0
+  [3783bdb8] TableTraits v1.0.1
+⌃ [bd369af6] Tables v1.12.1
+⌅ [6aa5eb33] TaylorSeries v0.20.10
+  [b718987f] TextWrap v1.0.2
+⌃ [013be700] UnsafeAtomics v0.3.1
+  [0b7ba130] Blosc_jll v1.21.7+0
+  [6e34b625] Bzip2_jll v1.0.9+0
+  [4e9b3aee] CRlibm_jll v1.0.1+0
+  [a38c48d9] CoreMath_jll v0.1.0+0
+  [f5851436] FFTW_jll v3.3.12+0
+⌃ [0234f1f7] HDF5_jll v2.1.2+0
+⌃ [e33a78d0] Hwloc_jll v2.13.0+1
+  [1d5cc7b8] IntelOpenMP_jll v2025.2.0+0
+⌃ [aacddb02] JpegTurbo_jll v3.1.5+0
+  [88015f11] LERC_jll v4.1.0+0
+  [94ce4f54] Libiconv_jll v1.18.0+0
+⌃ [89763e89] Libtiff_jll v4.7.2+0
+  [d3a379c0] LittleCMS_jll v2.19.1+0
+  [5ced341a] Lz4_jll v1.10.1+0
+  [856f044c] MKL_jll v2025.2.0+0
+⌅ [b5ada748] MPIABI_jll v0.1.5+0
+  [7cb0a576] MPICH_jll v5.0.1+0
+  [f1f71cc9] MPItrampoline_jll v5.5.6+0
+  [9237b28f] MicrosoftMPI_jll v10.1.4+3
+⌃ [7243133f] NetCDF_jll v401.1000.0+0
+⌃ [6cdc7f73] OpenBLASConsistentFPCSR_jll v0.3.33+0
+  [643b3616] OpenJpeg_jll v2.5.5+0
+  [fe0851c0] OpenMPI_jll v5.0.11+0
+  [efe28fd5] OpenSpecFun_jll v0.5.6+0
+⌅ [02c8fc9c] XML2_jll v2.13.9+0
+  [ffd25f8a] XZ_jll v5.8.3+0
+  [a65dc6b1] Xorg_libpciaccess_jll v0.19.0+0
+  [3161d3a3] Zstd_jll v1.5.7+1
+⌅ [2b3700d1] aws_c_auth_jll v0.9.6+0
+⌅ [70f11efc] aws_c_cal_jll v0.9.13+0
+⌅ [73048d1d] aws_c_common_jll v0.12.6+0
+⌅ [73a04cd5] aws_c_compression_jll v0.3.2+0
+⌅ [3254fc65] aws_c_http_jll v0.10.13+0
+⌅ [13c41daa] aws_c_io_jll v0.26.3+0
+⌅ [bd1f34fb] aws_c_s3_jll v0.11.5+0
+⌅ [1282aa60] aws_c_sdkutils_jll v0.2.4+1
+⌅ [b2a88e68] aws_checksums_jll v0.2.10+0
+  [c4b69c83] dlfcn_win32_jll v1.4.2+0
+  [b04048ba] eccodes_jll v2.45.0+0
+  [477f73a3] libaec_jll v1.1.7+0
+  [b53b4c65] libpng_jll v1.6.58+0
+⌃ [337d8026] libzip_jll v1.11.3+0
+⌅ [9aeb927a] mpif_jll v0.1.7+0
+  [1317d2d5] oneTBB_jll v2022.3.0+0
+⌃ [cddc5d3d] s2n_tls_jll v1.7.3+0
+  [0dad84c5] ArgTools v1.1.2
+  [56f22d72] Artifacts v1.11.0
+  [2a0f44e3] Base64 v1.11.0
+  [8bf52ea8] CRC32c v1.11.0
+  [ade2ca70] Dates v1.11.0
+  [8ba89e20] Distributed v1.11.0
+  [f43a241f] Downloads v1.7.0
+  [7b1f6079] FileWatching v1.11.0
+  [9fa8497b] Future v1.11.0
+  [b77e0a4c] InteractiveUtils v1.11.0
+  [ac6e5ff7] JuliaSyntaxHighlighting v1.12.0
+  [4af54fe1] LazyArtifacts v1.11.0
+  [b27032c2] LibCURL v0.6.4
+  [76f85450] LibGit2 v1.11.0
+  [8f399da3] Libdl v1.11.0
+  [37e2e46d] LinearAlgebra v1.12.0
+  [56ddb016] Logging v1.11.0
+  [d6f4376e] Markdown v1.11.0
+  [a63ad114] Mmap v1.11.0
+  [ca575930] NetworkOptions v1.3.0
+  [44cfe95a] Pkg v1.12.1
+  [de0858da] Printf v1.11.0
+  [3fa0cd96] REPL v1.11.0
+  [9a3f8284] Random v1.11.0
+  [ea8e919c] SHA v0.7.0
+  [9e88b42a] Serialization v1.11.0
+  [6462fe0b] Sockets v1.11.0
+  [2f01184e] SparseArrays v1.12.0
+  [f489334b] StyledStrings v1.11.0
+  [fa267f1f] TOML v1.0.3
+  [a4e569a6] Tar v1.10.0
+  [8dfed614] Test v1.11.0
+  [cf7118a7] UUIDs v1.11.0
+  [4ec0a83e] Unicode v1.11.0
+  [e66e0078] CompilerSupportLibraries_jll v1.3.0+1
+  [deac9b47] LibCURL_jll v8.15.0+0
+  [e37daf67] LibGit2_jll v1.9.0+0
+  [29816b5a] LibSSH2_jll v1.11.3+1
+  [14a3606d] MozillaCACerts_jll v2025.11.4
+  [4536629a] OpenBLAS_jll v0.3.29+0
+  [05823500] OpenLibm_jll v0.8.7+0
+  [458c3c95] OpenSSL_jll v3.5.4+0
+  [bea87d4a] SuiteSparse_jll v7.8.3+2
+  [83775a58] Zlib_jll v1.3.1+2
+  [8e850b90] libblastrampoline_jll v5.15.0+0
+  [8e850ede] nghttp2_jll v1.64.0+1
+  [3f19e933] p7zip_jll v17.7.0+0
+        Info Packages marked with ⌃ and ⌅ have new versions available. Those with ⌃ may be upgradable, but those with ⌅ are restricted by compatibility constraints from upgrading.
+     Testing Running tests...
+Test Summary:        | Pass  Total   Time
+Aqua: package health |   10     10  12.5s
+Test Summary:                    | Pass  Total   Time
+JET: hot-path inference snapshot |    1      1  49.1s
+Test Summary:                                       | Pass  Total   Time
+Adjoint identity in model space (memo Eqs. 2.4-2.5) |   17     17  15.0s
+Test Summary:                                                | Pass  Total  Time
+Adjoint identity in preconditioned space (memo Eqs. 2.6-2.7) |   21     21  5.5s
+Test Summary:                                        | Pass  Total  Time
+default monotone moment is signed and offset-neutral |    4      4  0.0s
+Test Summary:                                     | Pass  Total  Time
+structured monotone advection supports signed VMR |    6      6  6.4s
+Test Summary:                                 | Pass  Total  Time
+SlopesScheme face flux uses half-slope moment |    2      2  0.1s
+Test Summary:                                                | Pass  Total  Time
+active diffusion is validated before advection mutates state |    9      9  0.7s
+Test Summary:                                          | Pass  Total  Time
+advection workspace shape is validated before mutation |    3      3  0.1s
+  F32 vs F64 max relative difference (4 steps): 1.4142303e-6
+  F32 vs F64 global mass bias (4 steps):        3.158391805787995e-8
+Test Summary:                            | Pass  Broken  Total  Time
+Advection kernels: {CPU,GPU} × {F32,F64} |   14       2     16  5.6s
+  Slopes F32 vs F64 max relative difference (4 steps): 1.257094e-6
+  Slopes F32 vs F64 global mass bias (4 steps):        -1.3913470788465864e-8
+Test Summary:                               | Pass  Broken  Total  Time
+SlopesScheme kernels: {CPU,GPU} × {F32,F64} |   12       2     14  1.0s
+  PPM F32 vs F64 max relative difference (4 steps): 1.257094e-6
+  PPM F32 vs F64 global mass bias (4 steps):        -2.19693218317948e-8
+Test Summary:                            | Pass  Broken  Total  Time
+PPMScheme kernels: {CPU,GPU} × {F32,F64} |   12       2     14  1.2s
+Test Summary:              | Pass  Broken  Total  Time
+Multi-tracer kernel fusion |   72       2     74  7.0s
+    F64: n_sub = (1, 1, 1)
+    F32: n_sub = (1, 1, 1)
+Test Summary:               | Pass  Total  Time
+Unified CFL pilot (plan 13) |    6      6  0.0s
+
+✓ All advection kernel cross-backend/precision tests completed!
+Test Summary:                    | Pass  Total  Time
+execution architecture selection |   19     19  0.5s
+Test Summary:          | Pass  Total  Time
+Metal requires Float32 |    3      3  0.0s
+Test Summary:                                   | Pass  Total  Time
+runtime kernels avoid hard Float64 accumulation |    2      2  0.0s
+Test Summary:                                   | Pass  Total  Time
+DrivenRunner resolves one concrete architecture |    5      5  0.0s
+Test Summary:                              | Pass  Total  Time
+canonical CLI activates package extensions |    2      2  0.0s
+Test Summary:                                           | Pass  Total  Time
+Run output drains background writes on exceptional exit |    8      8  0.1s
+Test Summary:                                          | Pass  Total  Time
+Run and asynchronous output failures are both reported |    9      9  0.0s
+Test Summary:                                                        | Pass  Total   Time
+Daily output owns frames and closes other resources on write failure |   11     11  16.4s
+Test Summary:                  | Pass  Total  Time
+PlanetParameters and AtmosGrid |    6      6  0.2s
+Test Summary:             | Pass  Total  Time
+Basis-explicit core types |   10     10  0.4s
+Test Summary:                           | Pass  Total  Time
+physics families share AbstractOperator |    5      5  0.0s
+Test Summary:                                         | Pass  Total  Time
+State and flux containers reject inconsistent storage |   13     13  0.4s
+Test Summary:                                       | Pass  Total  Time
+Abstract grid contracts fail with actionable errors |   28     28  0.1s
+Test Summary:                 | Pass  Total  Time
+Standalone runtime smoke test |   12     12  0.5s
+Test Summary:                           | Pass  Total  Time
+Structured x-direction static CFL pilot |    6      6  0.1s
+Test Summary:                                 | Pass  Total  Time
+Clustered x-sweeps accept Int32 cluster_sizes |    8      8  0.0s
+Test Summary:                                           | Pass  Total  Time
+RussellLerner y-sweep stays finite with zero-mass donor |    4      4  0.2s
+Test Summary:                                           | Pass  Total  Time
+Face-indexed horizontal subcycling preserves positivity |    4      4  1.6s
+Test Summary:                     | Pass  Total  Time
+GPU static CFL enforces max_n_sub |    1      1  0.0s
+Test Summary:                                         | Pass  Total  Time
+CubedSphere runtime uses dedicated panel-native types |   12     12  5.4s
+Test Summary:                              | Pass  Total  Time
+Face-connected reduced-Gaussian smoke test |    5      5  1.2s
+Test Summary:                                              | Broken  Total  Time
+Face-connected reduced-Gaussian GPU matches CPU for Upwind |      1      1  0.4s
+Test Summary:                                                    | Pass  Total  Time
+Face-connected unsupported reconstruction families fail honestly |    2      2  0.0s
+Test Summary:                  | Pass  Total  Time
+Adapt.jl container conversions |    4      4  0.1s
+Test Summary:                        | Pass  Total  Time
+binary_capabilities + inspect_binary |   42     42  9.0s
+Test Summary:       | Pass  Total  Time
+expand_binary_paths |   25     25  2.2s
+Test Summary:          | Pass  Total  Time
+CMFMC adjoint identity |    5      5  6.5s
+Test Summary:                                       | Pass  Total  Time
+CMFMCMatrixConvection — rate derivation correctness |   15     15  0.5s
+Test Summary:                                        | Pass  Total  Time
+CMFMCMatrixConvection — boundary-residual absorption |    6      6  0.0s
+Test Summary:                                                         | Pass  Total  Time
+CMFMCMatrixConvection — TOA-leak boundary (δ<0) absorbed via detu[Nz] |    8      8  0.0s
+Test Summary:                                       | Pass  Total  Time
+CMFMCMatrixConvection — derived rates are FT-stable |   22     22  0.5s
+Test Summary:                                        | Pass  Total  Time
+CMFMCMatrixConvection — face-indexed (RG) derivation |   10     10  0.5s
+Test Summary:                                         | Pass  Total  Time
+CMFMCMatrixConvection — cubed-sphere panel derivation |   96     96  0.5s
+Test Summary:                                                 | Pass  Total  Time
+CMFMCMatrixConvection — column mass conservation (CS forward) |   96     96  2.5s
+Test Summary:                               | Pass  Total  Time
+CMFMCMatrixConvection — CS adjoint identity |    1      1  1.6s
+Test Summary:                                                 | Pass  Total  Time
+CMFMCMatrixConvection — window-cached derivation invalidation |    3      3  0.4s
+Test Summary:                                                   | Pass  Total  Time
+active preprocessing configs use unified source/topology schema |    1      1  0.1s
+Test Summary:                                         | Pass  Total  Time
+active run configs use canonical runtime input schema |    1      1  0.2s
+Test Summary:                             |  Pass  Total   Time
+Conservative Dkg mass solve and transpose | 12000  12000  16.7s
+Test Summary:                                 | Pass  Total  Time
+Dkg resolves weak transfers into empty layers |   78     78  0.7s
+Test Summary:                        | Pass  Total  Time
+Dkg leaves isolated layers bit-exact |    2      2  0.2s
+Test Summary:                                      | Pass  Total  Time
+Dkg validates all workspace panels before mutation |    4      4  0.2s
+Test Summary:                                     | Pass  Total  Time
+Dkg zero-carrier convention matches the VMR solve |    1      1  1.3s
+Test Summary:                                        | Pass  Total  Time
+Dkg closed interfaces do not pass rounding residuals |    2      2  0.2s
+Test Summary:                           | Pass  Total  Time
+preconditioned 4D-Var — sanity at χ = 0 |   24     24  4.7s
+Test Summary:                                      | Pass  Total  Time
+preconditioned 4D-Var — background_cost = 0.5 ‖χ‖² |    1      1  0.6s
+Test Summary:                                          | Pass  Total  Time
+preconditioned 4D-Var — FD identity, Linear × Diagonal |    1      1  1.2s
+Test Summary:                                          | Pass  Total  Time
+preconditioned 4D-Var — FD identity, Linear × Gaussian |    1      1  0.4s
+Test Summary:                                             | Pass  Total  Time
+preconditioned 4D-Var — FD identity, LogNormal × Diagonal |    1      1  0.4s
+Test Summary:                                             | Pass  Total  Time
+preconditioned 4D-Var — FD identity, LogNormal × Gaussian |    1      1  0.4s
+Test Summary:                                                    | Pass  Total  Time
+preconditioned 4D-Var — preconditioner / control length mismatch |    1      1  0.1s
+Test Summary:                                     | Pass  Total  Time
+Chemistry on CubedSphereState (plan 21 follow-up) |  152    152  2.4s
+Test Summary:                        | Pass  Total  Time
+Covariance constructors — validation |   12     12  1.0s
+Test Summary:                             | Pass  Total  Time
+apply_B_half! — shape mismatch rejections |    3      3  0.4s
+Test Summary:                            | Pass  Total  Time
+DiagonalCSCovariance — B^(1/2) χ = σ ⊙ χ |   12     12  1.4s
+Test Summary:                                    | Pass  Total  Time
+DiagonalCSCovariance — spectrum of B is diag(σ²) |    2      2  2.0s
+Test Summary:                                    | Pass  Total  Time
+IsotropicGaussianCSCovariance — adjoint identity |    1      1  2.0s
+Test Summary:                                                            | Pass  Total  Time
+IsotropicGaussianCSCovariance — spectrum is symmetric PSD with B[i,i]=σ² |   99     99  0.7s
+Test Summary:                                                        | Pass  Total  Time
+IsotropicGaussianCSCovariance — δ-spike smoothing is Gaussian-shaped |    8      8  0.8s
+Test Summary:                                                     | Pass  Total  Time
+IsotropicGaussianCSCovariance — apply_B_half! uses cached scratch |    3      3  0.6s
+Test Summary:                                                   | Pass  Total  Time
+IsotropicGaussianCSCovariance — short L recovers diagonal limit | 9216   9216  0.0s
+Test Summary:                         | Pass  Total  Time
+CSDepartureRecord keyword constructor |   31     31  0.2s
+Test Summary:                                            | Pass  Total  Time
+CSDepartureRecord — sign-convention arithmetic invariant |    5      5  0.0s
+Test Summary:                                               | Pass  Total  Time
+CSDepartureRecord — positional ctor goes through validation |    4      4  0.0s
+Test Summary:                                                 | Pass  Total  Time
+CSObservationRecord — positional ctor goes through validation |    4      4  0.0s
+Test Summary:                                                         | Pass  Total  Time
+build_departure_set — identical value/sigma but reversed obs rejected |    5      5  0.9s
+Test Summary:                                     | Pass  Total  Time
+build_departure_set — rejects unparseable t_start |    1      1  0.0s
+Test Summary:                                  | Pass  Total  Time
+build_departure_set — alignment + finite gates |   28     28  0.1s
+Test Summary:                                    | Pass  Total  Time
+build_departure_set — alignment provenance check |    4      4  0.1s
+Test Summary:                                      | Pass  Total  Time
+CSDepartureSet — per-record bounds vs run metadata |    7      7  0.1s
+Test Summary:                              | Pass  Total  Time
+CSDepartureSet bit-exact NetCDF round-trip |   59     59  5.5s
+Test Summary:                                                | Pass  Total  Time
+write_departures / read_departures preserves row order + ids |    1      1  0.1s
+Test Summary:                                           | Pass  Total  Time
+write_departures omits optional attrs when not provided |    4      4  0.1s
+Test Summary:                           | Pass  Total  Time
+v1 NetCDF on-disk layout matches schema |   29     29  0.4s
+Test Summary:                             | Pass  Total  Time
+read_departures rejects schema violations |   29     29  0.5s
+Test Summary:          | Pass  Total  Time
+run_cs_driven builders |  120    120  4.1s
+Test Summary:                                   | Pass  Total   Time
+Cubed-sphere initialization into packed storage |  558    558  22.3s
+Test Summary:                                                          | Pass  Total  Time
+Private CS VMR reuse preserves public ownership and mixed initializers |   54     54  1.5s
+Test Summary:                                                   | Pass  Total  Time
+Native CS file initialization can replace private reuse buffers |   14     14  5.0s
+Test Summary:                             | Pass  Total   Time
+cs_4dvar.jl driver — synthetic smoke test |   13     13  19.8s
+Test Summary:                                 | Pass  Total  Time
+cs_4dvar.jl driver — config dispatch coverage |    3      3  1.8s
+Test Summary:                                                          | Pass  Total  Time
+cs_4dvar.jl driver — initial='background' in preconditioned mode → χ=0 |    4      4  0.6s
+Test Summary:                                                       | Pass  Total  Time
+cs_4dvar.jl driver — preconditioner.enabled w/o covariance rejected |    1      1  0.0s
+Test Summary:                         | Pass  Total  Time
+cs_4dvar.jl driver — rejects bad TOML |    5      5  0.1s
+Test Summary:                               | Pass  Total   Time
+synthetic 4D-Var inversion — truth recovery |   13     13  23.6s
+Test Summary:                                                          | Pass  Total   Time
+synthetic 4D-Var inversion — bumped iteration budget converges further |    1      1  15.6s
+Test Summary:                                | Pass  Total  Time
+CS4DVarSolveResult — log defaults to nothing |    2      2  1.7s
+Test Summary:                                    | Pass  Total  Time
+CSGradientDescent — log captures every iteration |   26     26  0.2s
+Test Summary:                          | Pass  Total  Time
+CSLBFGS — log captures every iteration |   10     10  0.3s
+Test Summary:                                                            | Pass  Total  Time
+cs_surface_flux_4dvar_optimize — log = true at entrypoint (no optimizer) |    3      3  0.6s
+Test Summary:                     | Pass  Total  Time
+CSLBFGS — log gradient norm is L2 |    5      5  0.3s
+Test Summary:                                               | Pass  Total  Time
+cs_surface_flux_4dvar_optimize — log via explicit optimizer |    2      2  0.5s
+Test Summary:          | Pass  Total  Time
+CSLBFGS — construction |   10     10  0.0s
+Test Summary:                                                       | Pass  Total  Time
+CSLBFGS — outperforms GD on unconditioned 4D-Var (same iter budget) |    8      8  1.0s
+Test Summary:                                 | Pass  Total  Time
+CSLBFGS — works through preconditioned 4D-Var |    2      2  1.5s
+Test Summary:                                              | Pass  Total  Time
+cs_surface_flux_4dvar_optimize — accepts CSLBFGS via kwarg |    2      2  0.3s
+Test Summary:                              |  Pass  Total  Time
+lonlat_to_panel_xy: closed-form CS inverse | 56034  56034  0.7s
+Test Summary:                                                     | Pass  Total   Time
+CS transport, diffusion, convection, and decay agree across files |   56     56  59.5s
+Test Summary:                                       | Pass  Total  Time
+bind_to_mesh — time mapping (left-closed half-open) |    1      1  0.1s
+Test Summary:                        | Pass  Total  Time
+bind_to_mesh — out-of-range policies |    5      5  0.0s
+Test Summary:                                        | Pass  Total  Time
+bind_to_mesh — terminal boundary t_start + nsteps*dt |    4      4  0.0s
+Test Summary:                      | Pass  Total  Time
+bind_to_mesh — argument validation |    4      4  0.1s
+Test Summary:                                           | Pass  Total  Time
+bind_to_mesh — rejects non-finite / out-of-range fields |   11     11  0.1s
+Test Summary:                | Pass  Total  Time
+bind_to_mesh — tracer_filter |    4      4  0.1s
+Test Summary:                                        | Pass  Total  Time
+bind_to_mesh — geographic round-trip at cell centers |   19     19  0.1s
+Test Summary:                                           | Pass  Total  Time
+bind_to_mesh — sub-cell perturbations stay in same cell |   16     16  0.1s
+Test Summary:                                                    | Pass  Total  Time
+bind_to_mesh — bit-exact equivalence to hand-built CSObservation |   19     19  0.1s
+Test Summary:                                                  | Pass  Total  Time
+bind_to_mesh — survives write_observations / read_observations |   19     19  0.7s
+Test Summary:                           | Pass  Total  Time
+CSObservationRecord keyword constructor |   21     21  0.1s
+Test Summary:                                | Pass  Total  Time
+CSObservationSet bit-exact NetCDF round-trip |   32     32  0.3s
+Test Summary:                           | Pass  Total  Time
+v1 NetCDF on-disk layout matches schema |   14     14  0.2s
+Test Summary:                               | Pass  Total  Time
+read_observations rejects schema violations |    5      5  0.1s
+Test Summary:                                | Pass  Total  Time
+write_observations rejects empty time_origin |    1      1  0.0s
+Test Summary:                    | Pass  Total  Time
+CSGradientDescent — construction |   14     14  0.0s
+Test Summary:                                                        | Pass  Total  Time
+cs_surface_flux_4dvar_optimize — legacy kwargs == explicit optimizer |    5      5  0.5s
+Test Summary:                                              | Pass  Total  Time
+cs_surface_flux_4dvar_solve — direct dispatch on optimizer |    6      6  0.1s
+Test Summary:                                                            | Pass  Total  Time
+cs_surface_flux_4dvar_solve — non-line-search variant accepts every step |    2      2  0.2s
+Test Summary:                                                      | Pass  Total   Time
+cs_surface_flux_4dvar_solve — Float32 model with Float64 optimizer |    5      5  10.5s
+Test Summary:                                                          | Pass  Total  Time
+cs_surface_flux_4dvar — scalar preconditioner broadcasts to N controls |    4      4  1.6s
+Test Summary:                                       | Pass  Total  Time
+CS panel ↔ geographic helpers (Section D, Commit 1) |  108    108  2.6s
+Test Summary:                                       | Pass  Total   Time
+CS split-sweep surface-emission footprint prototype |   72     72  37.8s
+Test Summary:                                        | Pass  Total  Time
+CSSurfaceFluxPreconditioner — constructor validation |    7      7  0.9s
+Test Summary:                            | Pass  Total  Time
+apply_B_half_inverse! — diagonal literal |    6      6  0.9s
+Test Summary:                                                      | Pass  Total  Time
+apply_B_half_inverse! — Gaussian B^(1/2) · B^(-1/2) = I round-trip |    6      6  0.0s
+Test Summary:                                                | Pass  Total  Time
+Gaussian inverse remains finite at operational Float32 sizes |    9      9  3.1s
+Test Summary:                                   | Pass  Total  Time
+apply_preconditioner! — Linear/Diagonal literal |    6      6  0.1s
+Test Summary:                                                   | Pass  Total  Time
+apply_preconditioner! — LogNormal/Diagonal literal + positivity |   18     18  0.3s
+Test Summary:                                           | Pass  Total  Time
+Linear preconditioner — bijection (Diagonal + Gaussian) |   24     24  0.0s
+Test Summary:                                              | Pass  Total  Time
+LogNormal preconditioner — bijection (Diagonal + Gaussian) |   36     36  0.0s
+Test Summary:                              | Pass  Total  Time
+LogNormal inverse — rejects non-positive x |    1      1  0.2s
+Test Summary:                                   | Pass  Total  Time
+Adjoint identity — Linear (Diagonal + Gaussian) |    2      2  0.0s
+Test Summary:                                         | Pass  Total  Time
+Preconditioner — inverse / adjoint use cached scratch |    3      3  0.2s
+Test Summary:                                      | Pass  Total  Time
+Adjoint identity — LogNormal (Diagonal + Gaussian) |    2      2  0.0s
+Test Summary:                  | Pass  Total  Time
+CS preprocessor contract gates |  176    176  8.2s
+Test Summary:                              | Pass  Total  Time
+Cubed-sphere pressure-layer initialization |  934    934  2.4s
+Test Summary:                                         | Pass  Total   Time
+CS seam exchange agrees with independent scalar loops |  240    240  21.7s
+Test Summary:                                               | Pass  Total  Time
+CS seam adjoint differentiates the coupled production sweep |   16     16  2.3s
+Test Summary:                                                      | Pass  Total  Time
+CS seam cache follows its scheme and rejects incompatible geometry |    4      4  0.1s
+Test Summary:                                       | Pass  Total   Time
+CS spectral unified driver emits reproducible bytes |    5      5  19.5s
+Test Summary:                                     | Pass  Total  Time
+checkpoint_window_count / checkpoint_window_range |   14     14  0.0s
+Test Summary:                                                   | Pass  Total  Time
+StrideCheckpoint vs FullCheckpoint — linear PPM, transport flow |   13     13  1.6s
+Test Summary:                          | Pass  Total  Time
+StrideCheckpoint with CMFMC convection |    3      3  1.7s
+Test Summary:                                   | Pass  Total  Time
+StrideCheckpoint with ImplicitVerticalDiffusion |    3      3  1.1s
+Test Summary:                                                   | Pass  Total  Time
+StrideCheckpoint vs FullCheckpoint — monotone PPM (tracer tape) |   10     10  1.0s
+Test Summary:                                        | Pass  Total  Time
+StrideCheckpoint nonlinear PPM + base_emission_rates |    3      3  0.7s
+Test Summary:                                                          | Pass  Total  Time
+StrideCheckpoint nonlinear PPM + implicit diffusion + CMFMC convection |    3      3  1.8s
+Test Summary:                                         | Pass  Total  Time
+StrideCheckpoint vs FullCheckpoint — LinRoodPPMScheme |    5      5  5.9s
+Test Summary:                                                       | Pass  Total  Time
+StrideCheckpoint LinRood + base_emission_rates + implicit diffusion |    3      3  1.4s
+Test Summary:                                       | Pass  Total  Time
+StrideCheckpoint LinRood rejects :mmap tape_storage |    3      3  0.1s
+Test Summary:                                               | Pass  Total  Time
+StrideCheckpoint vs FullCheckpoint — LinRoodPPMScheme ORD=7 |    5      5  4.5s
+Test Summary:                                          | Pass  Total  Time
+LinRood non-unit flux_scale — FD and checkpoint parity |    6      6  4.4s
+Test Summary:                               | Pass  Total  Time
+stride rejects pre-constructed tape_storage |    1      1  0.1s
+Test Summary:                        | Pass  Total  Time
+from-seed stride parity — linear PPM |    5      5  0.4s
+Test Summary:                                                | Pass  Total  Time
+from-seed stride parity — nonlinear PPM with base_panels_rm0 |    3      3  0.4s
+Test Summary:                                                   | Pass  Total  Time
+from-seed stride parity — LinRoodPPMScheme with base_panels_rm0 |    4      4  0.4s
+Test Summary:                                                                 | Pass  Total  Time
+from-seed stride nonlinear PPM with base_panels_rm0 = nothing (zero fallback) |    3      3  0.3s
+Test Summary:                                              | Pass  Total  Time
+from-seed stride rejects unsupported scheme/storage combos |    4      4  0.2s
+Test Summary:                         | Pass  Total  Time
+RevolveCheckpoint parity — linear PPM |    2      2  0.4s
+Test Summary:                            | Pass  Total  Time
+RevolveCheckpoint parity — nonlinear PPM |    1      1  0.3s
+Test Summary:                               | Pass  Total  Time
+RevolveCheckpoint parity — LinRoodPPMScheme |    1      1  0.1s
+Test Summary:                                                        | Pass  Total  Time
+RevolveCheckpoint with implicit diffusion — nonlinear PPM (FD-grade) |   36     36  0.8s
+Test Summary:                      | Pass  Total  Time
+from-seed RevolveCheckpoint parity |    2      2  0.4s
+Test Summary:                                      | Pass  Total  Time
+RevolveCheckpoint rejects unsupported tape_storage |    5      5  0.2s
+Test Summary:                                                 | Pass  Total  Time
+RevolveCheckpoint handles nsteps == 1 (single-step base case) |    2      2  0.0s
+Test Summary:               | Pass  Total  Time
+MmapCSTapeStorage roundtrip |  122    122  2.4s
+Test Summary:                                           | Pass  Total  Time
+cs_surface_emission_footprint :mmap parity with :device |    9      9  3.3s
+Test Summary:                                    | Pass  Total  Time
+cs_tape_byte_estimate matches realised tape size |   19     19  0.7s
+Test Summary:                                    | Pass  Total  Time
+LinRoodPPMScheme rejects non-device tape_storage |    2      2  8.1s
+Test Summary:                                             | Pass  Total  Time
+cs_surface_flux_4dvar validates control shapes vs mesh.Nc |    2      2  1.7s
+Test Summary:         | Pass  Total  Time
+load_mmap_tape resume |   87     87  3.4s
+Test Summary:                                    | Pass  Total  Time
+tape_path — FullCheckpoint single-tape directory |    7      7  0.8s
+Test Summary:                                          | Pass  Total  Time
+tape_path — FullCheckpoint auto-creates leaf directory |    3      3  0.1s
+Test Summary:                                          | Pass  Total  Time
+tape_path — StrideCheckpoint per-window subdirectories |   11     11  0.4s
+Test Summary:                                              | Pass  Total  Time
+tape_path — RevolveCheckpoint per-base-case subdirectories |   13     13  0.4s
+Test Summary:                     | Pass  Total  Time
+tape_path — from-seed entry point |    2      2  0.3s
+Test Summary:                     | Pass  Total  Time
+tape_path — validation rejections |    7      7  0.3s
+Test Summary:                                       | Pass  Total  Time
+tape_path — LinRood reject is side-effect free (P2) |    9      9  0.3s
+Test Summary:                                              | Pass  Total  Time
+tape_path — strict finalize surfaces manifest failure (P1) |    3      3  0.1s
+Test Summary:                                           | Pass  Total  Time
+tape_path — strict finalize for per-window storage (P1) |    2      2  0.0s
+Test Summary:            | Pass  Total  Time
+CS writer-contract guard |    7      7  0.0s
+Test Summary:            | Pass  Total  Time
+CubedSphereMesh geometry |   36     36  0.1s
+Test Summary: | Pass  Total  Time
+Halo exchange |  496    496  0.2s
+Test Summary:                      | Pass  Total   Time
+CS Strang splitting — UpwindScheme |   28     28  13.1s
+Test Summary:                                       | Pass  Total  Time
+CS Strang splitting — SlopesScheme{MonotoneLimiter} |    9      9  4.1s
+Test Summary:                   | Pass  Total  Time
+CS Strang splitting — PPMScheme |    3      3  1.2s
+Test Summary:                                                   | Pass  Total  Time
+CS advection conserves structured tracers across mirrored seams |    8      8  3.9s
+Test Summary:                                                  | Pass  Total   Time
+CS schemes conserve across seams at appreciable Courant number |   40     40  27.8s
+Test Summary:                                   | Pass  Total  Time
+Lin-Rood q-space seam conservation at valid CFL |   32     32  6.0s
+Test Summary:                                         | Pass  Total  Time
+CS monotone advection preserves signed tracer offsets |   12     12  0.6s
+Test Summary:                      | Pass  Total  Time
+CS source mass closure — PPMScheme |   12     12  2.7s
+Test Summary:      | Pass  Total  Time
+CS halo validation |    2      2  0.5s
+Test Summary:                              | Pass  Total  Time
+LLPoissonWorkspace zero-allocation balance |    1      1  0.4s
+Test Summary:          | Pass  Total  Time
+CS advection — Float32 |    1      1  1.1s
+Test Summary:                                     | Pass  Total  Time
+Shared-seam horizontal adjoint at appreciable CFL |   12     12  3.0s
+Test Summary:                                            | Pass  Total  Time
+CS mass-flux diffusion — column tracer-mass conservation |   96     96  0.5s
+Test Summary:                                         | Pass  Total  Time
+CS packed diffusion matches independent tracer solves |    2      2  4.5s
+Test Summary:                                                  | Pass  Total  Time
+CS mass-flux diffusion — adjoint identity ⟨y, L·x⟩ = ⟨Lᵀ·y, x⟩ |    1      1  0.7s
+Test Summary:                                                   | Pass  Total  Time
+LL packed mass-flux diffusion — column tracer-mass conservation |   32     32  1.0s
+Test Summary:                                                           | Pass  Total  Time
+RG (face-indexed) packed mass-flux diffusion — tracer-mass conservation |   24     24  1.2s
+Test Summary:                                                           | Pass  Total  Time
+RG (face-indexed) single mass-flux diffusion — tracer-mass conservation |   12     12  1.1s
+Test Summary:                                                   | Pass  Total  Time
+LL palindrome diffusion equals its standalone midpoint operator |    2      2  0.5s
+Test Summary:                                                 | Pass  Total  Time
+Backward-Euler full and half-step maps differ at second order |    2      2  0.2s
+Test Summary:                                                  | Pass  Total  Time
+Diffusive surface coupling adds mass before the implicit solve |    1      1  0.6s
+Test Summary:                                  | Pass  Total  Time
+maintained documentation has valid local links |   75     75  0.7s
+Test Summary:                                  | Pass  Total  Time
+home page exposes VitePress front matter first |    1      1  0.0s
+Test Summary:                                                          | Pass  Total  Time
+DrivenSimulation optional no-reset window carry preserves mixing ratio |    3      3  3.7s
+Test Summary:                                                                | Pass  Total  Time
+DrivenSimulation air-mass reset modes choose VMR or tracer-mass conservation |    9      9  0.3s
+Test Summary:                                         | Pass  Total  Time
+DrivenSimulation applies bottom-layer surface sources |    4      4  1.9s
+Test Summary:                                                            | Pass  Total  Time
+DrivenSimulation applies bottom-layer surface sources on ReducedGaussian |    4      4  4.2s
+Test Summary:                                                              | Pass  Total  Time
+DrivenSimulation ReducedGaussian run! accumulates emissions across windows |    6      6  1.4s
+Test Summary:                                                            | Pass  Total  Time
+DrivenSimulation ReducedGaussian supports diffusion plus surface sources |    4      4  2.1s
+Test Summary:                           | Pass  [ Info: ── Tier core — 120 files ──
+[ Info: Running core/test_aqua.jl
+Precompiling packages...
+    587.9 ms  ✓ FillArrays → FillArraysStatisticsExt
+    671.5 ms  ✓ Adapt
+    616.6 ms  ✓ SciMLPublic
+    881.4 ms  ✓ ADTypes
+    587.4 ms  ✓ OpenBLASConsistentFPCSR_jll
+    529.8 ms  ✓ ChunkCodecLibZstd
+    658.0 ms  ✓ JpegTurbo_jll
+    390.7 ms  ✓ OffsetArrays → OffsetArraysAdaptExt
+    582.2 ms  ✓ FillArrays → FillArraysStaticArraysExt
+    527.0 ms  ✓ Adapt → AdaptSparseArraysExt
+    626.9 ms  ✓ Hwloc_jll
+   1042.8 ms  ✓ DiskArrays
+    545.4 ms  ✓ Adapt → AdaptStaticArraysExt
+    379.1 ms  ✓ ADTypes → ADTypesConstructionBaseExt
+    826.6 ms  ✓ TaylorSeries → TaylorSeriesSAExt
+   1483.2 ms  ✓ DataStructures
+    633.1 ms  ✓ Libtiff_jll
+   1598.0 ms  ✓ Tables
+    723.4 ms  ✓ MPICH_jll
+   1338.6 ms  ✓ ArrayInterface
+   1588.5 ms  ✓ CoordinateTransformations
+    351.3 ms  ✓ ArrayInterface → ArrayInterfaceStaticArraysCoreExt
+    691.4 ms  ✓ LittleCMS_jll
+    520.9 ms  ✓ ArrayInterface → ArrayInterfaceSparseArraysExt
+   1730.7 ms  ✓ DifferentiationInterface
+   1188.4 ms  ✓ CommonDataModel
+   2360.6 ms  ✓ SpecialFunctions
+    583.1 ms  ✓ FiniteDiff
+   1139.4 ms  ✓ HDF5_jll
+    663.1 ms  ✓ OpenJpeg_jll
+    562.2 ms  ✓ DifferentiationInterface → DifferentiationInterfaceStaticArraysExt
+    556.5 ms  ✓ DifferentiationInterface → DifferentiationInterfaceSparseArraysExt
+   1598.1 ms  ✓ GeometryOpsCore
+    466.0 ms  ✓ DifferentiationInterface → DifferentiationInterfaceFiniteDiffExt
+    530.2 ms  ✓ FiniteDiff → FiniteDiffStaticArraysExt
+    537.3 ms  ✓ FiniteDiff → FiniteDiffSparseArraysExt
+   2809.6 ms  ✓ IntervalArithmetic
+   1234.0 ms  ✓ FastGaussQuadrature
+   1204.1 ms  ✓ eccodes_jll
+    567.3 ms  ✓ IntervalArithmetic → IntervalArithmeticIrrationalConstantsExt
+    581.4 ms  ✓ IntervalArithmetic → IntervalArithmeticLinearAlgebraExt
+    620.5 ms  ✓ IntervalArithmetic → IntervalArithmeticSparseArraysExt
+   4251.8 ms  ✓ Parsers
+   1593.6 ms  ✓ NetCDF_jll
+    945.4 ms  ✓ TaylorSeries → TaylorSeriesIAExt
+    540.1 ms  ✓ GRIB
+   3655.1 ms  ✓ KernelAbstractions
+   1511.0 ms  ✓ NLSolversBase
+    691.4 ms  ✓ KernelAbstractions → LinearAlgebraExt
+    853.9 ms  ✓ KernelAbstractions → SparseArraysExt
+   1504.4 ms  ✓ LineSearches
+   3332.5 ms  ✓ ExactPredicates
+   2956.0 ms  ✓ Optim
+   4901.5 ms  ✓ JSON3
+   6608.4 ms  ✓ NCDatasets
+   4350.0 ms  ✓ DelaunayTriangulation
+   3432.7 ms  ✓ GeometryOps
+   2393.3 ms  ✓ ConservativeRegridding
+  20282.2 ms  ✓ JLD2
+   1256.1 ms  ✓ TaylorSeries → TaylorSeriesJLD2Ext
+  44627.9 ms  ✓ AtmosTransport
+  61 dependencies successfully precompiled in 68 seconds. 132 already precompiled.
+[ Info: Running core/test_jet.jl
+Precompiling packages...
+   9039.8 ms  ✓ Revise
+  35744.0 ms  ✓ JET
+  2 dependencies successfully precompiled in 47 seconds. 41 already precompiled.
+[ Info: JET hot-path modules: 152 reports (baseline 152)
+[ Info: Running core/test_adjoint_identity_model_space.jl
+[ Info: Running core/test_adjoint_identity_preconditioned.jl
+[ Info: Running core/test_advection_kernels.jl
+[ Info: Running core/test_architectures.jl
+[ Info: Running core/test_async_output_lifetime.jl
+[ Info: Saved snapshots: /tmp/jl_KMCO6x/one.nc (1 frame(s), 2×2 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_KMCO6x/two.nc (1 frame(s), 2×2 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Running core/test_basis_explicit_core.jl
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 3
+└   n_z = 4
+[ Info: Running core/test_binary_inspector.jl
+[ Info: Running core/test_binary_path_expander.jl
+[ Info: Running core/test_cmfmc_adjoint_identity.jl
+[ Info: Running core/test_cmfmc_matrix_convection.jl
+[ Info: Running core/test_config_matrix_contract.jl
+[ Info: Running core/test_conservative_dkg.jl
+[ Info: Running core/test_cs_4dvar_preconditioned.jl
+[ Info: Running core/test_cs_chemistry.jl
+[ Info: Running core/test_cs_covariance.jl
+[ Info: Running core/test_cs_departures_io.jl
+[ Info: Running core/test_cs_driven_builders.jl
+┌ Warning: [diffusion] kind = "geoschem_holtslag_boville_vdiff" was selected but
+│ the surface-flux coupling is AtmosTransport.Operators.Diffusion.SplitSurfaceFluxCoupling.
+│ For GCHP-style VDIFF placement, surface emissions must be added before
+│ one full diffusion solve: S(dt) -> V(dt). Set
+│ `surface_flux_boundary = true` to select that ordering. Despite its
+│ historical `DiffusiveSurfaceFluxBoundary` name, this policy does not
+│ insert a literal boundary term into the tridiagonal system. Exact
+│ discrete GCHP VDIFF parity remains to be validated end to end.
+└ @ AtmosTransport.Models ~/code/gitHub/AtmosTransportModel-revamp-main/src/Models/RuntimePhysicsRecipe.jl:240
+[ Info: Running core/test_cs_initial_state_packing.jl
+[ Info: Running core/test_cs_inversion_driver.jl
+[ Info: Running core/test_cs_inversion_truth_recovery.jl
+[ Info: Running core/test_cs_iteration_log.jl
+[ Info: Running core/test_cs_lbfgs.jl
+[ Info: Running core/test_cs_lonlat_inverse_projection.jl
+[ Info: Running core/test_cs_multifile_equivalence.jl
+[ Info: [binary] /tmp/jl_L1DC3r/first.bin grid=cubed_sphere levels=5 basis=dry steps/window=2 fields=[am,bm,cm,cmfmc,detd,detu,dtrain,entd,entu,m,ps]
+[ Info: Running core/test_cs_observation_binding.jl
+[ Info: Running core/test_cs_observations_io.jl
+[ Info: Running core/test_cs_optimizer_dispatch.jl
+[ Info: Running core/test_cs_panel_geographic_roundtrip.jl
+[ Info: Running core/test_cs_ppm_adjoint_footprint.jl
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+[ Info: Running core/test_cs_preconditioning.jl
+[ Info: Running core/test_cs_preprocessor_contract.jl
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.500 dir=x win=1 cell=(1, 1, 1, 1) (limit=0.95)
+[ Info: Running core/test_cs_pressure_layer_initialization.jl
+[ Info: Running core/test_cs_seam_exchange.jl
+[ Info: Running core/test_cs_spectral_unified_driver.jl
+[ Info:   Reading spectral data for 20211201...
+[ Info:   Spectral cache hit: /tmp/jl_WL4BxZ/cache/era5_spectral_957b4bfc3327bb2a36d1c7dcd3002de3f96bd7f8.jld2
+[ Info:   Spectral data read: T=0, 24 hours (2.4s)
+[ Info:   Staging grid: 4×3 LL → C2 CS (6 panels)
+┌ Info: Building regridder (will cache to disk)
+└   path = "/tmp/jl_WL4BxZ/regrid_cache/regridder_3ccc928e022400a07b284c11412b4b4a89fc40f3.jld2"
+[ Info:   Regridder: 12×24  nnz=48 (1.0s)
+[ Info:   Mass fix DISABLED
+[ Info:   Streaming: spectral → LL staging → CS regrid → balance → write...
+[ Info:   Output: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 24 windows) [unified]
+[ Info:   Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency...
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.000 dir=none win=0 cell=(0, 0, 0, 0) (limit=0.95)
+[ Info:   Column balance summary: pre=0.000e+00  post=0.000e+00  max_iter=0
+[ Info:   Write-time replay gate: max rel=0.000e+00 abs=0.000e+00 kg win=1 cell=(0, 0, 0, 0)
+[ Info:   Timing summary (s): spectral_read=2.4  regridder=1.1  qv=0.0  synth+regrid=1.3  balance=0.4  replay=0.0  last_endpoint=0.0
+[ Info:   Timing fractions: balance=7.3%  synth+regrid=24.8%  spectral_read=46.1%
+[ Info:   Done: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 11.5s)
+[ Info:   Reading spectral data for 20211201...
+[ Info:   Spectral cache hit: /tmp/jl_WL4BxZ/cache/era5_spectral_957b4bfc3327bb2a36d1c7dcd3002de3f96bd7f8.jld2
+[ Info:   Spectral data read: T=0, 24 hours (0.0s)
+[ Info:   Staging grid: 4×3 LL → C2 CS (6 panels)
+┌ Info: Loading cached regridder
+└   path = "/tmp/jl_WL4BxZ/regrid_cache/regridder_3ccc928e022400a07b284c11412b4b4a89fc40f3.jld2"
+[ Info:   Regridder: 12×24  nnz=48 (0.0s)
+[ Info:   Mass fix DISABLED
+[ Info:   Streaming: spectral → LL staging → CS regrid → balance → write...
+[ Info:   Output: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 24 windows) [unified]
+[ Info:   Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency...
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.000 dir=none win=0 cell=(0, 0, 0, 0) (limit=0.95)
+[ Info:   Column balance summary: pre=0.000e+00  post=0.000e+00  max_iter=0
+[ Info:   Write-time replay gate: max rel=0.000e+00 abs=0.000e+00 kg win=1 cell=(0, 0, 0, 0)
+[ Info:   Timing summary (s): spectral_read=0.0  regridder=0.0  qv=0.0  synth+regrid=0.0  balance=0.0  replay=0.0  last_endpoint=0.0
+[ Info:   Timing fractions: balance=0.9%  synth+regrid=1.8%  spectral_read=3.0%
+[ Info:   Done: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 0.0s)
+[ Info: Running core/test_cs_stride_checkpoint.jl
+[ Info: Running core/test_cs_tape_mmap_roundtrip.jl
+[ Info: Running core/test_cs_tape_path.jl
+┌ Warning: MmapCSTapeStorage: manifest emission failed
+│   exception = IOError: rename("/tmp/atmostransport-cstape-abzOfJ/jl_VAYfAF", "/tmp/atmostransport-cstape-abzOfJ/missing/manifest.toml"): no such file or directory (ENOENT)
+└ @ AtmosTransport.Tape ~/code/gitHub/AtmosTransportModel-revamp-main/src/Tape/MmapTapeStorage.jl:457
+[ Info: Running core/test_cs_writer_contract_guard.jl
+[ Info: Running core/test_cubed_sphere_advection.jl
+[ Info: Poisson balance: corrected 4/4 levels, max pre-balance residual: 0.0185 kg
+[ Info: Running core/test_diffusion_mass_flux_conservation.jl
+[ Info: Running core/test_diffusion_palindrome_contract.jl
+[ Info: Running core/test_documentation_links.jl
+[ Info: Running core/test_driven_simulation.jl
+[ Info: Running core/test_dz_helpers_virtual_T.jl
+[ Info: Running core/test_era5_c180_tm5_convection.jl
+[ Info: Running core/test_era5_n320_convection.jl
+[ Info: Skipping real N320 convection smoke (set ATMOS_ERA5_N320_ROOT to enable).
+[ Info: Running core/test_era5_n320_dry_mass.jl
+[ Info: Skipping real N320 dry-mass smoke (set ATMOS_ERA5_N320_ROOT to enable).
+[ Info: Running core/test_era5_n320_reader.jl
+[ Info: Skipping real N320 archive smoke (set ATMOS_ERA5_N320_ROOT to enable).
+[ Info: Running core/test_era5_n320_to_c180_pipeline.jl
+[ Info: Skipping breakpoint F (set ATMOS_ERA5_N320_ROOT to enable).
+[ Info: Running core/test_era5_n320_to_c180_regrid.jl
+┌ Info: Building regridder (will cache to disk)
+└   path = "/tmp/jl_BYtuFy/regridder_d09beed8ecd61d15e73513b6a7f99891d909431e.jld2"
+┌ Info: Loading cached regridder
+└   path = "/tmp/jl_BYtuFy/regridder_d09beed8ecd61d15e73513b6a7f99891d909431e.jld2"
+[ Info: Skipping real N320 → CS regrid smoke (set ATMOS_ERA5_N320_ROOT to enable).
+[ Info: Running core/test_era5_n320_window_reader.jl
+[ Info: Skipping real N320 window-reader smoke (set ATMOS_ERA5_N320_ROOT to enable).
+[ Info: Running core/test_era5_physics_binary.jl
+[ Info: Running core/test_geos_convection.jl
+[ Info: GEOS → CS: 2021-12-01, source=AtmosTransport.Preprocessing.GEOSITSettings("/tmp/jl_7lZldG", 8, 450.0, :auto, true, true, false, "", :auto, "/tmp/jl_7lZldG/synthetic_coefs.toml") → /tmp/jl_7lZldG/with_surface_and_conv.bin [unified]
+[ Info:   source_C=8 target_C=8  strategy=identity
+[ Info:   Nz=4  windows=24  steps_per_met=8  flux_scale=22.943614792003387
+[ Info:   GEOS horizontal balance: column   cm closure: endpoint_balanced
+[ Info:   Level orientation: bottom_up  (next-day endpoint: true)
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.000 dir=none win=0 cell=(0, 0, 0, 0) (limit=0.95)
+[ Info:   Done in 3.9s (0.16s/window). Worst replay: rel=0.00e+00 abs=0.00e+00 at win=1
+[ Info:   Substep diagnostic: stored=8..8; hypothetical split max xy=1 at win=1 (ratio=0.000), z=1 at win=1 (ratio=0.000)
+[ Info: GEOS → CS: 2021-12-01, source=AtmosTransport.Preprocessing.GEOSITSettings("/tmp/jl_7lZldG", 8, 450.0, :auto, false, true, false, "", :auto, "/tmp/jl_7lZldG/synthetic_coefs.toml") → /tmp/jl_7lZldG/with_conv.bin [unified]
+[ Info:   source_C=8 target_C=8  strategy=identity
+[ Info:   Nz=4  windows=24  steps_per_met=8  flux_scale=22.943614792003387
+[ Info:   GEOS horizontal balance: column   cm closure: endpoint_balanced
+[ Info:   Level orientation: bottom_up  (next-day endpoint: true)
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.000 dir=none win=0 cell=(0, 0, 0, 0) (limit=0.95)
+[ Info:   Done in 2.1s (0.09s/window). Worst replay: rel=0.00e+00 abs=0.00e+00 at win=1
+[ Info:   Substep diagnostic: stored=8..8; hypothetical split max xy=1 at win=1 (ratio=0.000), z=1 at win=1 (ratio=0.000)
+[ Info: GEOS → CS: 2021-12-01, source=AtmosTransport.Preprocessing.GEOSITSettings("/tmp/jl_7lZldG", 8, 450.0, :auto, false, false, false, "", :auto, "/tmp/jl_7lZldG/synthetic_coefs.toml") → /tmp/jl_7lZldG/no_conv.bin [unified]
+[ Info:   source_C=8 target_C=8  strategy=identity
+[ Info:   Nz=4  windows=24  steps_per_met=8  flux_scale=22.943614792003387
+[ Info:   GEOS horizontal balance: column   cm closure: endpoint_balanced
+[ Info:   Level orientation: bottom_up  (next-day endpoint: true)
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.000 dir=none win=0 cell=(0, 0, 0, 0) (limit=0.95)
+[ Info:   Done in 2.0s (0.08s/window). Worst replay: rel=0.00e+00 abs=0.00e+00 at win=1
+[ Info:   Substep diagnostic: stored=8..8; hypothetical split max xy=1 at win=1 (ratio=0.000), z=1 at win=1 (ratio=0.000)
+[ Info: Running core/test_geos_cs_passthrough.jl
+[ Info: GEOS → CS: 2021-12-01, source=AtmosTransport.Preprocessing.GEOSITSettings("/tmp/jl_ZJqydF", 8, 450.0, :auto, false, false, false, "", :auto, "/tmp/jl_ZJqydF/synthetic_coefs.toml") → /tmp/jl_ZJqydF/out_cs.bin [unified]
+[ Info:   source_C=8 target_C=8  strategy=identity
+[ Info:   Nz=4  windows=24  steps_per_met=8  flux_scale=22.943614792003387
+[ Info:   GEOS horizontal balance: column   cm closure: endpoint_balanced
+[ Info:   Level orientation: bottom_up  (next-day endpoint: true)
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.000 dir=z win=1 cell=(2, 8, 1, 1) (limit=0.95)
+[ Info:   Done in 0.1s (0.00s/window). Worst replay: rel=0.00e+00 abs=0.00e+00 at win=1
+[ Info:   Substep diagnostic: stored=8..8; hypothetical split max xy=1 at win=1 (ratio=0.000), z=1 at win=1 (ratio=0.000)
+[ Info: GEOS → CS: 2021-12-01, source=AtmosTransport.Preprocessing.GEOSITSettings("/tmp/jl_ZJqydF", 8, 450.0, :auto, false, false, false, "", :auto, "/tmp/jl_ZJqydF/synthetic_coefs.toml") → /tmp/jl_ZJqydF/out_cs_second.bin [unified]
+[ Info:   source_C=8 target_C=8  strategy=identity
+[ Info:   Nz=4  windows=24  steps_per_met=8  flux_scale=22.943614792003387
+[ Info:   GEOS horizontal balance: column   cm closure: endpoint_balanced
+[ Info:   Level orientation: bottom_up  (next-day endpoint: true)
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.000 dir=z win=1 cell=(2, 8, 1, 1) (limit=0.95)
+[ Info:   Done in 0.0s (0.00s/window). Worst replay: rel=0.00e+00 abs=0.00e+00 at win=1
+[ Info:   Substep diagnostic: stored=8..8; hypothetical split max xy=1 at win=1 (ratio=0.000), z=1 at win=1 (ratio=0.000)
+[ Info: GEOS → CS: 2021-12-01, source=AtmosTransport.Preprocessing.GEOSITSettings("/tmp/jl_ZJqydF", 8, 450.0, :auto, false, false, false, "", :auto, "/tmp/jl_ZJqydF/synthetic_coefs.toml") → /tmp/jl_ZJqydF/out_cs_merged.bin [unified]
+[ Info:   source_C=8 target_C=8  strategy=identity
+[ Info:   Nz=3  windows=24  steps_per_met=8  flux_scale=22.943614792003387
+[ Info:   GEOS horizontal balance: column   cm closure: endpoint_balanced
+[ Info:   Level orientation: bottom_up  (next-day endpoint: true)
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.000 dir=x win=1 cell=(2, 8, 1, 1) (limit=0.95)
+[ Info:   Done in 2.1s (0.09s/window). Worst replay: rel=0.00e+00 abs=0.00e+00 at win=1
+[ Info:   Substep diagnostic: stored=8..8; hypothetical split max xy=1 at win=1 (ratio=0.000), z=1 at win=1 (ratio=0.000)
+[ Info: Running core/test_geos_omega_regularization.jl
+[ Info: Running core/test_geos_reader.jl
+[ Info: Running core/test_geosfp_native_physics_fallback.jl
+[ Info: GEOS → CS: 2021-12-01, source=AtmosTransport.Preprocessing.GEOSFPSettings("/tmp/jl_JHESIa/ctm", 4, 450.0, :auto, true, true, false, "/tmp/jl_JHESIa/physics", :latlon_025, "/tmp/jl_JHESIa/coefs.toml") → /tmp/jl_JHESIa/geosfp_with_physics.bin [unified]
+[ Info:   source_C=4 target_C=4  strategy=identity
+[ Info:   Nz=4  windows=24  steps_per_met=8  flux_scale=22.943614792003387
+[ Info:   GEOS horizontal balance: column   cm closure: endpoint_balanced
+[ Info:   Level orientation: top_down  (next-day endpoint: true)
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.000 dir=none win=0 cell=(0, 0, 0, 0) (limit=0.95)
+[ Info:   Done in 0.9s (0.04s/window). Worst replay: rel=0.00e+00 abs=0.00e+00 at win=1
+[ Info:   Substep diagnostic: stored=8..8; hypothetical split max xy=1 at win=1 (ratio=0.000), z=1 at win=1 (ratio=0.000)
+[ Info: Running core/test_gpu_field_adaptation.jl
+[ Info: Running core/test_gradient_taylor_sweep.jl
+┌ Info: Taylor sweep
+│   label = "Linear L, χ₀ = 0 (prior)"
+│   J0 = 0.3436046513506006
+│   DJ1 = 0.0065891962429861384
+└   clean_end = 10
+┌ Info: Taylor sweep
+│   label = "Linear L, χ₀ random"
+│   J0 = 0.6399988592586381
+│   DJ1 = 0.599530890409077
+└   clean_end = 10
+┌ Info: Taylor sweep
+│   label = "LogNormal L, χ₀ random"
+│   J0 = 0.6400217300524143
+│   DJ1 = 0.5996070205072314
+└   clean_end = 10
+[ Info: Running core/test_identity_regrid.jl
+[ Info: Running core/test_initial_condition_io.jl
+┌ Info: Loading cached regridder
+└   path = "/home/cfranken/.cache/AtmosTransport/cr_regridding/regridder_5b78ef50085156b25503e8737d536068fd676f2e.jld2"
+[ Info:   Conservative regrid: src_total=5.100645e+14  dst_total=5.100645e+14  rel_err=8.58e-16 kg/s
+[ Info: Running core/test_input_resource_lifetime.jl
+[ Info: [binary] /tmp/jl_fCpSRy/transport.bin grid=latlon levels=2 basis=dry steps/window=2 fields=[am,bm,cm,m,ps]
+[ Info: [binary] /tmp/jl_fCpSRy/transport.bin grid=latlon levels=2 basis=dry steps/window=2 fields=[am,bm,cm,m,ps]
+[ Info: [binary] /tmp/jl_fCpSRy/transport.bin grid=latlon levels=2 basis=dry steps/window=2 fields=[am,bm,cm,m,ps]
+[ Info: [binary] /tmp/jl_fCpSRy/transport.bin grid=latlon levels=2 basis=dry steps/window=2 fields=[am,bm,cm,m,ps]
+[ Info: [binary] /tmp/jl_fCpSRy/transport.bin grid=latlon levels=2 basis=dry steps/window=2 fields=[am,bm,cm,m,ps]
+┌ Info: Driven runtime
+│ Structured
+│ |-- grid:      4×3 LatLonMesh{Float64}, levels=2, Hp=0
+│ |-- numerics:  scheme=Upwind, FT=Float64, backend=CPU
+│ |-- physics:   diffusion=NoDiffusion, convection=NoConvection
+│ |-- schedule:  window_dt=3600s, steps/window=2, binaries=1
+│ |-- tracers:   co2
+└ `-- output:    (disabled)
+Forward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: running transport.bin with UpwindScheme on 4×3 LatLonMesh{Float64} (1 windows)[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.3s | io_write 0.0s | wall 0.4s | loading first window[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:01 ( 1.28  s/it)[K
+   status: transport.bin window 2/2  steps/window=2[K
+   timing: transport 0.8s (64.0%) | io_read 0.3s | io_write 0.0s | wall 1.3s | batch window accounting after run!()[K
+
+
+
+[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:01 ( 1.28  s/it)[K
+   status: finished transport.bin[K
+   timing: transport 0.8s (64.0%) | io_read 0.3s | io_write 0.0s | wall 1.3s | file wall 0.82s[K
+[ Info: Forward run wall 1.3s   transport 0.8s (64.0%)   io_read 0.3s (21.7%)   io_write 0.0s (0.0%)   other 0.2s (14.3%)
+[ Info: Final air-mass change vs initial state:  0.000e+00
+[ Info: Final tracer-storage drift for co2:      0.000e+00
+[ Info: [binary] /tmp/jl_IqEkgp/transport.bin grid=latlon levels=2 basis=dry steps/window=2 fields=[am,bm,cm,m,ps]
+[ Info: [binary] /tmp/jl_IqEkgp/transport.bin grid=latlon levels=2 basis=dry steps/window=2 fields=[am,bm,cm,m,ps]
+[ Info: [binary] /tmp/jl_IqEkgp/transport.bin grid=latlon levels=2 basis=dry steps/window=2 fields=[am,bm,cm,m,ps]
+┌ Info: Driven runtime
+│ Structured
+│ |-- grid:      4×3 LatLonMesh{Float64}, levels=2, Hp=0
+│ |-- numerics:  scheme=Upwind, FT=Float64, backend=CPU
+│ |-- physics:   diffusion=NoDiffusion, convection=NoConvection
+│ |-- schedule:  window_dt=3600s, steps/window=2, binaries=1
+│ |-- tracers:   co2
+└ `-- output:    (disabled)
+[ Info: Forward run wall 0.0s   transport 0.0s (96.7%)   io_read 0.0s (1.6%)   io_write 0.0s (0.0%)   other 0.0s (1.7%)
+[ Info: Final air-mass change vs initial state:  0.000e+00
+[ Info: Final tracer-storage drift for co2:      0.000e+00
+[ Info: [binary] /tmp/jl_IqEkgp/transport.bin grid=latlon levels=2 basis=dry steps/window=2 fields=[am,bm,cm,m,ps]
+┌ Info: Driven runtime
+│ Structured
+│ |-- grid:      4×3 LatLonMesh{Float64}, levels=2, Hp=0
+│ |-- numerics:  scheme=Upwind, FT=Float64, backend=CPU
+│ |-- physics:   diffusion=NoDiffusion, convection=NoConvection
+│ |-- schedule:  window_dt=3600s, steps/window=2, binaries=1
+│ |-- tracers:   co2
+└ `-- output:    (disabled)
+[ Info: Forward run wall 0.0s   transport 0.0s (60.6%)   io_read 0.0s (19.2%)   io_write 0.0s (0.0%)   other 0.0s (20.2%)
+[ Info: Final air-mass change vs initial state:  0.000e+00
+[ Info: Final tracer-storage drift for co2:      0.000e+00
+[SectionTimer] wall=0.00s  covered=0.00s (11.5%)
+section                         n_calls    total_s    mean_ms     p50_ms     p95_ms     max_ms    frac%
+advection                             4      0.000      0.059      0.051      0.085      0.085    95.65
+window_advance                        4      0.000      0.001      0.000      0.005      0.005     2.03
+window_sync_load_total                1      0.000      0.003      0.003      0.003      0.003     1.03
+window_load_host                      1      0.000      0.002      0.002      0.002      0.002     0.63
+forcing_refresh                       4      0.000      0.000      0.000      0.001      0.001     0.62
+chemistry                             4      0.000      0.000      0.000      0.000      0.000     0.03
+[ Info: Running core/test_input_staging.jl
+┌ Info: Input staging enabled
+│   dir = "/tmp/jl_QrBrwx"
+│   lookahead_days = 2
+│   keep_behind_days = 0
+└   max_staged_days = 3
+┌ Info: Input staging enabled
+│   dir = "/tmp/jl_uZUgGZ"
+│   lookahead_days = 1
+│   keep_behind_days = 0
+└   max_staged_days = 2
+┌ Info: Input staging enabled
+│   dir = "/tmp/jl_ywcMtZ"
+│   lookahead_days = 0
+│   keep_behind_days = 0
+└   max_staged_days = 1
+┌ Info: Input staging enabled
+│   dir = "/tmp/jl_UJt0S6/stage"
+│   lookahead_days = 0
+│   keep_behind_days = 0
+└   max_staged_days = 1
+┌ Info: Input staging enabled
+│   dir = "/tmp/jl_UJt0S6/stage"
+│   lookahead_days = 0
+│   keep_behind_days = 0
+└   max_staged_days = 1
+┌ Info: Input staging enabled
+│   dir = "/tmp/jl_UJt0S6/stage"
+│   lookahead_days = 0
+│   keep_behind_days = 0
+└   max_staged_days = 1
+┌ Info: Input staging enabled
+│   dir = "/tmp/jl_UJt0S6/stage"
+│   lookahead_days = 0
+│   keep_behind_days = 0
+└   max_staged_days = 1
+┌ Info: Input staging enabled
+│   dir = "/tmp/jl_UJt0S6/stage"
+│   lookahead_days = 2
+│   keep_behind_days = 0
+└   max_staged_days = 3
+[ Info: Running core/test_linrood_kernel_adjoints.jl
+[ Info: Running core/test_linrood_seams.jl
+[ Info: Running core/test_ll_preprocessor_contract.jl
+[ Info:   Per-substep positivity gate: max outgoing/m=0.500 dir=x win=1 cell=(1, 1, 1) (limit=0.95)
+[ Info:   Per-substep positivity gate: max outgoing/m=0.500 dir=x win=2 cell=(1, 1, 1) (limit=0.95)
+[ Info: Running core/test_ll_spectral_unified_driver.jl
+[ Info:   Reading spectral data for 20211201...
+[ Info:   Spectral cache hit: /tmp/jl_iy65ha/cache/era5_spectral_ddcbec3edd7f4fd9b5c3636c8afe42f40d52f983.jld2
+[ Info:   Spectral data read: T=0, 24 hours (0.0s)
+[ Info:   Output: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 24 windows)
+[ Info:   Mass fix DISABLED
+[ Info:   Computing spectral -> gridpoint -> merged for 24 windows...
+[ Info:     Window 1/24 (hour 00): 0.00s  ps_offset=+0.000 Pa
+[ Info:     Window 2/24 (hour 01): 0.00s  ps_offset=+0.000 Pa
+[ Info:     Window 3/24 (hour 02): 0.00s  ps_offset=+0.000 Pa
+[ Info:     Window 8/24 (hour 07): 0.00s  ps_offset=+0.000 Pa
+[ Info:     Window 16/24 (hour 15): 0.00s  ps_offset=+0.000 Pa
+[ Info:     Window 24/24 (hour 23): 0.00s  ps_offset=+0.000 Pa
+[ Info:   Applying column mass-balance correction with fixed substep schedule...
+[ Info:   Column balance summary: pre=0.000e+00 post=0.000e+00 max_face_delta=0.000e+00 kg
+[ Info:   Write-time LL replay gate: max rel=0.000e+00 abs=0.000e+00 win=1 cell=(0, 0, 0)
+[ Info:   LL substep schedule: min=4 max=4 (constant)
+[ Info:   Continuity closure complete for 24 windows
+[ Info:   Per-substep positivity gate: max outgoing/m=0.000 dir=none win=0 cell=(0, 0, 0) (limit=0.95)
+[ Info:   Done: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 5.0s)
+[ Info:   Reading spectral data for 20211201...
+[ Info:   Spectral cache hit: /tmp/jl_iy65ha/cache/era5_spectral_ddcbec3edd7f4fd9b5c3636c8afe42f40d52f983.jld2
+[ Info:   Spectral data read: T=0, 24 hours (0.0s)
+[ Info:   Output: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 24 windows)
+[ Info:   Mass fix DISABLED
+[ Info:   Computing spectral -> gridpoint -> merged for 24 windows...
+[ Info:     Window 1/24 (hour 00): 0.00s  ps_offset=+0.000 Pa
+[ Info:     Window 2/24 (hour 01): 0.00s  ps_offset=+0.000 Pa
+[ Info:     Window 3/24 (hour 02): 0.00s  ps_offset=+0.000 Pa
+[ Info:     Window 8/24 (hour 07): 0.00s  ps_offset=+0.000 Pa
+[ Info:     Window 16/24 (hour 15): 0.00s  ps_offset=+0.000 Pa
+[ Info:     Window 24/24 (hour 23): 0.00s  ps_offset=+0.000 Pa
+[ Info:   Applying column mass-balance correction with fixed substep schedule...
+[ Info:   Column balance summary: pre=0.000e+00 post=0.000e+00 max_face_delta=0.000e+00 kg
+[ Info:   Write-time LL replay gate: max rel=0.000e+00 abs=0.000e+00 win=1 cell=(0, 0, 0)
+[ Info:   LL substep schedule: min=4 max=4 (constant)
+[ Info:   Continuity closure complete for 24 windows
+[ Info:   Per-substep positivity gate: max outgoing/m=0.000 dir=none win=0 cell=(0, 0, 0) (limit=0.95)
+[ Info:   Done: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 0.0s)
+[ Info: Running core/test_ll_to_cs_regrid_script.jl
+[ Info:   LL source: ll_fixture.bin (24×13×4, 2 windows)
+[ Info:   CS target: C4 (6 panels, 4 levels)
+┌ Info: Building regridder (will cache to disk)
+└   path = "/tmp/jl_x4OvSs/cr_cache/regridder_775fc24ac7d407af3e9348f4bde60419e5b160ad.jld2"
+[ Info:   Regridder: 312→96  nnz=640 (0.0s)
+[ Info:   Output: cs_fixture.bin (0.00 GB, 2 windows)
+[ Info:   Streaming: LL binary → CS regrid → balance → write...
+[ Info:   Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency...
+[ Info:     Window  1/2: read+regrid 0.50s
+[ Info:     Window  1/2: wrote (colbal 0.00s pre=0.00e+00 post=0.00e+00 iter=0) | read  2 (0.00s)
+[ Info:     Window  2/2 (last): colbal 0.00s  pre=1.54e+01 post=1.15e-13 iter=10
+[ Info:   Column balance summary: pre=1.544e+01  post=1.146e-13  max_iter=10
+[ Info:   Write-time replay gate: max rel=1.712e-16 abs=1.819e-12 kg win=2 cell=(3, 3, 1, 4)
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.000 dir=y win=2 cell=(4, 3, 4, 3) (limit=0.95)
+[ Info:   Done: cs_fixture.bin (0.00 GB, 0.8s)
+[ Info: Replay continuity gate passed: cs_fixture.bin topology=cubed_sphere worst_rel=1.7121380904977114e-16 worst_window=2
+[ Info:   LL source: ll_fixture.bin (24×13×4, 2 windows)
+[ Info:   CS target: C4 (6 panels, 4 levels)
+┌ Info: Building regridder (will cache to disk)
+└   path = "/tmp/jl_DrQdI0/cr_cache/regridder_775fc24ac7d407af3e9348f4bde60419e5b160ad.jld2"
+[ Info:   Regridder: 312→96  nnz=640 (0.0s)
+[ Info:   Output: cs_fixture.bin (0.00 GB, 2 windows)
+[ Info:   Streaming: LL binary → CS regrid → balance → write...
+[ Info:   Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency...
+[ Info:     Window  1/2: read+regrid 0.39s
+[ Info:     Window  1/2: wrote (colbal 0.00s pre=0.00e+00 post=0.00e+00 iter=0) | read  2 (0.00s)
+[ Info:     Window  2/2 (last): colbal 0.00s  pre=0.00e+00 post=0.00e+00 iter=0
+[ Info:   Column balance summary: pre=0.000e+00  post=0.000e+00  max_iter=0
+[ Info:   Write-time replay gate: max rel=0.000e+00 abs=0.000e+00 kg win=1 cell=(0, 0, 0, 0)
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.000 dir=none win=0 cell=(0, 0, 0, 0) (limit=0.95)
+[ Info:   Done: cs_fixture.bin (0.00 GB, 0.6s)
+[ Info:   LL source: ll_fixture.bin (24×13×4, 2 windows)
+[ Info:   CS target: C4 (6 panels, 4 levels)
+┌ Info: Building regridder (will cache to disk)
+└   path = "/tmp/jl_W2WRYK/cr_cache/regridder_775fc24ac7d407af3e9348f4bde60419e5b160ad.jld2"
+[ Info:   Regridder: 312→96  nnz=640 (0.0s)
+[ Info:   Output: cs_fixture.bin (0.00 GB, 2 windows)
+[ Info:   Streaming: LL binary → CS regrid → balance → write...
+[ Info:   Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency...
+[ Info:     Window  1/2: read+regrid 0.40s
+[ Info:     Window  1/2: wrote (colbal 0.00s pre=0.00e+00 post=0.00e+00 iter=0) | read  2 (0.00s)
+[ Info:     Window  2/2 (last): colbal 0.00s  pre=0.00e+00 post=0.00e+00 iter=0
+[ Info:   Column balance summary: pre=0.000e+00  post=0.000e+00  max_iter=0
+[ Info:   Write-time replay gate: max rel=0.000e+00 abs=0.000e+00 kg win=1 cell=(0, 0, 0, 0)
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.000 dir=none win=0 cell=(0, 0, 0, 0) (limit=0.95)
+[ Info:   Done: cs_fixture.bin (0.00 GB, 0.6s)
+[ Info:   LL source: ll_fixture.bin (24×13×4, 2 windows)
+[ Info:   CS target: C4 (6 panels, 4 levels)
+┌ Info: Building regridder (will cache to disk)
+└   path = "/tmp/jl_gn89an/cr_cache/regridder_775fc24ac7d407af3e9348f4bde60419e5b160ad.jld2"
+[ Info:   Regridder: 312→96  nnz=640 (0.0s)
+[ Info:   Output: cs_default.bin (0.00 GB, 2 windows)
+[ Info:   Streaming: LL binary → CS regrid → balance → write...
+[ Info:   Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency...
+[ Info:     Window  1/2: read+regrid 0.00s
+[ Info:     Window  1/2: wrote (colbal 0.00s pre=1.35e+02 post=2.70e-13 iter=30) | read  2 (0.00s)
+[ Info:     Window  2/2 (last): colbal 0.00s  pre=1.35e+02 post=2.70e-13 iter=30
+[ Info:   Column balance summary: pre=1.346e+02  post=2.700e-13  max_iter=30
+[ Info:   Write-time replay gate: max rel=0.000e+00 abs=0.000e+00 kg win=1 cell=(0, 0, 0, 0)
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.133 dir=x win=1 cell=(3, 1, 1, 1) (limit=0.95)
+[ Info:   Done: cs_default.bin (0.00 GB, 0.0s)
+[ Info:   steps_per_window override: source=2 → output=4 (0.500x flux per substep)
+[ Info:   LL source: ll_fixture.bin (24×13×4, 2 windows)
+[ Info:   CS target: C4 (6 panels, 4 levels)
+[ Info:   Regridder: reused 312→96  nnz=640 (0.0s)
+[ Info:   Output: cs_override.bin (0.00 GB, 2 windows)
+[ Info:   Streaming: LL binary → CS regrid → balance → write...
+[ Info:   Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency...
+[ Info:     Window  1/2: read+regrid 0.00s
+[ Info:     Window  1/2: wrote (colbal 0.00s pre=6.73e+01 post=1.35e-13 iter=30) | read  2 (0.00s)
+[ Info:     Window  2/2 (last): colbal 0.00s  pre=6.73e+01 post=1.35e-13 iter=30
+[ Info:   Column balance summary: pre=6.728e+01  post=1.350e-13  max_iter=30
+[ Info:   Write-time replay gate: max rel=0.000e+00 abs=0.000e+00 kg win=1 cell=(0, 0, 0, 0)
+[ Info:   Per-substep positivity gate: max palindrome outgoing/m_ref=0.067 dir=x win=1 cell=(3, 1, 1, 1) (limit=0.95)
+[ Info:   Done: cs_override.bin (0.00 GB, 0.0s)
+[ Info: Running core/test_met_readers.jl
+[ Info: Running core/test_met_source_loader.jl
+[ Info: Running core/test_met_sources_trait.jl
+[ Info: Running core/test_multiday_source_clock.jl
+[ Info: Running core/test_netcdf_stream.jl
+[ Info: Saved snapshots: /tmp/jl_gKgYB6/batch.nc (4 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_1NALSg/batch.nc (4 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_zgpDAj/batch.nc (4 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_RIi7Eg/batch.nc (4 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_ngobcP/batch.nc (4 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_5d0Otm/batch.nc (4 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_ORumBB/batch.nc (4 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_wS4HHC/batch.nc (4 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_pV3DNu/batch.nc (4 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_PtZahl/batch.nc (4 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_ulQ4o2/batch.nc (4 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_IRkDXk/batch.nc (4 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_U16OA1/batch.nc (4 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_hzMG2P/batch.nc (4 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_qQkWA8/batch.nc (4 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_KZD7Eq/batch.nc (4 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_KGxESi/batch.nc (4 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_jZhQCz/batch.nc (4 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Running core/test_no_advection.jl
+[ Info: Running core/test_output_snapshots.jl
+[ Info: Binary (ATMSNAP) output is Float32-only on disk; storing Float32 snapshots while the model integrates in Float64.
+[ Info: Saved snapshots: /tmp/jl_N1VNeg/signed.nc (1 frame(s), 4×2 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved binary snapshots: /tmp/jl_KsCGPf/signed.atmsnap (1 frame(s), C2 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry, 0.00 GiB payload)
+[ Info: Saved snapshots: /tmp/jl_vxXZKb/ll.nc (1 frame(s), 4×3 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_IU2dKm/selected.nc (1 frame(s), 4×3 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_6AHqih/rg.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_qDLMLa/cs.nc (1 frame(s), C4 CubedSphereMesh{Float64, GEOSNativePanelConvention, gmao_equal_distance}, mass_basis=dry)
+[ Info: [binary] /tmp/jl_ffTxsM/transport.bin grid=latlon levels=1 basis=dry steps/window=1 fields=[am,bm,cm,m,ps]
+┌ Info: Driven runtime
+│ Structured
+│ |-- grid:      2×2 LatLonMesh{Float64}, levels=1, Hp=0
+│ |-- numerics:  scheme=Upwind, FT=Float64, backend=CPU
+│ |-- physics:   diffusion=NoDiffusion, convection=NoConvection
+│ |-- schedule:  window_dt=3600s, steps/window=1, binaries=1
+│ |-- tracers:   co2
+└ `-- output:    /tmp/jl_ffTxsM/snapshot.nc
+Forward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: initializing[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.0s | io_write 0.1s | wall 0.3s | snapshot 1 at t=0h[K[A[A[A
+
+
+[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:00 ( 0.28  s/it)[K
+   status: transport.bin window 1/1  steps/window=1[K
+   timing: transport 0.0s ( 8.9%) | io_read 0.0s | io_write 0.1s | wall 0.3s | snapshots=1  output=snapshot.nc[K
+
+
+
+[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:00 ( 0.40  s/it)[K
+   status: transport.bin window 1/1  steps/window=1[K
+   timing: transport 0.0s ( 6.3%) | io_read 0.0s | io_write 0.2s | wall 0.4s | snapshot 2 at t=1h  output=snapshot.nc[K
+
+
+
+[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:00 ( 0.40  s/it)[K
+   status: finished transport.bin[K
+   timing: transport 0.0s ( 6.3%) | io_read 0.0s | io_write 0.2s | wall 0.4s | file wall 0.14s[K
+[ Info: Forward run wall 0.4s   transport 0.0s (6.1%)   io_read 0.0s (0.1%)   io_write 0.2s (36.7%)   other 0.2s (57.1%)
+[ Info: Final air-mass change vs initial state:  0.000e+00
+[ Info: Final tracer-storage drift for co2:      0.000e+00
+[ Info: [binary] /tmp/jl_ffTxsM/transport.bin grid=latlon levels=1 basis=dry steps/window=1 fields=[am,bm,cm,m,ps]
+┌ Info: Driven runtime
+│ Structured
+│ |-- grid:      2×2 LatLonMesh{Float64}, levels=1, Hp=0
+│ |-- numerics:  scheme=Upwind, FT=Float64, backend=CPU
+│ |-- physics:   diffusion=NoDiffusion, convection=NoConvection
+│ |-- schedule:  window_dt=3600s, steps/window=1, binaries=1
+│ |-- tracers:   co2
+└ `-- output:    /tmp/jl_ffTxsM/daily.nc
+[ Info: Saved snapshots: /tmp/jl_ffTxsM/daily_001.nc (2 frame(s), 2×2 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Forward run wall 0.1s   transport 0.0s (0.1%)   io_read 0.0s (0.1%)   io_write 0.0s (0.0%)   other 0.1s (99.8%)
+[ Info: Final air-mass change vs initial state:  0.000e+00
+[ Info: Final tracer-storage drift for co2:      0.000e+00
+[ Info: Running core/test_persistence_hardening.jl
+[ Info: Running core/test_poisson_balance.jl
+[ Info: Poisson balance: corrected 0/2 levels, max pre-balance residual: 0.0 kg
+[ Info: Poisson balance: corrected 4/4 levels, max pre-balance residual: 0.00516 kg
+[ Info: Poisson balance: corrected 2/2 levels, max pre-balance residual: 0.001 kg
+[ Info: Poisson balance: corrected 8/8 levels, max pre-balance residual: 0.0185 kg
+[ Info: Poisson balance: corrected 8/8 levels, max pre-balance residual: 0.0185 kg
+[ Info: Running core/test_ppm_subgrid_distributions.jl
+[ Info: Running core/test_precomputed_dkg_binary_payload.jl
+[ Info: Running core/test_preprocessing_cache_io.jl
+[ Info: Running core/test_preprocessing_integrity.jl
+[ Info: Running core/test_preprocessing_vertical_presets.jl
+[ Info: echlevs level selection: 137 → 94 levels (95 interfaces)
+[ Info: echlevs level selection: 137 → 85 levels (86 interfaces)
+[ Info: echlevs level selection: 137 → 94 levels (95 interfaces)
+[ Info: echlevs level selection: 137 → 85 levels (86 interfaces)
+[ Info: echlevs level selection: 137 → 94 levels (95 interfaces)
+[ Info: echlevs level selection: 137 → 85 levels (86 interfaces)
+[ Info: Running core/test_preprocessor_substep_schedule.jl
+[ Info: Running core/test_preprocessor_unified_driver.jl
+[ Info: Running core/test_preprocessor_writer_adapters.jl
+[ Info: Running core/test_public_api_surface.jl
+[ Info: Running core/test_public_config_and_cli.jl
+[ Info: [binary] /tmp/jl_xFmmUJ/synthetic_latlon_v4.bin grid=latlon levels=3 basis=dry steps/window=2 fields=[am,bm,cm,dam,dbm,dcm,dm,m,ps,qv_end,qv_start]
+┌ Info: Driven runtime
+│ Structured
+│ |-- grid:      36×18 LatLonMesh{Float32}, levels=3, Hp=0
+│ |-- numerics:  scheme=Slopes, FT=Float32, backend=CPU
+│ |-- physics:   diffusion=NoDiffusion, convection=NoConvection
+│ |-- schedule:  window_dt=3600s, steps/window=2, binaries=1
+│ |-- tracers:   co2_bl
+└ `-- output:    /tmp/jl_xFmmUJ/synthetic_output.nc
+Forward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: initializing[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.0s | io_write 0.2s | wall 0.2s | snapshot 1 at t=0h[K[A[A[A
+
+
+[K[A[K[A[K[AForward run   0%|                                        |  ETA: N/A (  N/A  s/it)[K
+   status: running synthetic_latlon_v4.bin with SlopesScheme on 36×18 LatLonMesh{Float32} (4 windows)[K
+   timing: transport 0.0s ( 0.0%) | io_read 0.6s | io_write 0.2s | wall 0.8s | loading first window[K[A[A[A[A
+
+
+
+[K[A[K[A[K[A[K[AForward run  25%|██████████                              |  ETA: 0:00:07 ( 2.40  s/it)[K
+   status: synthetic_latlon_v4.bin window 1/4  steps/window=2[K
+   timing: transport 1.6s (65.8%) | io_read 0.6s | io_write 0.2s | wall 2.4s | snapshots=1  output=synthetic_output.nc[K[A[A[A
+
+
+[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:02 ( 0.60  s/it)[K
+   status: synthetic_latlon_v4.bin window 4/4  steps/window=2[K
+   timing: transport 1.6s (65.8%) | io_read 0.6s | io_write 0.2s | wall 2.4s | snapshots=4  output=synthetic_output.nc[K
+
+
+
+[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:02 ( 0.60  s/it)[K
+   status: synthetic_latlon_v4.bin window 4/4  steps/window=2[K
+   timing: transport 1.6s (65.7%) | io_read 0.6s | io_write 0.2s | wall 2.4s | snapshot 5 at t=4h  output=synthetic_output.nc[K
+
+
+
+[K[A[K[A[K[AForward run 100%|████████████████████████████████████████| Time: 0:00:02 ( 0.60  s/it)[K
+   status: finished synthetic_latlon_v4.bin[K
+   timing: transport 1.6s (65.7%) | io_read 0.6s | io_write 0.2s | wall 2.4s | file wall 1.60s[K
+[ Info: Forward run wall 2.5s   transport 1.6s (64.0%)   io_read 0.6s (23.3%)   io_write 0.2s (6.4%)   other 0.2s (6.3%)
+[ Info: Final air-mass change vs initial state:  0.000e+00
+[ Info: Final tracer-storage drift for co2_bl:      3.029e-07
+[ Info: Running core/test_public_contracts.jl
+[ Info: Running core/test_public_docstrings.jl
+[ Info: Running core/test_readme_current.jl
+[ Info: Running core/test_reduced_gaussian_mesh.jl
+[ Info: Running core/test_replay_consistency.jl
+[ Info:   Write-time replay gate: max|m_evolved−m_stored|/max|m| = 4.000e-05  (abs=4.000e+04 kg  win=1  cell=(2, 2, 1))
+[ Info: Running core/test_rg_preprocessor_contract.jl
+[ Info:   Per-substep positivity gate: max outgoing/m=0.500 dir=h win=1 cell=(1, 1) (limit=0.95)
+[ Info:   Per-substep positivity gate: max outgoing/m=0.500 dir=h win=2 cell=(1, 1) (limit=0.95)
+[ Info: Running core/test_rg_preprocessor_unified_driver.jl
+[ Info:   Reading spectral data for 20211201...
+[ Info:   Spectral cache hit: /tmp/jl_RTF28c/cache/era5_spectral_1bc82e56c786d52d8c7f6695b39ccc25e69bf5db.jld2
+[ Info:   Spectral data read: T=0, 24 hours (0.0s)
+[ Info:   Compressed Laplacian: 24 unique entries (avg 3.0 neighbors/cell) from 20 faces (1× compression, 0.00s)
+[ Info:   Output: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 24 windows, 8 cells, 20 faces)
+[ Info:   Mass fix DISABLED
+[ Info:   Streaming: synthesize → balance → write (2-window sliding buffer)...
+[ Info:     Window  1/24 (hour 00): synth 0.13s  offset=+0.000 Pa
+[ Info:     Window  2/24 (hour 01): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window  1/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window  3/24 (hour 02): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window  2/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window  3/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window  8/24 (hour 07): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window  8/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window 16/24 (hour 15): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window 16/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window 24/24 (hour 23): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window 24/24 (last): bal 0.00s  pre_raw=0.00e+00 post_proj=0.00e+00 iter=0
+[ Info:   Per-substep positivity gate: max outgoing/m=0.000 dir=none win=0 cell=(0, 0) (limit=0.95)
+[ Info:   Write-time RG replay gate: max rel=0.000e+00 abs=0.000e+00 win=0 cell=(0, 0)
+[ Info:   Poisson balance summary: pre_raw=0.000e+00  post_proj=0.000e+00  post_raw=0.000e+00  max_cg_iter=0
+[ Info:   Done: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 4.1s)
+[ Info:   Reading spectral data for 20211201...
+[ Info:   Spectral cache hit: /tmp/jl_RTF28c/cache/era5_spectral_1bc82e56c786d52d8c7f6695b39ccc25e69bf5db.jld2
+[ Info:   Spectral data read: T=0, 24 hours (0.0s)
+[ Info:   Compressed Laplacian: 24 unique entries (avg 3.0 neighbors/cell) from 20 faces (1× compression, 0.00s)
+[ Info:   Output: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 24 windows, 8 cells, 20 faces)
+[ Info:   Mass fix DISABLED
+[ Info:   Streaming: synthesize → balance → write (2-window sliding buffer)...
+[ Info:     Window  1/24 (hour 00): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window  2/24 (hour 01): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window  1/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window  3/24 (hour 02): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window  2/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window  3/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window  8/24 (hour 07): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window  8/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window 16/24 (hour 15): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window 16/24: wrote (bal 0.00s pre_raw=0.00e+00 post_proj=0.00e+00 iter=0)
+[ Info:     Window 24/24 (hour 23): synth 0.00s  offset=+0.000 Pa
+[ Info:     Window 24/24 (last): bal 0.00s  pre_raw=0.00e+00 post_proj=0.00e+00 iter=0
+[ Info:   Per-substep positivity gate: max outgoing/m=0.000 dir=none win=0 cell=(0, 0) (limit=0.95)
+[ Info:   Write-time RG replay gate: max rel=0.000e+00 abs=0.000e+00 win=0 cell=(0, 0)
+[ Info:   Poisson balance summary: pre_raw=0.000e+00  post_proj=0.000e+00  post_raw=0.000e+00  max_cg_iter=0
+[ Info:   Done: era5_transport_20211201_merged0Pa_float64.bin (0.00 GB, 0.0s)
+[ Info: Running core/test_runtime_chemistry_recipe.jl
+[ Info: Running core/test_section_timer.jl
+[ Info: Running core/test_selected_snapshots.jl
+[ Info: Saved snapshots: /tmp/jl_0MZA1m/full.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_0MZA1m/selected.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_AJlVui/full.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_AJlVui/selected.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_35nh0p/full.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_35nh0p/selected.nc (1 frame(s), 6×4 LatLonMesh{Float32}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_wIOyrT/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_wIOyrT/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_DUSiic/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_DUSiic/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_htFcSA/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_htFcSA/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float32} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_KLGddh/full.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_KLGddh/selected.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_YzFVLH/full.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_YzFVLH/selected.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_kzNH6b/full.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_kzNH6b/selected.nc (1 frame(s), C4 CubedSphereMesh{Float32, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_wMAiME/full.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_wMAiME/selected.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_iSsph5/full.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_iSsph5/selected.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_nVl3Pg/full.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_nVl3Pg/selected.nc (1 frame(s), 6×4 LatLonMesh{Float64}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_vC1IN0/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_vC1IN0/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_Znfdhk/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_Znfdhk/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_sdAbhn/full.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_sdAbhn/selected.nc (1 frame(s), 2-ring ReducedGaussianMesh{Float64} with 12 cells and 32 faces, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_B2M7Cr/full.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_B2M7Cr/selected.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_c3sen0/full.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_c3sen0/selected.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_6MJwnN/full.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Saved snapshots: /tmp/jl_6MJwnN/selected.nc (1 frame(s), C4 CubedSphereMesh{Float64, GnomonicPanelConvention, equiangular_gnomonic}, mass_basis=dry)
+[ Info: Running core/test_structured_mesh_metadata.jl
+[ Info: Running core/test_surface_flux_kahan_accuracy.jl
+[ Info: Running core/test_timevarying_surface_flux.jl
+[ Info: Running core/test_tm5_alias_safety.jl
+[ Info: Running core/test_tm5_bidiagonal_solve.jl
+[ Info: Running core/test_tm5_bldiff.jl
+[ Info: Running core/test_tm5_convection.jl
+┌ Warning: TM5Convection: use_collab_lu=true but backend is CPU — the collaborative kernel is GPU-only; using the per-thread path. Set use_collab_lu=false to silence this.
+└ @ AtmosTransport.Operators.Convection ~/code/gitHub/AtmosTransportModel-revamp-main/src/Operators/Convection/TM5Convection.jl:184
+[ Info: Running core/test_tm5_driven_simulation.jl
+[ Info: Running core/test_tm5_hessenberg.jl
+[ Info: Running core/test_tm5_preprocessing.jl
+[ Info: Running core/test_tm5_preprocessing_rates.jl
+[ Info: Running core/test_tm5_process_day.jl
+[ Info:   Writing binary...
+[ Info: Running core/test_tm5_tile_bit_equality.jl
+[ Info: Running core/test_tm5_tracer_batching.jl
+[ Info: Running core/test_tm5_vertical_remap.jl
+[ Info: Running core/test_tm5_vs_cmfmc_parity.jl
+[ Info: Running core/test_tm5_workspace_lifetime.jl
+[ Info: Running core/test_transport_model_convection.jl
+[ Info: Running core/test_vertical_transforms.jl
+[ Info: echlevs level selection: 137 → 85 levels (86 interfaces)
+[ Info: echlevs level selection: 137 → 85 levels (86 interfaces)
+[ Info: Running core/test_visualization_snapshots.jl
+[ Info: Running core/test_window_prefetch.jl
+[ Info: ── Tier regridding — 1 files ──
+[ Info: Running regridding/runtests.jl
+┌ Info: Building regridder (will cache to disk)
+└   path = "/tmp/jl_2uWlwG/regridder_ff691c8e65f20a8b982329166c432f57a64315ee.jld2"
+┌ Info: Loading cached regridder
+└   path = "/tmp/jl_2uWlwG/regridder_ff691c8e65f20a8b982329166c432f57a64315ee.jld2"
+[ Info: Skipped tiers: [:diagnostic, :orphan, :real_data] (opt-in flags: --real-data --diagnostic --orphan --all)
+[ Info: Test suite complete.
+Total  Time
+DrivenSimulation window-forcing runtime |   50     50  1.4s
+Test Summary:                                       | Pass  Total  Time
+full-window flux scaling guard (flux_kind contract) |    4      4  1.0s
+Test Summary:                                        | Pass  Total  Time
+cubed-sphere window refresh copies diffusion forcing |    5      5  1.1s
+Test Summary:                                                        | Pass  Total  Time
+fill_dz_hydrostatic_virtualT! — single 3D array matches hand formula |    3      3  0.4s
+Test Summary:                                              | Pass  Total  Time
+fill_dz_hydrostatic_virtualT! — clamps negative qv to zero |    1      1  0.0s
+Test Summary:                                           | Pass  Total  Time
+fill_dz_hydrostatic_virtualT! — CS panel-tuple dispatch |    6      6  0.6s
+Test Summary:                                                      | Pass  Total  Time
+fill_dz_hydrostatic_virtualT! vs constT — differ when T_v != T_ref |    2      2  0.3s
+Test Summary:                                     | Pass  Total  Time
+ERA convection converts after target-grid mapping |  101    101  1.6s
+Test Summary:                       | Pass  Broken  Total  Time
+ERA5 N320 convection — breakpoint E |   87       1     88  1.2s
+Test Summary:                     | Pass  Broken  Total  Time
+ERA5 N320 dry-mass — breakpoint C |   79       1     80  1.7s
+Test Summary:                          | Pass  Broken  Total  Time
+ERA5 native-GRIB reader — breakpoint A |   52       1     53  0.9s
+Test Summary:                            | Broken  Total  Time
+ERA5 N320 → C180 pipeline — breakpoint F |      1      1  0.0s
+Test Summary:                          | Pass  Broken  Total  Time
+ERA5 N320 → C180 regrid — breakpoint D |   45       1     46  5.8s
+Test Summary:                          | Pass  Broken  Total  Time
+ERA5 N320 window reader — breakpoint B |   39       1     40  1.1s
+Test Summary:                                    | Pass  Total   Time
+plan 24 Commit 2: BIN roundtrip on synthetic NCs |   20     20  10.1s
+Test Summary:                              | Pass  Total  Time
+plan 24 Commit 2: latitude flip N→S to S→N |    3      3  0.1s
+Test Summary:                                      | Pass  Total  Time
+plan 24 Commit 2: missing-file errors name the fix |    5      5  0.1s
+Test Summary:                                        | Pass  Total  Time
+plan 24 Commit 2: open on missing BIN errors clearly |    3      3  0.1s
+Test Summary:                                       | Pass  Total  Time
+plan 24 Commit 2: idempotent write (skip if exists) |    4      4  0.1s
+Test Summary:                                                     | Pass  Total  Time
+plan 24 Commit 2: get_era5_physics_field returns views (no alloc) |    1      1  0.1s
+Test Summary:                                       | Pass  Total  Time
+plan 24 Commit 2: unknown var symbol errors cleanly |    1      1  0.1s
+Test Summary:                      | Pass  Total   Time
+GEOS convection wiring (Section C) |   38     38  18.1s
+Test Summary:         | Pass  Total  Time
+GEOS → CS passthrough | 3511   3511  7.7s
+Test Summary:             | Pass  Total  Time
+GEOS OMEGA regularization |   52     52  2.6s
+Test Summary: | Pass  Total  Time
+GEOS reader   |   48     48  0.9s
+Test Summary:                              | Pass  Total  Time
+GEOS-FP native C720-style physics fallback |   14     14  7.4s
+Test Summary:                                     | Pass  Broken  Total  Time
+adapted time-varying fields remain host-updatable |    4       1      5  0.7s
+Test Summary:                              | Pass  Total  Time
+DerivedKz analytic free-troposphere branch |    3      3  0.8s
+Test Summary:                              | Pass  Total  Time
+Gradient Taylor sweep (memo Eqs. 2.8-2.11) |    9      9  3.5s
+Test Summary:              | Pass  Total  Time
+IdentityRegrid passthrough |   15     15  1.1s
+Test Summary:                                | Pass  Total   Time
+plan 40 Commit 1b — InitialConditionIO hoist |  133    133  12.4s
+Test Summary:                               | Pass  Total  Time
+Runner drains prefetch before closing input |   16     16  1.1s
+Test Summary:                                           | Pass  Total  Time
+Runner closes a first driver when setup rejects the run |    4      4  0.9s
+Test Summary:                                        | Pass  Total  Time
+Rejected driver construction closes its owned reader |    4      4  0.6s
+Test Summary:                                    | Pass  Total  Time
+Multi-file partial ranges reject skipped forcing |    6      6  2.7s
+Test Summary:                                     | Pass  Total  Time
+Runner disables its instrumentation after failure |   28     28  1.8s
+Test Summary:                      | Pass  Total  Time
+InputStaging — rolling NVMe stager |   42     42  0.9s
+Test Summary:                                          | Pass  Total  Time
+InputStaging — source identity and directory ownership |   35     35  1.1s
+Test Summary:                                    | Pass  Total  Time
+Plan 25 Commit 1 — LinRood update kernel adjoint |    8      8  1.2s
+Test Summary:                                 | Pass  Total  Time
+Plan 25 Commit 2 — pre-advect kernel adjoints |    7      7  1.6s
+Test Summary:                                                 | Pass  Total  Time
+Plan 25 Commit 3 — PPM `_from_q` face kernel adjoints (ORD=5) |    7      7  2.7s
+Test Summary:                                                 | Pass  Total  Time
+Plan 25 Commit 3b — PPM rm-input face kernel adjoints (ORD=5) |    6      6  4.4s
+Test Summary:                                                  | Pass  Total  Time
+Plan 25 Commit 4 — single-panel horizontal adjoint composition |    1      1  0.3s
+Test Summary:                                               | Pass  Total  Time
+Plan 25 Commit 5 — multi-substep LinRood horizontal adjoint |    1      1  0.7s
+Test Summary:                                                             | Pass  Total  Time
+Plan 25 Commit 5 (ORD=7) — multi-substep LinRood adjoint, no Val(7) kwarg |    1      1  0.8s
+Test Summary:                                          | Pass  Total  Time
+Lin-Rood shared faces preserve interiors and transpose |   12     12  1.7s
+Test Summary:                  | Pass  Total  Time
+LL preprocessor contract gates |  151    151  1.6s
+Test Summary:                                               | Pass  Total  Time
+LL spectral unified driver emits reproducible payload bytes |    8      8  7.3s
+Test Summary:                                        | Pass  Total     Time
+plan 40 Commit 3 — regrid_ll_binary_to_cs end-to-end |   69     69  1m14.2s
+Test Summary:                                            | Pass  Total  Time
+Public capability queries include preprocessing settings |   12     12  0.0s
+Test Summary:                          | Pass  Total  Time
+Plan 41 P0a — typed met-reader surface |   43     43  0.2s
+Test Summary:     | Pass  Total  Time
+Met source loader |   32     32  0.2s
+Test Summary:    | Pass  Total  Time
+Met source trait |   18     18  0.0s
+Test Summary:                                     | Pass  Total  Time
+DrivenSimulation start_time sets the clock origin |    3      3  1.5s
+Test Summary:                                   | Pass  Total  Time
+stepwise slice selection uses absolute run time |    2      2  0.0s
+Test Summary:                                                   | Pass  Total  Time
+runner wiring tripwire: start_time is passed at both call sites |    3      3  0.0s
+test_multiday_source_clock.jl OK
+Test Summary:                                                 | Pass  Total     Time
+Incremental NetCDF matches batch output and retains no frames | 1198   1198  1m12.8s
+Test Summary:                                                    | Pass  Total  Time
+NetCDF stream rejects incompatible frames before touching output |   17     17  0.4s
+Test Summary:             | Pass  Total  Time
+NoAdvection scheme traits |    4      4  0.0s
+Test Summary:                          | Pass  Total  Time
+NoAdvection LatLon — apply! is a no-op |    2      2  0.0s
+Test Summary:                                   | Pass  Total  Time
+NoAdvection ReducedGaussian — apply! is a no-op |    2      2  0.0s
+Test Summary:                                                      | Pass  Total  Time
+NoAdvection CubedSphere — apply! is a no-op + workspace is nothing |    3      3  0.2s
+Test Summary:                                             | Pass  Total  Time
+with_diffusion allocates independent CS diffusion scratch |    4      4  0.2s
+Test Summary:                                                  | Pass  Total  Time
+NoAdvection — diffusion runs, surface emissions still rejected |    7      7  0.1s
+Test Summary:                                                    | Pass  Total  Time
+NoAdvection on RG + CS: diffusion runs, emissions still rejected |    5      5  1.1s
+Test Summary:                                            | Pass  Total  Time
+Recipe parses [advection] scheme = "none" to NoAdvection |    3      3  0.0s
+Test Summary:           | Pass  Total   Time
+Output NetCDF snapshots |  107    107  13.5s
+Test Summary:                                                 | Pass  Total  Time
+download verification sidecars preserve safe resume semantics |    6      6  0.6s
+Test Summary:                                                   | Pass  Total  Time
+generation fingerprints cover source and preprocessing settings |    2      2  0.4s
+Test Summary:                       | Pass  Total  Time
+streaming binary writes fail closed |   46     46  5.9s
+Test Summary:                                                | Pass  Total  Time
+binary readers reject size mismatches and close failed opens |  202    202  0.2s
+Test Summary:                                               | Pass  Total  Time
+binary readers support headers larger than the legacy probe |    4      4  0.9s
+Test Summary:                                               | Pass  Total  Time
+mmap tape manifest is atomic and cannot outlive its records |    5      5  0.1s
+Test Summary:          | Pass  Total  Time
+LL FFT Poisson balance |    6      6  0.0s
+Test Summary:             | Pass  Total  Time
+CS global Poisson balance |  628    628  2.5s
+Test Summary:           | Pass  Total  Time
+PPM edge reconstruction |   61     61  0.1s
+Test Summary:                         | Pass  Total  Time
+Exact TM5 dkg binary and runtime path |   22     22  3.9s
+Test Summary:                             | Pass  Total  Time
+TM5 bldiff emits the vendored dkg formula |    6      6  0.4s
+Test Summary:                          | Pass  Total  Time
+daily qv preload matches hourly reader |   10     10  1.5s
+Test Summary:                         | Pass  Total  Time
+spectral coefficient cache round trip |    6      6  0.7s
+Test Summary:              | Pass  Total  Time
+spectral GRIB header guard |    7      7  0.1s
+Test Summary:                                                | Pass  Total  Time
+cubed-sphere geometry rejects obsolete configuration aliases |    1      1  0.0s
+Test Summary:                                       | Pass  Total  Time
+reduced dry-basis conversion skips polar stub faces |    4      4  0.6s
+Test Summary:                  | Pass  Total  Time
+spectral coverage fails closed |    4      4  0.2s
+Test Summary:                                            | Pass  Total  Time
+hour-0 reader distinguishes absent and incomplete inputs |    3      3  0.2s
+Test Summary:                         | Pass  Total  Time
+CFL-oriented ERA5 L137 echlev presets |    8      8  0.3s
+Test Summary:                                            | Pass  Total  Time
+CFL-oriented echlev presets are available through config |    8      8  0.8s
+Test Summary:                               | Pass  Total  Time
+shared preprocessor substep schedule policy |    9      9  0.1s
+Test Summary:                                                       | Pass  Total  Time
+transport header schedule patch keeps Poisson contract synchronized |    6      6  0.4s
+Test Summary:                                                  | Pass  Total  Time
+unified driver writes, summarizes, promotes, and closes reader |   19     19  0.2s
+Test Summary:                                   | Pass  Total  Time
+unified driver accepts preverified ready events |    6      6  0.0s
+Test Summary:                                            | Pass  Total  Time
+unified driver can skip already-accumulated ready events |    6      6  0.0s
+Test Summary:                                 | Pass  Total  Time
+unified driver quarantines when summary fails |    7      7  0.0s
+Test Summary:                                 | Pass  Total  Time
+unified driver quarantines when a write fails |   10     10  0.0s
+Test Summary:                                    | Pass  Total  Time
+LatLonBinaryWriter delegates to v4 window writer |   16     16  1.3s
+Test Summary:                                      | Pass  Total  Time
+staged-size validation runs before final promotion |    3      3  0.1s
+Test Summary:                                      | Pass  Total  Time
+LatLonBinaryWriter quarantine removes staging file |    4      4  0.2s
+Test Summary:                                      | Pass  Total  Time
+ReducedGaussianBinaryWriter wraps streaming writer |    9      9  0.5s
+Test Summary:                                  | Pass  Total  Time
+CubedSphereBinaryWriter wraps streaming writer |   10     10  0.4s
+Test Summary:                | Pass  Total  Time
+curated top-level public API |   12     12  0.0s
+Test Summary:                                                      | Pass  Total  Time
+runtime preflight reports malformed tables before reading binaries |   30     30  0.2s
+Test Summary:                                           | Pass  Total  Time
+runtime window indices follow the integer TOML contract |   28     28  0.8s
+Test Summary:                                   | Pass  Total  Time
+documented synthetic quickstart runs end to end |   12     12  8.1s
+Test Summary:                                        | Pass  Total  Time
+runtime editor schema follows public config contract |   28     28  0.2s
+Test Summary:                              | Pass  Total  Time
+canonical command-line parsers fail closed |   20     20  0.5s
+Test Summary:                                           | Pass  Total  Time
+runtime preload reports malformed architecture settings |    6      6  5.9s
+Test Summary:                                           | Pass  Total  Time
+physical and state constructors reject ambiguous inputs |   11     11  0.1s
+Test Summary:                                             | Pass  Total  Time
+chemistry and inversion inputs are finite and unambiguous |    8      8  0.5s
+Test Summary:                                    | Pass  Total  Time
+configuration booleans are not numeric coercions |    2      2  0.0s
+Test Summary:                           | Pass  Total  Time
+core public API has attached docstrings |   18     18  0.0s
+Test Summary:                          | Pass  Total  Time
+met-driver API has attached docstrings |   13     13  0.0s
+Test Summary:           | Pass  Total  Time
+Module README freshness |   84     84  0.1s
+Test Summary:              | Pass  Total  Time
+ReducedGaussianMesh wiring |    4      4  0.0s
+Test Summary:                | Pass  Total  Time
+ReducedGaussianMesh geometry |   22     22  0.2s
+Test Summary:                                          | Pass  Total  Time
+Plan 39 Commit H — replay-consistency gate regressions |   25     25  1.8s
+Test Summary:                  | Pass  Total  Time
+RG preprocessor contract gates |  184    184  1.5s
+Test Summary:                                       | Pass  Total  Time
+RG spectral unified driver emits reproducible bytes |    6      6  5.0s
+Test Summary:                      | Pass  Total  Time
+build_runtime_chemistry — dispatch |   13     13  0.1s
+Test Summary:       | Pass  Total  Time
+ChemistrySpec parse |   11     11  0.1s
+Test Summary:                                  | Pass  Total  Time
+RuntimePhysicsRecipe stores explicit chemistry |    1      1  0.0s
+Test Summary:                                  | Pass  Total  Time
+SectionTimer records concurrent samples safely |    7      7  1.1s
+Test Summary:                                     | Pass  Total  Time
+SectionTimer rejects samples from disabled epochs |    4      4  0.1s
+Test Summary:                                         | Pass  Total   Time
+Selected capture preserves full-capture NetCDF values |  354    354  25.2s
+Test Summary:                                                 | Pass  Total  Time
+Selected signed totals survive omitted layers and diagnostics |   11     11  1.5s
+Test Summary:                   | Pass  Total  Time
+LatLonMesh style and validation |   12     12  0.2s
+Test Summary:               | Pass  Total  Time
+CubedSphereMesh conventions |   26     26  0.3s
+Test Summary:                                        | Pass  Total  Time
+CubedSphereMesh connectivity matches corner geometry |  288    288  0.1s
+Test Summary:                       | Pass  Total  Time
+CubedSphereMesh local tangent basis |   20     20  0.3s
+Test Summary:                                | Pass  Total  Time
+Kahan vs naive F32 surface-flux accumulation |   45     45  0.1s
+Test Summary:                                    | Pass  Total  Time
+TimeVarying surface flux — constructor contracts |    4      4  0.2s
+Test Summary:                                   | Pass  Total  Time
+TimeVarying surface flux — _time_interp_bracket |   12     12  0.0s
+Test Summary:                                       | Pass  Total  Time
+TimeVarying surface flux — CS apply + interpolation |   33     33  0.8s
+Test Summary:                                          | Pass  Total  Time
+TimeVarying surface flux — temporal schemes (dispatch) |   16     16  0.5s
+Test Summary:                                                          | Pass  Total  Time
+TimeVarying surface flux — ConservativeMeanFlux knot-crossing integral |    4      4  0.3s
+Test Summary:                                                | Pass  Total  Time
+TimeVarying surface flux — Adapt identity + PerTracerFluxMap |    7      7  0.4s
+Test Summary:                         | Pass  Total  Time
+TM5 alias safety: f_scratch === conv1 |   23     23  1.7s
+Test Summary:                                       | Pass  Total  Time
+Bidiagonal eligibility follows active pivot history |    4      4  0.1s
+Test Summary:                                      | Pass  Total  Time
+Bidiagonal RHS solves agree with general LU solves | 1224   1224  2.6s
+Test Summary:            | Pass  Total  Time
+TM5 bldiff column kernel |   94     94  1.4s
+Test Summary:                                            | Pass  Total  Time
+plan 23 Commit 1: TM5Convection type + workspace factory |   30     30  0.0s
+Test Summary:                                                | Pass  Total  Time
+plan 23 Commit 1 / storage Commit 4: TM5Workspace tile shape |   26     26  0.2s
+Test Summary:                                        | Pass  Total  Time
+plan 23 Commit 1: _convection_workspace_for dispatch |    6      6  0.2s
+Test Summary:                                    | Pass  Total  Time
+plan 23 Commit 4: TM5Convection apply! LL kernel |    8      8  2.0s
+Test Summary:                                    | Pass  Total  Time
+plan 23 Commit 4: TM5Convection apply! RG kernel |    6      6  1.5s
+Test Summary:                                    | Pass  Total  Time
+plan 23 Commit 4: TM5Convection apply! CS kernel |    5      5  3.1s
+Test Summary:                                                     | Broken  Total  Time
+P6 collab-LU: bit-exact equivalence with per-thread kernel (CUDA) |      1      1  0.0s
+Test Summary:                                                 | Broken  Total  Time
+P6 collab-LU: bit-exact equivalence on ReducedGaussian (CUDA) |      1      1  0.0s
+Test Summary:                                             | Broken  Total  Time
+P6 collab-LU: bit-exact equivalence on CubedSphere (CUDA) |      1      1  0.0s
+Test Summary:                                                                               | Broken  Total  Time
+P6 collab-LU: lmax_conv truncation is bit-exact when forcings above k_shift are zero (CUDA) |      1      1  0.0s
+Test Summary:                                                  | Broken  Total  Time
+P6 collab-LU: n_merge = 1 is bit-exact to no-merge path (CUDA) |      1      1  0.0s
+Test Summary:                                                   | Broken  Total  Time
+P6 collab-LU: vertical aggregation conserves tracer mass (CUDA) |      1      1  0.0s
+Test Summary:                                                                  | Pass  Total  Time
+cloud-top closure: icltop==1 (clipped cloud) conserves mass over many substeps |    2      2  0.1s
+Test Summary:                                                  | Pass  Total  Time
+Collaborative LU: depth envelope and unbounded tracer batching |   12     12  0.0s
+Test Summary:                                                    | Pass  Total  Time
+plan 23 Commit 4: _assert_tm5_forcing catches missing tm5_fields |    4      4  0.0s
+Test Summary:                                                | Pass  Total  Time
+plan 23 Commit 2: _tm5_solve_column! identity + conservation |   39     39  0.4s
+Test Summary:                                   | Pass  Total  Time
+plan 23 Commit 2: column-major loop-order audit |    1      1  0.6s
+Test Summary:                                             | Pass  Total  Time
+plan 23 Commit 1: with_convection(model, TM5Convection()) |    5      5  0.1s
+Test Summary:                                         | Pass  Total  Time
+plan 23 Commit 6: DrivenSimulation with TM5Convection |   11     11  1.7s
+Test Summary:                                           | Pass  Total  Time
+plan 23 Commit 6: DrivenSimulation preserves FT for TM5 |    4      4  0.8s
+Test Summary:                                              | Pass  Total  Time
+Hessenberg LU retains general pivots and triangular solves |  402    402  0.4s
+Test Summary:                                                | Pass  Total  Time
+Production forward and adjoint choose exact column structure |  448    448  2.9s
+Test Summary:                        | Pass  Total  Time
+plan 23 Commit 3: ec2tm! column math |   27     27  0.6s
+Test Summary:                                       | Pass  Total  Time
+plan 23 Commit 3: LL transport binary TM5 roundtrip |    6      6  1.2s
+Test Summary:                                                      | Pass  Total  Time
+plan 23 Commit 3: LL binary without TM5 → has_tm5_convection=false |    2      2  0.5s
+Test Summary:                                                                  | Pass  Total  Time
+plan 23 Commit 3: TransportBinaryDriver populates window.convection.tm5_fields |    8      8  0.8s
+Test Summary:                                  | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! F90 parity |   10     10  0.6s
+Test Summary:                                    | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! zero forcing |    4      4  0.0s
+Test Summary:                                        | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! bad-data cleanup |    9      9  0.0s
+Test Summary:                                               | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! negative redistribution |    8      8  0.0s
+Test Summary:                                         | Pass  Total  Time
+TM5 closure: Σentu = Σdetu after column net-zero step |    8      8  0.0s
+Test Summary:                                      | Pass  Total  Time
+TM5 closure: no-op when column is already balanced |    4      4  0.0s
+Test Summary:                                    | Pass  Total  Time
+plan 24 Commit 1: dz_hydrostatic_virtual! sanity |    8      8  0.0s
+Test Summary:                                          | Pass  Total  Time
+plan 24 Commit 1: dz_hydrostatic_virtual! shape guards |    4      4  0.0s
+Test Summary:                                        | Pass  Total  Time
+plan 24 Commit 1: ec2tm! (plan-23 minimal) unchanged |    2      2  0.0s
+Test Summary:                                    | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! shape guards |    2      2  0.0s
+Test Summary:                                     | Pass  Total  Time
+ec2tm_from_rates! sign-aware closure (regression) |    5      5  0.0s
+Test Summary:                   | Pass  Total  Time
+resolve_tm5_convection_settings |    9      9  0.1s
+Test Summary:                                                    | Pass  Total  Time
+tm5_copy_or_regrid_ll! supports lower-resolution LL target shape |    2      2  0.2s
+Test Summary:                          | Pass  Total  Time
+LL write_day_binary! with TM5 sections |   17     17  1.2s
+Test Summary:                                   | Pass  Total  Time
+compute_tm5_merged_hour_on_source! zero-forcing |   24     24  5.3s
+Test Summary:                            | Pass  Total  Time
+TM5 tile bit-equality (storage Commit 4) |    8      8  1.4s
+Test Summary:                                     | Pass  Total  Time
+Collaborative convection batching: host selection |   18     18  0.0s
+Test Summary:                                               | Pass  Total  Time
+Shared RHS helper: partial batches, pivots, and active rows |  964    964  1.6s
+Test Summary:                                              | Pass  Total  Time
+plan 24 Commit 3: merge_tm5_field_3d! preserves column sum |   62     62  0.0s
+Test Summary:                                              | Pass  Total  Time
+plan 24 Commit 3: merge_tm5_field_3d! zeros unused buckets |    5      5  0.1s
+Test Summary:                                      | Pass  Total  Time
+plan 24 Commit 3: merge_tm5_field_3d! shape guards |    2      2  0.0s
+Test Summary:                                           | Pass  Total  Time
+plan 24 Commit 3: tm5_native_fields_for_hour! grid loop |   15     15  0.5s
+Test Summary:                                                    | Pass  Total  Time
+plan 24 Commit 3: tm5_native_fields_for_hour! output-shape guard |    1      1  0.6s
+Test Summary:                                                     | Pass  Total  Time
+plan 24 Commit 3: end-to-end native → merged column sum preserved |   48     48  0.3s
+Test Summary:                                   | Pass  Total  Time
+plan 23 Commit 5: CMFMC vs TM5 parity on LatLon |    6      6  1.0s
+Test Summary:                                            | Pass  Total  Time
+plan 23 Commit 5: CMFMC vs TM5 parity on ReducedGaussian |    3      3  1.9s
+Test Summary:                                                | Pass  Total  Time
+Runtime factories defer only requested collaborative scratch |   48     48  0.5s
+Test Summary:                                          | Pass  Total  Time
+Deferred TM5 scratch retains budget and allocates once |   38     38  0.2s
+Test Summary:                                            | Pass  Total  Time
+Deferred adaptation preserves persistent convection data |    8      8  0.1s
+Test Summary:                                                | Pass  Total  Time
+C180 L85 collaborative workspace omits legacy matrix payload |    3      3  0.1s
+Test Summary:                     | Pass  Total  Time
+TransportModel convection runtime |   24     24  0.7s
+Test Summary:                       | Pass  Total  Time
+DrivenSimulation convection runtime |   10     10  1.0s
+Test Summary:                                             | Pass  Total  Time
+binary substep contract keeps chemistry at window cadence |    4      4  0.6s
+Test Summary:                                         | Pass  Total  Time
+DrivenSimulation keeps convection runtime on model FT |    4      4  0.7s
+Test Summary:                                                      | Pass  Total  Time
+New DrivenSimulation invalidates convection from a previous driver |    7      7  1.8s
+Test Summary:                                  | Pass  Total  Time
+Plan 41 P0b — typed vertical-transform surface |  140    140  1.1s
+Test Summary:                      | Pass  Total  Time
+Visualization snapshot field views |   15     15  2.9s
+Test Summary:                        | Pass  Total  Time
+CPU startup loads one forcing window |   57     57  1.6s
+Test Summary:       | Pass  Total   Time
+Regridding (Tier 4) |  628    628  10.1s
+     Testing AtmosTransport tests passed 

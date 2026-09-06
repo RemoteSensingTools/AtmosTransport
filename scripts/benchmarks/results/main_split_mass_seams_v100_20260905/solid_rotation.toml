@@ -1,0 +1,216 @@
+[[rows]]
+method = "before"
+convention = "GnomonicPanelConvention"
+Nc = 8
+rotation_fraction = 0.25
+min_q = 0.09026800047085631
+relative_l2 = 0.19002945870042562
+max_q = 0.8260859334709041
+relative_mass_drift = -0.00034090865085377746
+[[rows]]
+method = "before"
+convention = "GnomonicPanelConvention"
+Nc = 8
+rotation_fraction = 1.0
+min_q = 0.09552354822925561
+relative_l2 = 0.3703614603965722
+max_q = 0.5977206245876583
+relative_mass_drift = -0.0016770516177626203
+[[rows]]
+method = "after"
+convention = "GnomonicPanelConvention"
+Nc = 8
+rotation_fraction = 0.25
+min_q = 0.09026414845877555
+relative_l2 = 0.18968255538058182
+max_q = 0.8266609410612555
+relative_mass_drift = -1.1314979145421046e-15
+[[rows]]
+method = "after"
+convention = "GnomonicPanelConvention"
+Nc = 8
+rotation_fraction = 1.0
+min_q = 0.09544247177789553
+relative_l2 = 0.368018238229921
+max_q = 0.6014844194490995
+relative_mass_drift = 2.8287447863552616e-16
+[[rows]]
+method = "before"
+convention = "GEOSNativePanelConvention"
+Nc = 8
+rotation_fraction = 0.25
+min_q = 0.09440812072946832
+relative_l2 = 0.1915618718109815
+max_q = 0.8144650322317064
+relative_mass_drift = 0.0011245308948550964
+[[rows]]
+method = "before"
+convention = "GEOSNativePanelConvention"
+Nc = 8
+rotation_fraction = 1.0
+min_q = 0.0971132146891478
+relative_l2 = 0.37892621115920483
+max_q = 0.5971549081722272
+relative_mass_drift = -0.001313559416176043
+[[rows]]
+method = "after"
+convention = "GEOSNativePanelConvention"
+Nc = 8
+rotation_fraction = 0.25
+min_q = 0.09430183177929737
+relative_l2 = 0.18772583161214618
+max_q = 0.8178385826160813
+relative_mass_drift = 1.4130670840388134e-16
+[[rows]]
+method = "after"
+convention = "GEOSNativePanelConvention"
+Nc = 8
+rotation_fraction = 1.0
+min_q = 0.09501844317504847
+relative_l2 = 0.3777450432122548
+max_q = 0.5983588258576855
+relative_mass_drift = 5.652268336155253e-16
+[[rows]]
+method = "before"
+convention = "GnomonicPanelConvention"
+Nc = 16
+rotation_fraction = 0.25
+min_q = 0.09995510565209434
+relative_l2 = 0.05734786984743526
+max_q = 1.0069617836687383
+relative_mass_drift = -0.00015622780419662316
+[[rows]]
+method = "before"
+convention = "GnomonicPanelConvention"
+Nc = 16
+rotation_fraction = 1.0
+min_q = 0.0998139402978169
+relative_l2 = 0.11419697967503718
+max_q = 0.9245420714953314
+relative_mass_drift = -0.0007614036898642118
+[[rows]]
+method = "after"
+convention = "GnomonicPanelConvention"
+Nc = 16
+rotation_fraction = 0.25
+min_q = 0.09995475630887996
+relative_l2 = 0.05695341111113596
+max_q = 1.0071065061484676
+relative_mass_drift = 9.89644903849788e-16
+[[rows]]
+method = "after"
+convention = "GnomonicPanelConvention"
+Nc = 16
+rotation_fraction = 1.0
+min_q = 0.09981133012492942
+relative_l2 = 0.1131368953169278
+max_q = 0.9262988808274457
+relative_mass_drift = -2.8275568681422514e-16
+[[rows]]
+method = "before"
+convention = "GEOSNativePanelConvention"
+Nc = 16
+rotation_fraction = 0.25
+min_q = 0.09992527691546976
+relative_l2 = 0.053396905577193086
+max_q = 1.0268689022096846
+relative_mass_drift = 0.0006672899753380101
+[[rows]]
+method = "before"
+convention = "GEOSNativePanelConvention"
+Nc = 16
+rotation_fraction = 1.0
+min_q = 0.0997938716621375
+relative_l2 = 0.11329529172915512
+max_q = 0.9114870412971116
+relative_mass_drift = -0.001138834819374127
+[[rows]]
+method = "after"
+convention = "GEOSNativePanelConvention"
+Nc = 16
+rotation_fraction = 0.25
+min_q = 0.09992466740419856
+relative_l2 = 0.05164936612961901
+max_q = 1.0269906141011982
+relative_mass_drift = -1.8374756555507685e-15
+[[rows]]
+method = "after"
+convention = "GEOSNativePanelConvention"
+Nc = 16
+rotation_fraction = 1.0
+min_q = 0.09970521269012209
+relative_l2 = 0.11221284265489305
+max_q = 0.9136492796188702
+relative_mass_drift = 1.1307542495697037e-15
+[[rows]]
+method = "before"
+convention = "GnomonicPanelConvention"
+Nc = 32
+rotation_fraction = 0.25
+min_q = 0.09999999999999946
+relative_l2 = 0.019569611466581437
+max_q = 1.0668987250598685
+relative_mass_drift = -4.219757313999308e-5
+[[rows]]
+method = "before"
+convention = "GnomonicPanelConvention"
+Nc = 32
+rotation_fraction = 1.0
+min_q = 0.09999999999999966
+relative_l2 = 0.040719591868290134
+max_q = 1.041931191844997
+relative_mass_drift = -0.0003874376930915338
+[[rows]]
+method = "after"
+convention = "GnomonicPanelConvention"
+Nc = 32
+rotation_fraction = 0.25
+min_q = 0.09999999999999952
+relative_l2 = 0.01942934113938214
+max_q = 1.0670789929546662
+relative_mass_drift = 5.65451810965871e-16
+[[rows]]
+method = "after"
+convention = "GnomonicPanelConvention"
+Nc = 32
+rotation_fraction = 1.0
+min_q = 0.09999999999999958
+relative_l2 = 0.04063146810706341
+max_q = 1.0429099171798157
+relative_mass_drift = 9.895406691902743e-16
+[[rows]]
+method = "before"
+convention = "GEOSNativePanelConvention"
+Nc = 32
+rotation_fraction = 0.25
+min_q = 0.09999999999999967
+relative_l2 = 0.01720170372329584
+max_q = 1.072745402652719
+relative_mass_drift = 0.000331477248235427
+[[rows]]
+method = "before"
+convention = "GEOSNativePanelConvention"
+Nc = 32
+rotation_fraction = 1.0
+min_q = 0.09999999999999983
+relative_l2 = 0.04062429290966767
+max_q = 1.0442671386665976
+relative_mass_drift = -0.0006558035368222175
+[[rows]]
+method = "after"
+convention = "GEOSNativePanelConvention"
+Nc = 32
+rotation_fraction = 0.25
+min_q = 0.0999999999999997
+relative_l2 = 0.016433212212773666
+max_q = 1.073012961258145
+relative_mass_drift = 6.078243614043199e-15
+[[rows]]
+method = "after"
+convention = "GEOSNativePanelConvention"
+Nc = 32
+rotation_fraction = 1.0
+min_q = 0.09999999999999999
+relative_l2 = 0.040308453184933604
+max_q = 1.0452016808400846
+relative_mass_drift = 4.2406350795650226e-16

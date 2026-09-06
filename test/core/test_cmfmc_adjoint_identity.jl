@@ -17,8 +17,7 @@ using Test
 using Random
 using LinearAlgebra: dot
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Operators: CMFMCWorkspace, CMFMCConvection,
                                   invalidate_cmfmc_cache!
 using .AtmosTransport.MetDrivers: ConvectionForcing

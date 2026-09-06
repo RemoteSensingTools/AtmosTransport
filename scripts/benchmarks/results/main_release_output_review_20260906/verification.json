@@ -1,0 +1,52 @@
+{
+  "benchmark": {
+    "cases": 24,
+    "dashboard_records": 120,
+    "exit_code": 0,
+    "julia_110_resolves": true
+  },
+  "cpu": {
+    "1.10": {
+      "bounds_checks": true,
+      "core_files": 120,
+      "exit_code": 0,
+      "jet_reports": 0,
+      "julia": "1.10.12",
+      "regridding": "passed"
+    },
+    "1.12": {
+      "bounds_checks": true,
+      "core_files": 120,
+      "exit_code": 0,
+      "jet_reports": 154,
+      "julia": "1.12.6",
+      "regridding": "passed"
+    }
+  },
+  "cpu_source_files_verified": 395,
+  "docs": {
+    "deployment": false,
+    "exit_code": 0
+  },
+  "gpu_adjoint": {
+    "assertions": 703,
+    "evidence": "../main_release_adjoint_v100_20260906/gpu-regression.log"
+  },
+  "gpu_output": {
+    "assertions": 389,
+    "device": "Tesla V100-PCIE-16GB",
+    "exit_code": 0,
+    "scalar_indexing": false,
+    "source_matches": true,
+    "uuid": "GPU-59ee7ef9-898f-524a-dde1-7a0426a41ecb"
+  },
+  "hdf5_114": {
+    "exit_code": 0,
+    "hdf5_jl": "0.17.3",
+    "hdf5_jll": "1.14.6+0",
+    "netcdf_jll": "401.900.300+0"
+  },
+  "metal_hardware_tested": false,
+  "runtime_source_commit": "7030c1f7",
+  "verified_at_utc": "2026-09-06T17:21:50.648274Z"
+}

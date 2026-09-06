@@ -1,0 +1,2 @@
+Test Summary:                                          | Pass  Total  Time
+Full-day seam investigation: hourly compensated totals |  153    153  1.5s

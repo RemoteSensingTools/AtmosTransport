@@ -1,0 +1,1900 @@
+[[measurements]]
+tracers = 6
+final_drift = 0.0
+sample = 1
+variable = "tracer01_total_mass"
+[[measurements]]
+tracers = 6
+final_drift = 0.0
+sample = 1
+variable = "tracer02_total_mass"
+[[measurements]]
+tracers = 6
+final_drift = 0.0
+sample = 1
+variable = "tracer03_total_mass"
+[[measurements]]
+tracers = 6
+final_drift = 0.0
+sample = 1
+variable = "tracer04_total_mass"
+[[measurements]]
+tracers = 6
+final_drift = 0.0
+sample = 1
+variable = "tracer05_total_mass"
+[[measurements]]
+tracers = 6
+final_drift = 0.0
+sample = 1
+variable = "tracer06_total_mass"
+[[measurements]]
+tracers = 6
+sample = 1
+relative_L2 = 6.637727525346709e-17
+variable = "tracer01_column_mean"
+[[measurements]]
+tracers = 6
+sample = 1
+relative_L2 = 5.648511030706587e-17
+variable = "tracer02_column_mean"
+[[measurements]]
+tracers = 6
+sample = 1
+relative_L2 = 2.7707235118516878e-17
+variable = "tracer03_column_mean"
+[[measurements]]
+tracers = 6
+sample = 1
+relative_L2 = 2.2288605356862375e-17
+variable = "tracer04_column_mean"
+[[measurements]]
+tracers = 6
+sample = 1
+relative_L2 = 1.7639535009321016e-17
+variable = "tracer05_column_mean"
+[[measurements]]
+tracers = 6
+sample = 1
+relative_L2 = 0.0
+variable = "tracer06_column_mean"
+[[measurements]]
+tracers = 6
+final_drift = 0.0
+sample = 2
+variable = "tracer01_total_mass"
+[[measurements]]
+tracers = 6
+final_drift = 0.0
+sample = 2
+variable = "tracer02_total_mass"
+[[measurements]]
+tracers = 6
+final_drift = 0.0
+sample = 2
+variable = "tracer03_total_mass"
+[[measurements]]
+tracers = 6
+final_drift = 0.0
+sample = 2
+variable = "tracer04_total_mass"
+[[measurements]]
+tracers = 6
+final_drift = 0.0
+sample = 2
+variable = "tracer05_total_mass"
+[[measurements]]
+tracers = 6
+final_drift = 0.0
+sample = 2
+variable = "tracer06_total_mass"
+[[measurements]]
+tracers = 6
+sample = 2
+relative_L2 = 6.637727525346709e-17
+variable = "tracer01_column_mean"
+[[measurements]]
+tracers = 6
+sample = 2
+relative_L2 = 5.648511030706587e-17
+variable = "tracer02_column_mean"
+[[measurements]]
+tracers = 6
+sample = 2
+relative_L2 = 2.7707235118516878e-17
+variable = "tracer03_column_mean"
+[[measurements]]
+tracers = 6
+sample = 2
+relative_L2 = 2.2288605356862375e-17
+variable = "tracer04_column_mean"
+[[measurements]]
+tracers = 6
+sample = 2
+relative_L2 = 1.7639535009321016e-17
+variable = "tracer05_column_mean"
+[[measurements]]
+tracers = 6
+sample = 2
+relative_L2 = 0.0
+variable = "tracer06_column_mean"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer01_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer02_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer03_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer04_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer05_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer06_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer07_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer08_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer09_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer10_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 1.9828344355813393e-16
+sample = 1
+variable = "tracer11_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer12_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer13_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer14_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer15_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer16_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer17_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer18_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer19_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer20_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer21_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer22_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer23_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer24_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer25_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer26_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer27_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer28_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer29_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer30_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer31_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 1
+variable = "tracer32_total_mass"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 6.637727525346709e-17
+variable = "tracer01_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 5.106942239463734e-17
+variable = "tracer02_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 5.800443650940874e-17
+variable = "tracer03_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 6.489737003324373e-17
+variable = "tracer04_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 5.265359328549179e-17
+variable = "tracer05_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 4.541988309648123e-17
+variable = "tracer06_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 5.163234661422447e-17
+variable = "tracer07_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 4.2609575486951153e-17
+variable = "tracer08_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 4.692560390602016e-17
+variable = "tracer09_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 3.3223249080555986e-17
+variable = "tracer10_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 2.821953457806151e-17
+variable = "tracer11_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 2.5390262850353617e-17
+variable = "tracer12_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 2.490424097552939e-17
+variable = "tracer13_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 3.2312165862094314e-17
+variable = "tracer14_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 3.064771123671413e-17
+variable = "tracer15_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 3.176967039711522e-17
+variable = "tracer16_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 2.8807362879562305e-17
+variable = "tracer17_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 3.000735157918089e-17
+variable = "tracer18_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 1.7669586079644498e-17
+variable = "tracer19_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 2.2892233473501405e-17
+variable = "tracer20_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 1.5716472081108246e-17
+variable = "tracer21_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 1.5748856793185667e-17
+variable = "tracer22_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 9.605360439269683e-18
+variable = "tracer23_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 2.273089043603602e-17
+variable = "tracer24_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 1.8245625381886433e-17
+variable = "tracer25_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 8.650109169959586e-18
+variable = "tracer26_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 1.45058886225209e-17
+variable = "tracer27_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 2.2156630839966364e-17
+variable = "tracer28_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 1.8914252292513922e-17
+variable = "tracer29_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 0.0
+variable = "tracer30_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 0.0
+variable = "tracer31_column_mean"
+[[measurements]]
+tracers = 32
+sample = 1
+relative_L2 = 0.0
+variable = "tracer32_column_mean"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer01_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer02_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer03_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer04_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer05_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer06_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer07_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer08_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer09_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer10_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 1.9828344355813393e-16
+sample = 2
+variable = "tracer11_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer12_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer13_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer14_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer15_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer16_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer17_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer18_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer19_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer20_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer21_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer22_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer23_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer24_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer25_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer26_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer27_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer28_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer29_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer30_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer31_total_mass"
+[[measurements]]
+tracers = 32
+final_drift = 0.0
+sample = 2
+variable = "tracer32_total_mass"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 6.637727525346709e-17
+variable = "tracer01_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 5.106942239463734e-17
+variable = "tracer02_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 5.800443650940874e-17
+variable = "tracer03_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 6.489737003324373e-17
+variable = "tracer04_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 5.265359328549179e-17
+variable = "tracer05_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 4.541988309648123e-17
+variable = "tracer06_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 5.163234661422447e-17
+variable = "tracer07_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 4.2609575486951153e-17
+variable = "tracer08_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 4.692560390602016e-17
+variable = "tracer09_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 3.3223249080555986e-17
+variable = "tracer10_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 2.821953457806151e-17
+variable = "tracer11_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 2.5390262850353617e-17
+variable = "tracer12_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 2.490424097552939e-17
+variable = "tracer13_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 3.2312165862094314e-17
+variable = "tracer14_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 3.064771123671413e-17
+variable = "tracer15_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 3.176967039711522e-17
+variable = "tracer16_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 2.8807362879562305e-17
+variable = "tracer17_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 3.000735157918089e-17
+variable = "tracer18_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 1.7669586079644498e-17
+variable = "tracer19_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 2.2892233473501405e-17
+variable = "tracer20_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 1.5716472081108246e-17
+variable = "tracer21_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 1.5748856793185667e-17
+variable = "tracer22_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 9.605360439269683e-18
+variable = "tracer23_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 2.273089043603602e-17
+variable = "tracer24_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 1.8245625381886433e-17
+variable = "tracer25_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 8.650109169959586e-18
+variable = "tracer26_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 1.45058886225209e-17
+variable = "tracer27_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 2.2156630839966364e-17
+variable = "tracer28_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 1.8914252292513922e-17
+variable = "tracer29_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 0.0
+variable = "tracer30_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 0.0
+variable = "tracer31_column_mean"
+[[measurements]]
+tracers = 32
+sample = 2
+relative_L2 = 0.0
+variable = "tracer32_column_mean"
+[[measurements]]
+tracers = 6
+tracer = 1
+panel = 1
+full_state_relative_L2 = 5.778168589485311e-17
+[[measurements]]
+tracers = 6
+tracer = 2
+panel = 1
+full_state_relative_L2 = 7.10069079680262e-18
+[[measurements]]
+tracers = 6
+tracer = 3
+panel = 1
+full_state_relative_L2 = 3.587571509457759e-18
+[[measurements]]
+tracers = 6
+tracer = 4
+panel = 1
+full_state_relative_L2 = 7.309045049481163e-21
+[[measurements]]
+tracers = 6
+tracer = 5
+panel = 1
+full_state_relative_L2 = 2.467020296463593e-22
+[[measurements]]
+tracers = 6
+tracer = 6
+panel = 1
+full_state_relative_L2 = 1.4327122729701528e-16
+[[measurements]]
+tracers = 6
+tracer = 1
+panel = 2
+full_state_relative_L2 = 4.453333290707409e-17
+[[measurements]]
+tracers = 6
+tracer = 2
+panel = 2
+full_state_relative_L2 = 4.291364075854428e-18
+[[measurements]]
+tracers = 6
+tracer = 3
+panel = 2
+full_state_relative_L2 = 1.8614865833873323e-20
+[[measurements]]
+tracers = 6
+tracer = 4
+panel = 2
+full_state_relative_L2 = 5.415575179925791e-21
+[[measurements]]
+tracers = 6
+tracer = 5
+panel = 2
+full_state_relative_L2 = 3.4743145120234554e-25
+[[measurements]]
+tracers = 6
+tracer = 6
+panel = 2
+full_state_relative_L2 = 5.736606505630722e-17
+[[measurements]]
+tracers = 6
+tracer = 1
+panel = 3
+full_state_relative_L2 = 1.0859963212281435e-16
+[[measurements]]
+tracers = 6
+tracer = 2
+panel = 3
+full_state_relative_L2 = 3.412978899603493e-17
+[[measurements]]
+tracers = 6
+tracer = 3
+panel = 3
+full_state_relative_L2 = 3.2882873357207596e-17
+[[measurements]]
+tracers = 6
+tracer = 4
+panel = 3
+full_state_relative_L2 = 2.5097831320329282e-17
+[[measurements]]
+tracers = 6
+tracer = 5
+panel = 3
+full_state_relative_L2 = 3.0376260092767375e-22
+[[measurements]]
+tracers = 6
+tracer = 6
+panel = 3
+full_state_relative_L2 = 7.464400680346572e-17
+[[measurements]]
+tracers = 6
+tracer = 1
+panel = 4
+full_state_relative_L2 = 1.3103427616183725e-16
+[[measurements]]
+tracers = 6
+tracer = 2
+panel = 4
+full_state_relative_L2 = 3.664591062865258e-17
+[[measurements]]
+tracers = 6
+tracer = 3
+panel = 4
+full_state_relative_L2 = 2.3378750146128333e-17
+[[measurements]]
+tracers = 6
+tracer = 4
+panel = 4
+full_state_relative_L2 = 8.065400642765975e-18
+[[measurements]]
+tracers = 6
+tracer = 5
+panel = 4
+full_state_relative_L2 = 1.7687239319470987e-21
+[[measurements]]
+tracers = 6
+tracer = 6
+panel = 4
+full_state_relative_L2 = 1.4265840660839314e-16
+[[measurements]]
+tracers = 6
+tracer = 1
+panel = 5
+full_state_relative_L2 = 1.1089449173821591e-16
+[[measurements]]
+tracers = 6
+tracer = 2
+panel = 5
+full_state_relative_L2 = 5.1336429253629024e-17
+[[measurements]]
+tracers = 6
+tracer = 3
+panel = 5
+full_state_relative_L2 = 5.510866139362319e-17
+[[measurements]]
+tracers = 6
+tracer = 4
+panel = 5
+full_state_relative_L2 = 4.1980889359892747e-17
+[[measurements]]
+tracers = 6
+tracer = 5
+panel = 5
+full_state_relative_L2 = 1.016505513418181e-19
+[[measurements]]
+tracers = 6
+tracer = 6
+panel = 5
+full_state_relative_L2 = 1.4377382361400848e-16
+[[measurements]]
+tracers = 6
+tracer = 1
+panel = 6
+full_state_relative_L2 = 1.0569781950660017e-16
+[[measurements]]
+tracers = 6
+tracer = 2
+panel = 6
+full_state_relative_L2 = 7.100612663389953e-17
+[[measurements]]
+tracers = 6
+tracer = 3
+panel = 6
+full_state_relative_L2 = 1.6393595318539516e-17
+[[measurements]]
+tracers = 6
+tracer = 4
+panel = 6
+full_state_relative_L2 = 2.578240324928856e-18
+[[measurements]]
+tracers = 6
+tracer = 5
+panel = 6
+full_state_relative_L2 = 2.681900018319853e-25
+[[measurements]]
+tracers = 6
+tracer = 6
+panel = 6
+full_state_relative_L2 = 4.1597265839375946e-17
+[[measurements]]
+tracers = 32
+tracer = 1
+panel = 1
+full_state_relative_L2 = 5.213312843593805e-17
+[[measurements]]
+tracers = 32
+tracer = 2
+panel = 1
+full_state_relative_L2 = 3.9099639790910536e-18
+[[measurements]]
+tracers = 32
+tracer = 3
+panel = 1
+full_state_relative_L2 = 1.9284104385813283e-17
+[[measurements]]
+tracers = 32
+tracer = 4
+panel = 1
+full_state_relative_L2 = 6.355573816595269e-18
+[[measurements]]
+tracers = 32
+tracer = 5
+panel = 1
+full_state_relative_L2 = 1.1158179998752498e-16
+[[measurements]]
+tracers = 32
+tracer = 6
+panel = 1
+full_state_relative_L2 = 7.325094241340552e-17
+[[measurements]]
+tracers = 32
+tracer = 7
+panel = 1
+full_state_relative_L2 = 8.68156967375111e-20
+[[measurements]]
+tracers = 32
+tracer = 8
+panel = 1
+full_state_relative_L2 = 3.658663447245145e-18
+[[measurements]]
+tracers = 32
+tracer = 9
+panel = 1
+full_state_relative_L2 = 4.724367524750063e-17
+[[measurements]]
+tracers = 32
+tracer = 10
+panel = 1
+full_state_relative_L2 = 1.1077352924771985e-19
+[[measurements]]
+tracers = 32
+tracer = 11
+panel = 1
+full_state_relative_L2 = 1.2365153414656594e-17
+[[measurements]]
+tracers = 32
+tracer = 12
+panel = 1
+full_state_relative_L2 = 3.3604084524806323e-20
+[[measurements]]
+tracers = 32
+tracer = 13
+panel = 1
+full_state_relative_L2 = 2.5767736739496873e-19
+[[measurements]]
+tracers = 32
+tracer = 14
+panel = 1
+full_state_relative_L2 = 1.1444579478256016e-18
+[[measurements]]
+tracers = 32
+tracer = 15
+panel = 1
+full_state_relative_L2 = 8.772786734393867e-22
+[[measurements]]
+tracers = 32
+tracer = 16
+panel = 1
+full_state_relative_L2 = 1.8320724785420907e-17
+[[measurements]]
+tracers = 32
+tracer = 17
+panel = 1
+full_state_relative_L2 = 3.046795932683039e-18
+[[measurements]]
+tracers = 32
+tracer = 18
+panel = 1
+full_state_relative_L2 = 1.0861619617821065e-18
+[[measurements]]
+tracers = 32
+tracer = 19
+panel = 1
+full_state_relative_L2 = 2.467020296463593e-22
+[[measurements]]
+tracers = 32
+tracer = 20
+panel = 1
+full_state_relative_L2 = 4.04454423477031e-17
+[[measurements]]
+tracers = 32
+tracer = 21
+panel = 1
+full_state_relative_L2 = 4.108037758747535e-17
+[[measurements]]
+tracers = 32
+tracer = 22
+panel = 1
+full_state_relative_L2 = 4.60618970687101e-21
+[[measurements]]
+tracers = 32
+tracer = 23
+panel = 1
+full_state_relative_L2 = 5.3480360291531293e-17
+[[measurements]]
+tracers = 32
+tracer = 24
+panel = 1
+full_state_relative_L2 = 3.6862552744589976e-18
+[[measurements]]
+tracers = 32
+tracer = 25
+panel = 1
+full_state_relative_L2 = 1.4327122729701528e-16
+[[measurements]]
+tracers = 32
+tracer = 26
+panel = 1
+full_state_relative_L2 = 1.0719755924543683e-21
+[[measurements]]
+tracers = 32
+tracer = 27
+panel = 1
+full_state_relative_L2 = 6.633403693820001e-17
+[[measurements]]
+tracers = 32
+tracer = 28
+panel = 1
+full_state_relative_L2 = 1.7586964239502527e-19
+[[measurements]]
+tracers = 32
+tracer = 29
+panel = 1
+full_state_relative_L2 = 5.602582692625346e-18
+[[measurements]]
+tracers = 32
+tracer = 30
+panel = 1
+full_state_relative_L2 = 2.277354762735673e-17
+[[measurements]]
+tracers = 32
+tracer = 31
+panel = 1
+full_state_relative_L2 = 8.127795387527542e-18
+[[measurements]]
+tracers = 32
+tracer = 32
+panel = 1
+full_state_relative_L2 = 3.927762763505761e-19
+[[measurements]]
+tracers = 32
+tracer = 1
+panel = 2
+full_state_relative_L2 = 5.0580069313273767e-17
+[[measurements]]
+tracers = 32
+tracer = 2
+panel = 2
+full_state_relative_L2 = 2.258743178871129e-19
+[[measurements]]
+tracers = 32
+tracer = 3
+panel = 2
+full_state_relative_L2 = 9.424507297442006e-18
+[[measurements]]
+tracers = 32
+tracer = 4
+panel = 2
+full_state_relative_L2 = 5.163308590968349e-18
+[[measurements]]
+tracers = 32
+tracer = 5
+panel = 2
+full_state_relative_L2 = 3.379621723440995e-17
+[[measurements]]
+tracers = 32
+tracer = 6
+panel = 2
+full_state_relative_L2 = 4.533308036691736e-17
+[[measurements]]
+tracers = 32
+tracer = 7
+panel = 2
+full_state_relative_L2 = 9.703269693542112e-19
+[[measurements]]
+tracers = 32
+tracer = 8
+panel = 2
+full_state_relative_L2 = 3.2106861467373754e-19
+[[measurements]]
+tracers = 32
+tracer = 9
+panel = 2
+full_state_relative_L2 = 2.8276653270678104e-17
+[[measurements]]
+tracers = 32
+tracer = 10
+panel = 2
+full_state_relative_L2 = 4.92753318039239e-20
+[[measurements]]
+tracers = 32
+tracer = 11
+panel = 2
+full_state_relative_L2 = 6.320969308070079e-18
+[[measurements]]
+tracers = 32
+tracer = 12
+panel = 2
+full_state_relative_L2 = 9.553101648825415e-21
+[[measurements]]
+tracers = 32
+tracer = 13
+panel = 2
+full_state_relative_L2 = 4.752295468355199e-21
+[[measurements]]
+tracers = 32
+tracer = 14
+panel = 2
+full_state_relative_L2 = 1.552251339806163e-23
+[[measurements]]
+tracers = 32
+tracer = 15
+panel = 2
+full_state_relative_L2 = 2.627335070758201e-24
+[[measurements]]
+tracers = 32
+tracer = 16
+panel = 2
+full_state_relative_L2 = 9.477745497951852e-18
+[[measurements]]
+tracers = 32
+tracer = 17
+panel = 2
+full_state_relative_L2 = 3.1149294782378955e-21
+[[measurements]]
+tracers = 32
+tracer = 18
+panel = 2
+full_state_relative_L2 = 1.59341998800799e-19
+[[measurements]]
+tracers = 32
+tracer = 19
+panel = 2
+full_state_relative_L2 = 3.4743145120234554e-25
+[[measurements]]
+tracers = 32
+tracer = 20
+panel = 2
+full_state_relative_L2 = 2.8862404496659837e-17
+[[measurements]]
+tracers = 32
+tracer = 21
+panel = 2
+full_state_relative_L2 = 2.6117399807684857e-17
+[[measurements]]
+tracers = 32
+tracer = 22
+panel = 2
+full_state_relative_L2 = 5.689404038171151e-20
+[[measurements]]
+tracers = 32
+tracer = 23
+panel = 2
+full_state_relative_L2 = 1.5054966538901792e-17
+[[measurements]]
+tracers = 32
+tracer = 24
+panel = 2
+full_state_relative_L2 = 1.9343691074028156e-18
+[[measurements]]
+tracers = 32
+tracer = 25
+panel = 2
+full_state_relative_L2 = 5.736606505630722e-17
+[[measurements]]
+tracers = 32
+tracer = 26
+panel = 2
+full_state_relative_L2 = 3.045177543974335e-21
+[[measurements]]
+tracers = 32
+tracer = 27
+panel = 2
+full_state_relative_L2 = 3.7916233187812244e-17
+[[measurements]]
+tracers = 32
+tracer = 28
+panel = 2
+full_state_relative_L2 = 3.6250756132515215e-24
+[[measurements]]
+tracers = 32
+tracer = 29
+panel = 2
+full_state_relative_L2 = 2.2551021153228433e-18
+[[measurements]]
+tracers = 32
+tracer = 30
+panel = 2
+full_state_relative_L2 = 3.455310841954256e-17
+[[measurements]]
+tracers = 32
+tracer = 31
+panel = 2
+full_state_relative_L2 = 1.6228542125079114e-17
+[[measurements]]
+tracers = 32
+tracer = 32
+panel = 2
+full_state_relative_L2 = 6.217463121513599e-25
+[[measurements]]
+tracers = 32
+tracer = 1
+panel = 3
+full_state_relative_L2 = 8.656471561308365e-17
+[[measurements]]
+tracers = 32
+tracer = 2
+panel = 3
+full_state_relative_L2 = 4.03335506028541e-17
+[[measurements]]
+tracers = 32
+tracer = 3
+panel = 3
+full_state_relative_L2 = 4.8170669360130556e-17
+[[measurements]]
+tracers = 32
+tracer = 4
+panel = 3
+full_state_relative_L2 = 3.8084040438559684e-17
+[[measurements]]
+tracers = 32
+tracer = 5
+panel = 3
+full_state_relative_L2 = 1.0725627247326841e-16
+[[measurements]]
+tracers = 32
+tracer = 6
+panel = 3
+full_state_relative_L2 = 9.060612062652631e-17
+[[measurements]]
+tracers = 32
+tracer = 7
+panel = 3
+full_state_relative_L2 = 5.0786314332233483e-17
+[[measurements]]
+tracers = 32
+tracer = 8
+panel = 3
+full_state_relative_L2 = 3.6262969568667655e-17
+[[measurements]]
+tracers = 32
+tracer = 9
+panel = 3
+full_state_relative_L2 = 9.957773184500582e-17
+[[measurements]]
+tracers = 32
+tracer = 10
+panel = 3
+full_state_relative_L2 = 8.793683154249432e-18
+[[measurements]]
+tracers = 32
+tracer = 11
+panel = 3
+full_state_relative_L2 = 4.3391698832599194e-17
+[[measurements]]
+tracers = 32
+tracer = 12
+panel = 3
+full_state_relative_L2 = 2.2624821978159244e-17
+[[measurements]]
+tracers = 32
+tracer = 13
+panel = 3
+full_state_relative_L2 = 2.409586172566016e-17
+[[measurements]]
+tracers = 32
+tracer = 14
+panel = 3
+full_state_relative_L2 = 3.8516018362164446e-17
+[[measurements]]
+tracers = 32
+tracer = 15
+panel = 3
+full_state_relative_L2 = 7.960217238222841e-22
+[[measurements]]
+tracers = 32
+tracer = 16
+panel = 3
+full_state_relative_L2 = 2.810484986560286e-17
+[[measurements]]
+tracers = 32
+tracer = 17
+panel = 3
+full_state_relative_L2 = 2.0681254736227636e-17
+[[measurements]]
+tracers = 32
+tracer = 18
+panel = 3
+full_state_relative_L2 = 2.8997216455197536e-17
+[[measurements]]
+tracers = 32
+tracer = 19
+panel = 3
+full_state_relative_L2 = 3.0376260092767375e-22
+[[measurements]]
+tracers = 32
+tracer = 20
+panel = 3
+full_state_relative_L2 = 9.039739918814322e-17
+[[measurements]]
+tracers = 32
+tracer = 21
+panel = 3
+full_state_relative_L2 = 1.0148847898595465e-16
+[[measurements]]
+tracers = 32
+tracer = 22
+panel = 3
+full_state_relative_L2 = 1.1821648874760707e-17
+[[measurements]]
+tracers = 32
+tracer = 23
+panel = 3
+full_state_relative_L2 = 8.703875102343111e-17
+[[measurements]]
+tracers = 32
+tracer = 24
+panel = 3
+full_state_relative_L2 = 4.230068480175591e-17
+[[measurements]]
+tracers = 32
+tracer = 25
+panel = 3
+full_state_relative_L2 = 7.464400680346572e-17
+[[measurements]]
+tracers = 32
+tracer = 26
+panel = 3
+full_state_relative_L2 = 1.244609387686152e-17
+[[measurements]]
+tracers = 32
+tracer = 27
+panel = 3
+full_state_relative_L2 = 9.914710763805673e-17
+[[measurements]]
+tracers = 32
+tracer = 28
+panel = 3
+full_state_relative_L2 = 3.65002842580739e-17
+[[measurements]]
+tracers = 32
+tracer = 29
+panel = 3
+full_state_relative_L2 = 1.4390854822434588e-17
+[[measurements]]
+tracers = 32
+tracer = 30
+panel = 3
+full_state_relative_L2 = 6.918809360419976e-17
+[[measurements]]
+tracers = 32
+tracer = 31
+panel = 3
+full_state_relative_L2 = 4.8495503017022804e-17
+[[measurements]]
+tracers = 32
+tracer = 32
+panel = 3
+full_state_relative_L2 = 1.1425657949867882e-22
+[[measurements]]
+tracers = 32
+tracer = 1
+panel = 4
+full_state_relative_L2 = 1.5179175277046811e-16
+[[measurements]]
+tracers = 32
+tracer = 2
+panel = 4
+full_state_relative_L2 = 2.074900588894255e-18
+[[measurements]]
+tracers = 32
+tracer = 3
+panel = 4
+full_state_relative_L2 = 4.460758556516364e-17
+[[measurements]]
+tracers = 32
+tracer = 4
+panel = 4
+full_state_relative_L2 = 3.125934308126907e-17
+[[measurements]]
+tracers = 32
+tracer = 5
+panel = 4
+full_state_relative_L2 = 1.7200583905372056e-16
+[[measurements]]
+tracers = 32
+tracer = 6
+panel = 4
+full_state_relative_L2 = 9.23684946628346e-17
+[[measurements]]
+tracers = 32
+tracer = 7
+panel = 4
+full_state_relative_L2 = 6.890452066868571e-17
+[[measurements]]
+tracers = 32
+tracer = 8
+panel = 4
+full_state_relative_L2 = 4.465872126281117e-17
+[[measurements]]
+tracers = 32
+tracer = 9
+panel = 4
+full_state_relative_L2 = 9.199680193821273e-17
+[[measurements]]
+tracers = 32
+tracer = 10
+panel = 4
+full_state_relative_L2 = 2.1403358240523281e-19
+[[measurements]]
+tracers = 32
+tracer = 11
+panel = 4
+full_state_relative_L2 = 4.900734830249957e-17
+[[measurements]]
+tracers = 32
+tracer = 12
+panel = 4
+full_state_relative_L2 = 3.559914515837178e-17
+[[measurements]]
+tracers = 32
+tracer = 13
+panel = 4
+full_state_relative_L2 = 4.351529429633044e-18
+[[measurements]]
+tracers = 32
+tracer = 14
+panel = 4
+full_state_relative_L2 = 1.1105714184820128e-17
+[[measurements]]
+tracers = 32
+tracer = 15
+panel = 4
+full_state_relative_L2 = 8.298607916768111e-21
+[[measurements]]
+tracers = 32
+tracer = 16
+panel = 4
+full_state_relative_L2 = 7.449543330361529e-17
+[[measurements]]
+tracers = 32
+tracer = 17
+panel = 4
+full_state_relative_L2 = 3.199988868311182e-18
+[[measurements]]
+tracers = 32
+tracer = 18
+panel = 4
+full_state_relative_L2 = 6.531490256851554e-19
+[[measurements]]
+tracers = 32
+tracer = 19
+panel = 4
+full_state_relative_L2 = 1.7687239319470987e-21
+[[measurements]]
+tracers = 32
+tracer = 20
+panel = 4
+full_state_relative_L2 = 5.3440060159191885e-17
+[[measurements]]
+tracers = 32
+tracer = 21
+panel = 4
+full_state_relative_L2 = 9.871107212290877e-17
+[[measurements]]
+tracers = 32
+tracer = 22
+panel = 4
+full_state_relative_L2 = 2.1216874224016405e-18
+[[measurements]]
+tracers = 32
+tracer = 23
+panel = 4
+full_state_relative_L2 = 7.944781810276307e-17
+[[measurements]]
+tracers = 32
+tracer = 24
+panel = 4
+full_state_relative_L2 = 6.348477187792887e-17
+[[measurements]]
+tracers = 32
+tracer = 25
+panel = 4
+full_state_relative_L2 = 1.4265840660839314e-16
+[[measurements]]
+tracers = 32
+tracer = 26
+panel = 4
+full_state_relative_L2 = 2.2575852474179672e-21
+[[measurements]]
+tracers = 32
+tracer = 27
+panel = 4
+full_state_relative_L2 = 1.6448280313829376e-16
+[[measurements]]
+tracers = 32
+tracer = 28
+panel = 4
+full_state_relative_L2 = 5.38542221770396e-21
+[[measurements]]
+tracers = 32
+tracer = 29
+panel = 4
+full_state_relative_L2 = 2.3119007779536224e-17
+[[measurements]]
+tracers = 32
+tracer = 30
+panel = 4
+full_state_relative_L2 = 4.6278119383104674e-17
+[[measurements]]
+tracers = 32
+tracer = 31
+panel = 4
+full_state_relative_L2 = 3.5001692478517233e-17
+[[measurements]]
+tracers = 32
+tracer = 32
+panel = 4
+full_state_relative_L2 = 5.70184106240836e-21
+[[measurements]]
+tracers = 32
+tracer = 1
+panel = 5
+full_state_relative_L2 = 1.022758085070783e-16
+[[measurements]]
+tracers = 32
+tracer = 2
+panel = 5
+full_state_relative_L2 = 6.833059043914931e-17
+[[measurements]]
+tracers = 32
+tracer = 3
+panel = 5
+full_state_relative_L2 = 5.1827628435109947e-17
+[[measurements]]
+tracers = 32
+tracer = 4
+panel = 5
+full_state_relative_L2 = 6.271501994766993e-17
+[[measurements]]
+tracers = 32
+tracer = 5
+panel = 5
+full_state_relative_L2 = 1.574181348532584e-16
+[[measurements]]
+tracers = 32
+tracer = 6
+panel = 5
+full_state_relative_L2 = 1.5585896442586858e-16
+[[measurements]]
+tracers = 32
+tracer = 7
+panel = 5
+full_state_relative_L2 = 2.548106418503338e-17
+[[measurements]]
+tracers = 32
+tracer = 8
+panel = 5
+full_state_relative_L2 = 4.351274387238177e-17
+[[measurements]]
+tracers = 32
+tracer = 9
+panel = 5
+full_state_relative_L2 = 1.3209909978619314e-16
+[[measurements]]
+tracers = 32
+tracer = 10
+panel = 5
+full_state_relative_L2 = 2.2867517854856302e-17
+[[measurements]]
+tracers = 32
+tracer = 11
+panel = 5
+full_state_relative_L2 = 6.644039923591049e-17
+[[measurements]]
+tracers = 32
+tracer = 12
+panel = 5
+full_state_relative_L2 = 3.911368208482134e-17
+[[measurements]]
+tracers = 32
+tracer = 13
+panel = 5
+full_state_relative_L2 = 3.936831144457686e-17
+[[measurements]]
+tracers = 32
+tracer = 14
+panel = 5
+full_state_relative_L2 = 7.629634103464754e-17
+[[measurements]]
+tracers = 32
+tracer = 15
+panel = 5
+full_state_relative_L2 = 3.1775963376438104e-19
+[[measurements]]
+tracers = 32
+tracer = 16
+panel = 5
+full_state_relative_L2 = 2.6318335635845848e-17
+[[measurements]]
+tracers = 32
+tracer = 17
+panel = 5
+full_state_relative_L2 = 4.216915831681874e-17
+[[measurements]]
+tracers = 32
+tracer = 18
+panel = 5
+full_state_relative_L2 = 6.102667785004846e-17
+[[measurements]]
+tracers = 32
+tracer = 19
+panel = 5
+full_state_relative_L2 = 1.016505513418181e-19
+[[measurements]]
+tracers = 32
+tracer = 20
+panel = 5
+full_state_relative_L2 = 1.0171676808729193e-16
+[[measurements]]
+tracers = 32
+tracer = 21
+panel = 5
+full_state_relative_L2 = 1.0620142957280095e-16
+[[measurements]]
+tracers = 32
+tracer = 22
+panel = 5
+full_state_relative_L2 = 2.0682666185358955e-17
+[[measurements]]
+tracers = 32
+tracer = 23
+panel = 5
+full_state_relative_L2 = 1.231135769763609e-16
+[[measurements]]
+tracers = 32
+tracer = 24
+panel = 5
+full_state_relative_L2 = 4.826472637598881e-17
+[[measurements]]
+tracers = 32
+tracer = 25
+panel = 5
+full_state_relative_L2 = 1.4377382361400848e-16
+[[measurements]]
+tracers = 32
+tracer = 26
+panel = 5
+full_state_relative_L2 = 5.614360492019324e-17
+[[measurements]]
+tracers = 32
+tracer = 27
+panel = 5
+full_state_relative_L2 = 1.3372393283528907e-16
+[[measurements]]
+tracers = 32
+tracer = 28
+panel = 5
+full_state_relative_L2 = 8.254590739745896e-17
+[[measurements]]
+tracers = 32
+tracer = 29
+panel = 5
+full_state_relative_L2 = 2.5210260336467576e-17
+[[measurements]]
+tracers = 32
+tracer = 30
+panel = 5
+full_state_relative_L2 = 7.475367353233592e-17
+[[measurements]]
+tracers = 32
+tracer = 31
+panel = 5
+full_state_relative_L2 = 4.7738328140574727e-17
+[[measurements]]
+tracers = 32
+tracer = 32
+panel = 5
+full_state_relative_L2 = 1.6684463959451756e-20
+[[measurements]]
+tracers = 32
+tracer = 1
+panel = 6
+full_state_relative_L2 = 2.9363351202143616e-17
+[[measurements]]
+tracers = 32
+tracer = 2
+panel = 6
+full_state_relative_L2 = 1.762065177260354e-18
+[[measurements]]
+tracers = 32
+tracer = 3
+panel = 6
+full_state_relative_L2 = 6.714978952007114e-17
+[[measurements]]
+tracers = 32
+tracer = 4
+panel = 6
+full_state_relative_L2 = 5.122658879634059e-17
+[[measurements]]
+tracers = 32
+tracer = 5
+panel = 6
+full_state_relative_L2 = 8.791060645075982e-17
+[[measurements]]
+tracers = 32
+tracer = 6
+panel = 6
+full_state_relative_L2 = 5.653450636047762e-17
+[[measurements]]
+tracers = 32
+tracer = 7
+panel = 6
+full_state_relative_L2 = 8.435620053283437e-17
+[[measurements]]
+tracers = 32
+tracer = 8
+panel = 6
+full_state_relative_L2 = 7.670561890456469e-17
+[[measurements]]
+tracers = 32
+tracer = 9
+panel = 6
+full_state_relative_L2 = 1.1097102527598911e-16
+[[measurements]]
+tracers = 32
+tracer = 10
+panel = 6
+full_state_relative_L2 = 1.3420366634080298e-19
+[[measurements]]
+tracers = 32
+tracer = 11
+panel = 6
+full_state_relative_L2 = 7.916682798888791e-17
+[[measurements]]
+tracers = 32
+tracer = 12
+panel = 6
+full_state_relative_L2 = 5.662368051486749e-17
+[[measurements]]
+tracers = 32
+tracer = 13
+panel = 6
+full_state_relative_L2 = 1.4063787181682205e-20
+[[measurements]]
+tracers = 32
+tracer = 14
+panel = 6
+full_state_relative_L2 = 2.6310295417577067e-25
+[[measurements]]
+tracers = 32
+tracer = 15
+panel = 6
+full_state_relative_L2 = 1.416437395579227e-25
+[[measurements]]
+tracers = 32
+tracer = 16
+panel = 6
+full_state_relative_L2 = 1.0785849444566841e-16
+[[measurements]]
+tracers = 32
+tracer = 17
+panel = 6
+full_state_relative_L2 = 5.364035554800092e-18
+[[measurements]]
+tracers = 32
+tracer = 18
+panel = 6
+full_state_relative_L2 = 4.442572964113978e-18
+[[measurements]]
+tracers = 32
+tracer = 19
+panel = 6
+full_state_relative_L2 = 2.681900018319853e-25
+[[measurements]]
+tracers = 32
+tracer = 20
+panel = 6
+full_state_relative_L2 = 7.362429578669398e-17
+[[measurements]]
+tracers = 32
+tracer = 21
+panel = 6
+full_state_relative_L2 = 6.454225192618765e-17
+[[measurements]]
+tracers = 32
+tracer = 22
+panel = 6
+full_state_relative_L2 = 2.55058983211691e-22
+[[measurements]]
+tracers = 32
+tracer = 23
+panel = 6
+full_state_relative_L2 = 7.991681741520856e-17
+[[measurements]]
+tracers = 32
+tracer = 24
+panel = 6
+full_state_relative_L2 = 7.434090835501852e-17
+[[measurements]]
+tracers = 32
+tracer = 25
+panel = 6
+full_state_relative_L2 = 4.1597265839375946e-17
+[[measurements]]
+tracers = 32
+tracer = 26
+panel = 6
+full_state_relative_L2 = 1.1134772260192513e-19
+[[measurements]]
+tracers = 32
+tracer = 27
+panel = 6
+full_state_relative_L2 = 6.328277792617888e-17
+[[measurements]]
+tracers = 32
+tracer = 28
+panel = 6
+full_state_relative_L2 = 1.740236341503586e-25
+[[measurements]]
+tracers = 32
+tracer = 29
+panel = 6
+full_state_relative_L2 = 5.188360526323004e-17
+[[measurements]]
+tracers = 32
+tracer = 30
+panel = 6
+full_state_relative_L2 = 5.573182514668659e-17
+[[measurements]]
+tracers = 32
+tracer = 31
+panel = 6
+full_state_relative_L2 = 3.831078945447572e-17
+[[measurements]]
+tracers = 32
+tracer = 32
+panel = 6
+full_state_relative_L2 = 1.6860882949563432e-25

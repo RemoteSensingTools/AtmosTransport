@@ -12,7 +12,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 using .AtmosTransport.Preprocessing: AbstractMetSettings, RawWindow,
                                       read_window!, source_grid,
                                       windows_per_day, has_convection

@@ -129,47 +129,42 @@ end
     end
 end
 
+# Transpose each partition using its smaller weight directly. This preserves
+# both constant mass-objective seeds and weak recipient sensitivities.
+@inline function _dkg_transpose_partition(seed, neighbor_seed, ratio)
+    iszero(ratio) && return seed
+    if ratio > one(ratio)
+        fraction = one(ratio) / (one(ratio) + ratio)
+        return neighbor_seed + fraction * (seed - neighbor_seed)
+    else
+        fraction = ratio / (one(ratio) + ratio)
+        return seed + fraction * (neighbor_seed - seed)
+    end
+end
+
 @kernel function _vertical_diffusion_cs_single_dkg_adjoint_kernel!(
     lambda, @Const(air_mass), dkg_field, w_scratch,
     dt, Nz::Int, Hp::Int)
     ii, jj = @index(Global, NTuple)
     FT = eltype(lambda)
+    i, j = ii + Hp, jj + Hp
     @inbounds begin
-        i = ii + Hp
-        j = jj + Hp
-        dt_ft = FT(dt)
-        w_prev = zero(FT)
-        g_prev = zero(FT)
+        coupling = zero(FT)
+        previous_seed = zero(FT)
         for k in 1:Nz
-            dkg_above = k > 1  ? field_value(dkg_field, (ii, jj, k - 1)) : zero(FT)
-            dkg_below = k < Nz ? field_value(dkg_field, (ii, jj, k))     : zero(FT)
-            m_prev = k > 1  ? air_mass[i, j, k - 1] : zero(FT)
-            m_k    = air_mass[i, j, k]
-            m_next = k < Nz ? air_mass[i, j, k + 1] : zero(FT)
-            a_T = k > 1 && m_prev > zero(FT) ? -dt_ft * dkg_above / m_prev : zero(FT)
-            c_T = k < Nz && m_next > zero(FT) ? -dt_ft * dkg_below / m_next : zero(FT)
-            inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
-            b_T = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
-            d_k = m_k > zero(FT) ? m_k * lambda[i, j, k] : zero(FT)
-            if k == 1
-                w_k = c_T / b_T
-                g_k = d_k / b_T
-            else
-                denom = b_T - a_T * w_prev
-                w_k = c_T / denom
-                g_k = (d_k - a_T * g_prev) / denom
-            end
-            w_scratch[ii, jj, k] = w_k
-            lambda[i, j, k] = g_k
-            w_prev = w_k
-            g_prev = g_k
+            m = air_mass[i, j, k]
+            next_m = k < Nz ? air_mass[i, j, k + 1] : zero(FT)
+            exchange = k < Nz ? FT(dt) * field_value(dkg_field, (ii, jj, k)) : zero(FT)
+            forward_ratio, backward_ratio, coupling = _dkg_transfer_ratios(m, next_m, exchange, coupling)
+            w_scratch[ii, jj, k] = forward_ratio
+            seed = m > zero(FT) ? lambda[i, j, k] : zero(FT)
+            previous_seed = _dkg_transpose_partition(seed, previous_seed, backward_ratio)
+            lambda[i, j, k] = previous_seed
         end
-        for k in (Nz - 1):-1:1
-            lambda[i, j, k] -= w_scratch[ii, jj, k] * lambda[i, j, k + 1]
-        end
-        for k in 1:Nz
-            m_k = air_mass[i, j, k]
-            lambda[i, j, k] = m_k > zero(FT) ? lambda[i, j, k] / m_k : zero(FT)
+        next_seed = zero(FT)
+        for k in Nz:-1:1
+            next_seed = _dkg_transpose_partition(lambda[i, j, k], next_seed, w_scratch[ii, jj, k])
+            lambda[i, j, k] = air_mass[i, j, k] > zero(FT) ? next_seed : zero(FT)
         end
     end
 end

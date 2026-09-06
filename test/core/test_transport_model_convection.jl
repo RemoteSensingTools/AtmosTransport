@@ -2,8 +2,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 
 const _REALISTIC_AIR_MASS_KG = 1e16
 
@@ -306,4 +305,37 @@ end
     @test typeof(sim.window_dt) === FT
     @test eltype(sim.model.convection_forcing.cmfmc) === FT
     @test sim.model.convection_forcing.cmfmc == forcing_a.cmfmc
+end
+
+@testset "New DrivenSimulation invalidates convection from a previous driver" begin
+    # Splitting the same two windows across two daily drivers must agree with
+    # advancing inside one driver, even though the numerical workspace persists.
+    for op in (CMFMCConvection(), CMFMCMatrixConvection())
+        driver, _, _ = _make_convection_window_driver(binary_contract=true)
+        make_model() = begin
+            model = _make_convection_model(convection=op)
+            for k in 1:5
+                model.state.tracers_raw[:,:,k,:] .= k * 1e-6 * _REALISTIC_AIR_MASS_KG
+            end
+            model
+        end
+        continuous = DrivenSimulation(make_model(),driver)
+        run!(continuous)
+        driver1 = typeof(driver)(driver.grid,[driver.windows[1]],driver.dt,driver.steps,true)
+        driver2 = typeof(driver)(driver.grid,[driver.windows[2]],driver.dt,driver.steps,true)
+        day1 = DrivenSimulation(make_model(),driver1)
+        run!(day1)
+        workspace = day1.model.workspace.convection_ws
+        day2 = DrivenSimulation(day1.model,driver2;
+                                initialize_air_mass=false,start_time=1800)
+        @test day2.model.workspace.convection_ws === workspace
+        run!(day2)
+        @test day2.model.state.tracers_raw ≈ continuous.model.state.tracers_raw rtol=1e-13
+        if op isa CMFMCConvection
+            @test workspace.cached_n_sub[] == continuous.model.workspace.convection_ws.cached_n_sub[]
+        else
+            @test workspace.derived_entu == continuous.model.workspace.convection_ws.derived_entu
+            @test workspace.derived_detu == continuous.model.workspace.convection_ws.derived_detu
+        end
+    end
 end

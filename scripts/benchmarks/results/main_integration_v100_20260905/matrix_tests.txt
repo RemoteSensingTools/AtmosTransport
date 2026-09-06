@@ -1,0 +1,6 @@
+Test Summary:                       | Pass  Total  Time
+Deferred scratch adaptation on V100 |    7      7  0.9s
+Test Summary:                         | Pass  Total   Time
+Collaborative tracer batching on V100 |  480    480  34.2s
+Test Summary:                  | Pass  Total  Time
+Signed tracer batching on V100 |  240    240  0.3s

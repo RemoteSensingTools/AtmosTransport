@@ -1,0 +1,32 @@
+TransportBinaryReader{Float64←Float32}(era5_n320_transport_20181201_float32.bin, cubed_sphere/structureddirectional, 24 windows)
+├── path:          /home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour/era5_n320_transport_20181201_float32.bin
+├── geometry:      C90, panels=6, 66 levels
+├── storage:       Float32 on disk, load as Float64
+├── basis:         dry
+├── timing:        dt=3600.0 s, steps/window=11 max (per-window 10:11)
+├── payload:       m, am, bm, cm, ps, dm, pblh, ustar, pbl_hflux, t2m, entu, detu, entd, detd, dkg
+├── humidity:      none
+├── semantics:     air_mass=window_start_endpoint, flux=window_constant/substep_mass_amount, humidity=none, delta=forward_window_endpoint_difference, source_flux=window_start_endpoint
+├── poisson:       scale=0.045454545454545456, forward_window_mass_difference / (2 * steps_per_window_by_window[win])
+└── windows:       24
+
+Capabilities:
+  ✓ advection        (m, am, bm, cm)
+  ✓ replay gate      (dam, dbm, dcm, dm)
+  ✓ TM5 convection   (entu, detu, entd, detd)
+  ✗ CMFMC convection (cmfmc)
+  ✓ PBL diffusion    (pblh, ustar, pbl_hflux, t2m)
+  ✓ surface pressure (ps)
+  ✗ humidity         (qv_start, qv_end)
+  mass_basis       = dry
+  grid_type        = cubed_sphere
+
+Driver: OK (TransportBinaryDriver)
+TransportBinaryDriver{Float32}(era5_n320_transport_20181201_float32.bin, cubed_sphere/structureddirectional)
+├── grid:          C90 CubedSphereMesh{Float32, GEOSNativePanelConvention, gmao_equal_distance}
+├── basis:         dry
+├── timing:        dt=3600.0 s, steps/window=11 max (per-window 10:11)
+├── payload:       m, am, bm, cm, ps, dm, pblh, ustar, pbl_hflux, t2m, entu, detu, entd, detd, dkg
+├── humidity:      none
+├── semantics:     air_mass=window_start_endpoint, flux=window_constant/substep_mass_amount
+└── windows:       24

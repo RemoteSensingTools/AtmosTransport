@@ -20,8 +20,7 @@
 using Test
 import NCDatasets: NCDataset, defDim, defVar
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Grids: cell_index, nrings, ring_longitudes
 using .AtmosTransport.Models.InitialConditionIO: build_surface_flux_source,
                                                 build_surface_flux_sources

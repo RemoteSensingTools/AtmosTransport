@@ -1,0 +1,42 @@
+all tracer1_total_mass before=-4.218985620059356e-7 after=3.138139946426091e-7 max_hourly=3.138139946426091e-7
+all tracer2_total_mass before=-6.692367014378545e-7 after=1.620348027780849e-7 max_hourly=1.620348027780849e-7
+all tracer3_total_mass before=-6.111322901321005e-7 after=2.1199674537972825e-7 max_hourly=2.1199674537972825e-7
+all tracer4_total_mass before=-6.118191628651353e-7 after=1.7265800463000635e-7 max_hourly=1.7265800463000635e-7
+all tracer5_total_mass before=-8.168654720603056e-7 after=4.088804427919672e-8 max_hourly=4.097477702591429e-8
+all tracer6_total_mass before=-4.7278001931923554e-7 after=7.738378172151875e-9 max_hourly=8.28952959107132e-9
+all tracer1_column_mean extrema=(-4.272435f-11, 4.1037116f-9)
+all tracer2_column_mean extrema=(-4.181442f-11, 4.5662274f-9)
+all tracer3_column_mean extrema=(-2.7918098f-11, 3.7117998f-9)
+all tracer4_column_mean extrema=(-3.3036074f-11, 4.0286254f-9)
+all tracer5_column_mean extrema=(2.708438f-11, 4.446668f-9)
+all tracer6_column_mean extrema=(2.7358452f-11, 5.1246674f-9)
+all worst_hourly_before=8.168654720603056e-7 worst_hourly_after=3.138139946426091e-7 exploratory_1e-7_target_met=false
+all_float64 tracer1_total_mass before=-9.914172177906698e-16 after=0.0 max_hourly=1.9828344355813393e-16
+all_float64 tracer2_total_mass before=-7.931337742325356e-16 after=0.0 max_hourly=0.0
+all_float64 tracer3_total_mass before=-5.948503306744019e-16 after=0.0 max_hourly=0.0
+all_float64 tracer4_total_mass before=-5.948503306744019e-16 after=0.0 max_hourly=0.0
+all_float64 tracer5_total_mass before=-3.9656688711626785e-16 after=0.0 max_hourly=0.0
+all_float64 tracer6_total_mass before=-3.9656688711626785e-16 after=0.0 max_hourly=0.0
+all_float64 tracer1_column_mean extrema=(-4.272439674707122e-11, 4.103712879575708e-9)
+all_float64 tracer2_column_mean extrema=(-4.181432876672944e-11, 4.566230835590882e-9)
+all_float64 tracer3_column_mean extrema=(-2.791806173728424e-11, 3.711801720206527e-9)
+all_float64 tracer4_column_mean extrema=(-3.303602284905485e-11, 4.028626347608423e-9)
+all_float64 tracer5_column_mean extrema=(2.7084265168283968e-11, 4.4466691123149934e-9)
+all_float64 tracer6_column_mean extrema=(2.7358447133483804e-11, 5.12466700539558e-9)
+all_float64 worst_hourly_before=9.914172177906698e-16 worst_hourly_after=1.9828344355813393e-16 exploratory_1e-7_target_met=true
+Test Summary:                                              | Pass  Total  Time
+Dkg full-day totals, complete snapshots, and finite fields |  128    128  5.7s
+atmos-split-drift-after tracer1_column_mean relative_L2_to_F64=1.61358457709249e-6
+atmos-split-drift-after tracer2_column_mean relative_L2_to_F64=1.4586938602349463e-6
+atmos-split-drift-after tracer3_column_mean relative_L2_to_F64=1.432016111973737e-6
+atmos-split-drift-after tracer4_column_mean relative_L2_to_F64=1.5248461966732723e-6
+atmos-split-drift-after tracer5_column_mean relative_L2_to_F64=1.623455094333119e-6
+atmos-split-drift-after tracer6_column_mean relative_L2_to_F64=2.0378120272018445e-6
+atmos-dkg-drift-after tracer1_column_mean relative_L2_to_F64=1.3708281155021263e-6
+atmos-dkg-drift-after tracer2_column_mean relative_L2_to_F64=1.1486592117158852e-6
+atmos-dkg-drift-after tracer3_column_mean relative_L2_to_F64=1.1293467282012076e-6
+atmos-dkg-drift-after tracer4_column_mean relative_L2_to_F64=1.1976907857508614e-6
+atmos-dkg-drift-after tracer5_column_mean relative_L2_to_F64=1.1151827221212468e-6
+atmos-dkg-drift-after tracer6_column_mean relative_L2_to_F64=1.1287401234085005e-6
+Test Summary:                          | Pass  Total  Time
+Dkg cross-precision final column means |   12     12  1.6s

@@ -2,26 +2,48 @@
 
 The runtime ships **four** flux-form advection schemes, each behind the
 abstract type `AbstractAdvectionScheme` declared in
-`src/Operators/Advection/schemes.jl`. They share the same kernel-call
-signature and the same Strang palindrome composition; differences are
-in reconstruction order, monotonicity, and panel-edge handling.
+`src/Operators/Advection/schemes.jl`. Upwind, slopes, and standard PPM use
+directional sweeps. Lin–Rood couples the two horizontal directions and uses
+upwind vertically. The model-facing operator interface dispatches to the
+appropriate transport path.
 
 | Scheme | Smooth-flow accuracy | Monotone? | Positive? | LL | CS | RG |
 |---|---|---|---|---|---|---|
 | `UpwindScheme` | 1st order (donor cell) | yes (trivially) | preserves a non-negative input under its CFL contract; also supports signed tracers | yes | yes | **yes — RG's only option today** |
 | `SlopesScheme{L}` | 2nd order in smooth regions (van Leer / Russell-Lerner) | yes if `L = MonotoneLimiter` (default) | no zero clamp in the default signed path; `PositivityLimiter` is explicit opt-in | yes | yes | no (the face-indexed Strang path restricts to `AbstractConstantScheme`) |
-| `PPMScheme{L}` | 3rd order in smooth regions (Colella-Woodward 1984) | yes with `MonotoneLimiter`, may oscillate without | as `Slopes` | yes | yes — covered by `test/core/test_cubed_sphere_advection.jl` | no (same rejection) |
+| `PPMScheme{L}` | 3rd order in smooth regions (Colella-Woodward 1984) | profile-limited with `MonotoneLimiter`; full CS update can undershoot | signed; small negative column means observed in CS runs | yes | yes — covered by `test/core/test_cubed_sphere_advection.jl` | no (same rejection) |
 | `LinRoodPPMScheme{ORD}` | piecewise-parabolic; `ORD ∈ {5, 7}` selects the boundary stencil | profile-limited, but the full split update can undershoot | signed; not positivity-preserving | n/a | yes — uses FV3 cross-term advection (`fv_tp_2d_cs!`) | n/a |
 
-The "order" column reports the spatial accuracy of the **per-face
+The accuracy column describes the **per-face
 reconstruction** in smooth regions; near limiters / discontinuities
-all four schemes drop to first order locally. `LinRoodPPMScheme`'s
+high-order reconstruction can drop to first order locally. `LinRoodPPMScheme`'s
 `ORD ∈ {5, 7}` selects the **boundary stencil** for cross-panel
-faces; the in-panel reconstruction is the same FV3 PPM either way.
+faces; the in-panel reconstruction is the same FV3 PPM either way. ORD=7 is
+not a globally seventh-order transport method. Spatial reconstruction order
+also does not establish the temporal order of the complete split update.
+
+## Selecting a scheme
+
+The TOML runner defaults to `scheme = "upwind"` when the selector is omitted.
+Choose the algorithm explicitly when comparing runs:
+
+| `[advection]` settings | Runtime scheme | Vertical transport |
+|---|---|---|
+| `scheme = "upwind"` | `UpwindScheme()` | upwind |
+| `scheme = "slopes"` | `SlopesScheme(MonotoneLimiter())` | slopes |
+| `scheme = "ppm"` | `PPMScheme(MonotoneLimiter())` | PPM |
+| `scheme = "linrood", ppm_order = 5` | `LinRoodPPMScheme(5)` (CS only) | upwind |
+| `scheme = "linrood", ppm_order = 7` | `LinRoodPPMScheme(7)` (CS only) | upwind |
+
+Omitting `ppm_order` for Lin–Rood selects 5. Setting it with `scheme = "ppm"`
+is an error: standard split PPM has no order selector. Alternative limiter
+objects are selected through the Julia constructors, not a TOML limiter key.
+Packed tracer arrays, GPU workgroup sizes, and copy-back or ping-pong execution
+are implementation choices within a scheme, not additional algorithms.
 
 ## Russell-Lerner slopes (`SlopesScheme`)
 
-The default scheme. Per-cell linear reconstruction with optional limiter:
+Per-cell linear reconstruction with a monotone limiter by default:
 
 ```math
 χ_c(x) \;\approx\; \chi_c \;+\; s_c \,(x - x_c)
@@ -88,8 +110,10 @@ The face flux is the integral of this parabola over the swept region
 
 For cubed-sphere runs that need the FV3 cross-term advection at panel edges and
 permit signed undershoots, `LinRoodPPMScheme` (next section) is the relevant
-variant. Use default monotone `PPMScheme` or `UpwindScheme` when preserving a
-non-negative species is the stronger requirement.
+variant. Default monotone PPM limits the reconstructed profile, but the full
+CS update has produced small negative column means in real-input tests.
+Use upwind under its CFL contract when non-negativity is required, or validate
+the higher-order scheme's bounds on the intended workload.
 
 ## [Lin-Rood PPM with cross-term (`LinRoodPPMScheme{ORD}`)](@id Lin-Rood-PPM-with-cross-term)
 
@@ -97,12 +121,13 @@ The cubed-sphere variant. Extends PPM with the **two-step Lin-Rood
 splitting** (`fv_tp_2d_cs!` in
 `src/Operators/Advection/LinRood.jl`) so the X and Y sweeps see each
 other's intermediate fluxes via the inner-edge flux-and-slope rotation
-that FV3 uses internally. Two reconstruction orders are selectable:
+that FV3 uses internally. The runtime pairs this horizontal update with
+vertical upwind. Two edge-value families are selectable:
 
-| `ORD` | Reconstruction | Use case |
+| `ORD` | Interior reconstruction | Panel-edge treatment |
 |---|---|---|
-| `5` | Huynh-constrained PPM | smooth-flow CS runs; no panel-edge artifacts in cross-equator transport |
-| `7` | Special boundary treatment for panel edges | runs where panel edges dominate the flow (cross-pole transport, equatorial jets crossing panel boundaries) |
+| `5` | Huynh-constrained PPM | default edge-value family |
+| `7` | Same as ORD=5 | special cubed-sphere boundary correction |
 
 `PPMScheme` is the strict-structured PPM; `LinRoodPPMScheme` is the
 cross-term-aware CS-native variant. Lin-Rood no longer runs the zero-referenced
@@ -118,23 +143,23 @@ small numerical noise that survives at the panel boundaries.
 
 ## Limiters
 
-Three selectable limiter parameters on `SlopesScheme` and `PPMScheme`,
-declared in `src/Operators/Advection/limiters.jl`:
+Three selectable limiter types are declared in `schemes.jl`; their formulas
+live in `src/Operators/Advection/limiters.jl`:
 
 | Limiter | What it enforces | Use case |
 |---|---|---|
 | `NoLimiter()` | unlimited centered slope / parabola | smooth-flow benchmarks where you want the order-N error rate without limiter clipping |
-| `MonotoneLimiter()` (default) | van Leer minmod: `s_c = sign·min(|forward|, |backward|, 2|central|)`. TVD-monotone, signed, and constant-offset equivariant. | production runs, including anomaly tracers |
+| `MonotoneLimiter()` (default) | van Leer minmod slope: `minmod(central, 2forward, 2backward)`, where `central = (forward + backward)/2`. Bounds the reconstructed profile relative to neighboring values and supports signed tracers. | production runs, including anomaly tracers |
 | `PositivityLimiter()` | one-sided clip that drops the slope where the reconstruction would go negative at a face. **Weaker than `MonotoneLimiter`**: positivity-only, may still create new local maxima from large gradients. | tracers that must stay non-negative (mole fractions, water vapor, aerosol concentrations) AND tolerate occasional new maxima |
 
 Limiter primitives are written branchless (`ifelse(a*b > 0, ..., 0)`)
 in `limiters.jl` so they don't trigger warp divergence on the GPU.
 
-The default monotone path deliberately has no post-step tracer clamp. A
-non-negative initial field remains bounded by its local extrema when the CFL
-contract holds, while a signed field is transported without changing its
-meaning. `PositivityLimiter` is a separate, explicitly zero-referenced policy
-and must not be used for anomaly tracers.
+The default monotone path deliberately has no post-step tracer clamp. Bounds
+on a local reconstructed profile do not establish positivity of the complete
+multidimensional CS update; monitor transported-field minima separately from
+mass totals. `PositivityLimiter` is a separate, explicitly zero-referenced
+policy and must not be used for anomaly tracers.
 
 ## CFL handling and subcycling
 
@@ -186,7 +211,7 @@ If you're running `LinRoodPPMScheme` on a flow with locally large
 Courant numbers, the recourse is to halve `dt` in the run config
 rather than rely on the operator to subcycle internally.
 
-## Strang palindrome — second-order time accuracy via symmetry
+## Strang palindrome and temporal accuracy
 
 The full transport step is the time-symmetric composition
 
@@ -194,11 +219,13 @@ The full transport step is the time-symmetric composition
 S(Δt) = X(Δt/2) Y(Δt/2) Z(Δt/2) ∘ V(Δt) ∘ Z(Δt/2) Y(Δt/2) X(Δt/2)
 ```
 
-(with `V(Δt) → V(Δt/2) S(Δt) V(Δt/2)` when surface flux is on). The
-symmetry around the center is what gives the composition its
-second-order time accuracy: each direction's truncation error has the
-form `c · Δt² + O(Δt⁴)` and the leading `c · Δt²` cancels between the
-forward and reverse halves.
+(with `V(Δt) → V(Δt/2) S(Δt) V(Δt/2)` when surface flux is on). Strang
+composition gives second-order splitting accuracy for sufficiently accurate
+subflows. The palindrome alone does not establish second-order accuracy of
+the implemented transport: reconstruction, halo evolution, and each subflow's
+time integration must also be validated. A cubed-sphere seam fixture shows
+first-order timestep refinement for both the original split PPM and its paired
+seam update. Conservation and temporal accuracy are separate requirements.
 
 Convection and chemistry are NOT inside the palindrome — they are
 applied once per met window, post-palindrome — because their natural
@@ -214,12 +241,56 @@ edge orientation (`0 = aligned`, `2 = reversed`)? The default
 connectivity methods encode the GEOS-FP / GEOS-IT 6-panel arrangement and its
 gnomonic alternative.
 
-At the start of each X / Y sweep on the cubed sphere, the runtime
-`_propagate_cs_outflow_to_halo!` walks the connectivity table and
-copies each panel's canonical face flux into the corresponding
-neighbour panel's halo, applying the orientation flip if needed. This
-keeps the telescoping conservation argument intact across panel
-boundaries.
+Halo exchange supplies neighboring tracer and air-mass values for the
+reconstruction stencil. Matching air-mass fluxes alone does not guarantee
+matching tracer fluxes: both cells sharing a face must use the same tracer
+exchange at the same update stage.
+
+Lin–Rood now shares the mean of the two panels' inner and outer face mixing
+ratios before applying either panel's final horizontal divergence. Only panel
+boundary faces are changed. Tangential indices follow the connectivity map;
+mixing ratios are scalars, and the mirrored air-mass flux supplies the normal
+sign. This makes the two tracer transfers cancel to roundoff. The adjoint
+applies the transpose of the same averaging operation.
+
+The dimensionally split cubed-sphere Upwind, Slopes, and PPM paths assign each
+physical seam to the lower-numbered panel and that panel edge's local axis.
+Each X/Y group updates its panel-interior faces and all seams assigned to it.
+A seam transfer is reconstructed once, before any panel changes, then applied
+with opposite signs to both neighboring cells in the same group. This includes
+rotated contacts whose neighbor edge lies on the other local axis. The local
+panel kernels mask boundary fluxes so each physical exchange occurs once.
+Air and signed tracer mass therefore cancel across contacts; mirrored input
+mass fluxes remain required for consistency with the binary's continuity budget.
+
+The forward tape records these same grouped sweeps. At fixed meteorology, the
+adjoint first collects both neighbors' output seeds, reverses interior sweeps,
+and then differentiates the shared seam reconstruction. This preserves the
+tracer-gradient contract without changing the tape format. The forward cache
+uses `12 × Nc × Nz × (Nt + 1)` values, including air mass: 9.41 MB for C90 L66,
+32 tracers, Float32. It has no six-tracer cap; Lin–Rood does not allocate this
+split-sweep buffer.
+
+In a six-tracer C90 L66, 24-hour V100 test with TM5 convection and Dkg diffusion,
+sharing Lin–Rood seam estimates reduces maximum final relative tracer-total
+drift from `3.77e-5` to `6.98e-7` in Float32 and from `3.80e-5` to `7.93e-16`
+in Float64. The paired split PPM update reduces the corresponding maxima
+from `2.24e-5` to `8.17e-7` in Float32 and from `2.28e-5` to `9.91e-16` in
+Float64, with no global normalization. These are measured results for one
+forcing archive, not universal error bounds. Positive initial layers still
+develop negative column means: about `-2.09e-10` mol/mol in Lin–Rood before
+and after its fix, and `-4.27e-11` mol/mol in the corrected split PPM run.
+Conserving totals does not establish positivity or reference-model agreement.
+These seam measurements predate the subsequent
+[conservative Dkg diffusion](mass_conservation.md#Implicit-diffusion-and-roundoff)
+change, which further reduces the PPM Float32 maximum to `3.14e-7` on the same
+six-tracer workload.
+
+An independent tilted solid-body rotation of a smooth Gaussian tracer on C8,
+C16, and C32 grids, with both panel conventions, gives slightly smaller
+area-weighted field errors for paired split PPM at quarter and full rotations.
+Float64 mass drift remains below `6.1e-15`. This checks transported fields as
+well as totals; it is not a general temporal-order or positivity guarantee.
 
 ## Reduced-Gaussian per-ring face segmentation
 
@@ -249,6 +320,8 @@ between them. Performance-tuning notes live beside the implementation.
 | CFL subcycle counters (structured) | `StrangSplitting.jl::_subcycling_pass_count`, `_static_*_subcycle_count` |
 | CFL subcycle counters (CS) | `CubedSphereStrang.jl::_cs_static_subcycle_count`, `_cs_static_palindrome_subcycle_count` |
 | CS multi-tracer fused kernels (X / Y / Z) | `src/Operators/Advection/multitracer_kernels.jl` |
+| CS paired split seam exchange | `src/Operators/Advection/CubedSphereSeams.jl` |
+| CS paired split seam adjoint | `src/Adjoints/CubedSphereSeams.jl` |
 | CS panel-edge halo sync | `src/Grids/PanelConnectivity.jl` + `cs_transport_helpers.jl::_propagate_cs_outflow_to_halo!` |
 | Lin-Rood cross-term + del-2 damping | `src/Operators/Advection/LinRood.jl` |
 

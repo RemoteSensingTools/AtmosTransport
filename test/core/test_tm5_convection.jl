@@ -15,8 +15,7 @@ Invariant preserved by every commit in plan 23: `NoConvection` and
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport: Operators, Grids, State, MetDrivers, Models
 
 using .AtmosTransport.State: DryBasis, MoistBasis, CellState, CubedSphereState,
@@ -239,6 +238,19 @@ end
     apply!(state_zero, zero_forcing, grid, TM5Convection(), FT(600);
             workspace = ws_zero)
     @test state_zero.tracers_raw == state0_identity
+
+    # A deferred workspace must materialize the requested legacy tile on CPU
+    # fallback, then reproduce the normal allocation path exactly.
+    deferred = TM5Workspace(state.air_mass; tile_columns=3, defer_scratch=true,
+                            cell_metrics=ws.cell_metrics)
+    @test isempty(deferred.conv1)
+    initial = copy(state0_copy)
+    apply_convection!(initial, state.air_mass, forcing,
+                      TM5Convection(use_collab_lu=true), FT(600), deferred, grid)
+    @test initial == state.tracers_raw
+    @test size(deferred.conv1, 3) == 3
+    @test deferred.f_scratch === deferred.conv1
+
 end
 
 @testset "plan 23 Commit 4: TM5Convection apply! RG kernel" begin
@@ -270,6 +282,19 @@ end
     mass_after = sum(state.tracers_raw)
     @test isapprox(mass_after, mass_before; rtol = 1f4 * eps(FT))
     @test any(state.tracers_raw .!= state0_copy)
+
+    # A deferred workspace must materialize the requested legacy tile on CPU
+    # fallback, then reproduce the normal allocation path exactly.
+    deferred = TM5Workspace(state.air_mass; tile_columns=3, defer_scratch=true,
+                            cell_metrics=ws.cell_metrics)
+    @test isempty(deferred.conv1)
+    initial = copy(state0_copy)
+    apply_convection!(initial, state.air_mass, forcing,
+                      TM5Convection(use_collab_lu=true), FT(600), deferred, grid)
+    @test initial == state.tracers_raw
+    @test size(deferred.conv1, 3) == 3
+    @test deferred.f_scratch === deferred.conv1
+
 end
 
 @testset "plan 23 Commit 4: TM5Convection apply! CS kernel" begin
@@ -306,10 +331,24 @@ end
         end
         return s
     end
+    state0_copy = map(copy, state.tracers_raw)
     mass_before = interior_mass(state.tracers_raw)
     apply!(state, forcing, grid, TM5Convection(), FT(600); workspace = ws)
     mass_after = interior_mass(state.tracers_raw)
     @test isapprox(mass_after, mass_before; rtol = 1f4 * eps(FT))
+
+    # A deferred workspace must materialize the requested legacy tile on CPU
+    # fallback, then reproduce the normal allocation path exactly.
+    deferred = TM5Workspace(state.air_mass; tile_columns=3, defer_scratch=true,
+                            cell_metrics=ws.cell_metrics)
+    @test isempty(deferred.conv1)
+    initial = map(copy, state0_copy)
+    apply_convection!(initial, state.air_mass, forcing,
+                      TM5Convection(use_collab_lu=true), FT(600), deferred, grid)
+    @test initial == state.tracers_raw
+    @test size(deferred.conv1, 3) == 3
+    @test deferred.f_scratch === deferred.conv1
+
 end
 
 # The collaborative-LU kernel uses `@uniform` for workgroup-uniform
@@ -782,19 +821,15 @@ end
     end
 end
 
-@testset "P6 collab-LU: outside-envelope falls back to per-thread" begin
-    # Configurations outside the supported `(lmax_conv, Nt)` envelope
-    # must dispatch to the per-thread kernel even when `use_collab_lu
-    # = true`. The gate is on `lmax_conv` (the convection-matrix
-    # size), not on the underlying Nz — that's the whole point of
-    # the lmax_conv refactor: L91 and L137 binaries can use the
-    # collab kernel as long as their effective `lmax_conv ≤ 85`.
-    # Limits set by Metal's 32 KiB threadgroup-memory budget:
-    # `4·lmax_conv² + (4·NT_MAX + 16)·lmax_conv + 16` bytes; current
-    # production bound is `lmax_conv ≤ 85, Nt ≤ 6`.
+@testset "Collaborative LU: depth envelope and unbounded tracer batching" begin
+    # Depth controls matrix storage; a fixed six-slot RHS buffer is reused
+    # for any positive tracer count. CPU/Float64 fallback is independent.
     @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 2) == true
     @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 6) == true
-    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 7) == false
+    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 7) == true
+    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 65) == true
+    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 0) == false
+    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, -1) == false
     @test AtmosTransport.Operators.Convection._tm5_collab_supports(75, 2) == true   # ERA5/L85 target
     @test AtmosTransport.Operators.Convection._tm5_collab_supports(40, 2) == true   # ml91/tropo60
     @test AtmosTransport.Operators.Convection._tm5_collab_supports(25, 2) == true   # ml137/tropo25a

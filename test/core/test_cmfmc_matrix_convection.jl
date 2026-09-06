@@ -23,8 +23,7 @@ using Test
 using Random
 using LinearAlgebra: dot
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Operators: CMFMCMatrixConvection, CMFMCMatrixWorkspace,
                                   TM5Convection, TM5Workspace,
                                   invalidate_cmfmc_cache!, invalidate_cmfmc_matrix_cache!
@@ -322,14 +321,14 @@ end
     op = CMFMCMatrixConvection(tile_workspace_gib = 0.1, lmax_conv = 0, use_collab_lu = false)
 
     rm_new = ntuple(p -> copy(x_rm[p]), 6)
-    ws_fwd = CMFMCMatrixWorkspace(rm_new; tile_workspace_gib = 0.1,
+    ws_fwd = CMFMCMatrixWorkspace(rm_new; tile_workspace_gib = 0.1, defer_scratch = true,
                                             cell_metrics = cell_areas,
                                             halo_width = Hp)
     _apply_cs_convection_forward!(rm_new, panels_m, forcing,
                                    op, FT(450.0), ws_fwd, mesh)
 
     lambda = ntuple(p -> copy(y_seed[p]), 6)
-    ws_adj = CMFMCMatrixWorkspace(lambda; tile_workspace_gib = 0.1,
+    ws_adj = CMFMCMatrixWorkspace(lambda; tile_workspace_gib = 0.1, defer_scratch = true,
                                            cell_metrics = cell_areas,
                                            halo_width = Hp)
     _apply_cs_convection_adjoint!(lambda, panels_m, forcing,

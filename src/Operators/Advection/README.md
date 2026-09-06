@@ -1,6 +1,7 @@
 # Advection
 
-Tracer advection via finite-volume Strang splitting.
+Finite-volume tracer advection with directional splitting or cubed-sphere
+Lin–Rood horizontal cross terms.
 
 This folder owns the transport core: reconstruction, limiter logic,
 structured and face-indexed sweeps, cubed-sphere panel transport, and
@@ -11,13 +12,16 @@ the model-facing `apply!` entrypoints that the transport block calls.
 - Scheme hierarchy:
   [`schemes.jl`](schemes.jl)
   defines `AbstractAdvectionScheme`, `UpwindScheme`, `SlopesScheme`,
-  and `PPMScheme`
+  `PPMScheme`, and `LinRoodPPMScheme`
 - Structured and face-indexed runtime orchestrators:
   [`StrangSplitting.jl`](StrangSplitting.jl)
   provides `strang_split!`, `strang_split_mt!`, and `apply!`
 - Cubed-sphere runtime orchestrator:
   [`CubedSphereStrang.jl`](CubedSphereStrang.jl)
   provides `strang_split_cs!` and `CSAdvectionWorkspace`
+- Lin–Rood horizontal transport:
+  [`LinRood.jl`](LinRood.jl) provides `fv_tp_2d_cs!` and
+  `CSLinRoodAdvectionWorkspace`; the runtime pairs it with vertical upwind
 - Cubed-sphere halo support:
   [`HaloExchange.jl`](HaloExchange.jl)
   provides `fill_panel_halos!` and `copy_corners!`
@@ -25,6 +29,13 @@ the model-facing `apply!` entrypoints that the transport block calls.
   `diagnose_cm_from_continuity!`.
 
 ## Runtime Shape
+
+`scheme="ppm"` selects standard split PPM with its default monotone limiter.
+`scheme="linrood"` selects the CS cross-term path; `ppm_order=5` (default) or
+`7` chooses its edge-value family. ORD=7 retains the order-5 interior and adds
+special panel-edge treatment. It does not select a seventh-order transport
+method. Configuration parsing lives in
+[`../../Models/RuntimePhysicsSpecs.jl`](../../Models/RuntimePhysicsSpecs.jl).
 
 - LatLon and reduced-Gaussian transport run through
   [`StrangSplitting.jl`](StrangSplitting.jl)
@@ -35,6 +46,14 @@ the model-facing `apply!` entrypoints that the transport block calls.
   `../Diffusion` and `../SurfaceFlux`
 - This folder is the main place where topology-specific transport
   execution diverges while the public operator API stays uniform
+
+Packed CS sweep launch geometry is selected by
+`_cs_packed_sweep_workgroupsize`. The CUDA extension uses a 32×2 tile for
+Float32 PPM and a 32-thread row for Float64 PPM; other paths keep their
+existing 256-thread default. These layouts reduce inactive threads on panel
+rows while retaining the same kernels, tracer loop, air-mass update, and
+copy-back/ping-pong behavior. GPU launch
+regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
 
 ## File Map
 
@@ -53,8 +72,12 @@ the model-facing `apply!` entrypoints that the transport block calls.
   exchange and corner fill
 - [`CubedSphereStrang.jl`](CubedSphereStrang.jl) — panel-native
   cubed-sphere palindrome
+- [`CubedSphereSeams.jl`](CubedSphereSeams.jl) — canonical physical seam
+  transfers paired across panels within each directional group
 - [`ppm_subgrid_distributions.jl`](ppm_subgrid_distributions.jl) — PPM
   subcell distributions shared by CS-specific code
+- [`LinRoodSeams.jl`](LinRoodSeams.jl) — shared final seam estimates and
+  their transpose for conservative Lin–Rood panel exchange
 - [`LinRood.jl`](LinRood.jl) — Lin-Rood style cubed-sphere horizontal
   transport utilities
 - [`linrood_adjoint_kernels.jl`](linrood_adjoint_kernels.jl) —

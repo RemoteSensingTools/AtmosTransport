@@ -37,6 +37,12 @@ git clone https://github.com/RemoteSensingTools/AtmosTransport.jl.git
 cd AtmosTransport.jl
 ```
 
+The default clone follows `main`. For a reproducible experiment, check out a
+published release tag with `git checkout <tag>` and record it with your run
+configuration. The `/dev/` manual follows development; consult the
+repository's `CHANGELOG.md` when moving between releases. Do not assume that
+an unreleased branch's numerical changes are present in an older tag.
+
 All commands in this documentation assume that your terminal remains in this
 directory. A quick check is:
 
@@ -56,7 +62,10 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 
 The first run downloads packages and precompiles them. It can take several
 minutes and may appear quiet for short periods. Later starts reuse the compiled
-cache.
+cache. The transport runner, transport preprocessor, LL-to-CS binary regridder,
+CS inversion driver, and binary-to-NetCDF converter import the installed project
+package and reuse that cache. Launch these scripts with `--project=.` from this
+checkout so Julia selects the matching source and dependencies.
 
 ## 4. Verify the package loads
 
@@ -102,27 +111,34 @@ float_type = "Float32"
 
 - NVIDIA runs use CUDA. `Float32` is the practical production default on most
   GPUs; `Float64` is supported where hardware performance permits.
-- Apple Silicon runs use Metal and require `Float32`.
+- Apple Silicon runs use Metal and require `Float32`. The extension has
+  passed a C90/L66 forward smoke test on an M5 Pro with six and 32 tracers, including PPM, Dkg diffusion and full TM5 convection.
+  Broader operator coverage and Metal adjoints remain unverified; see
+  [Validation status](@ref).
 - The runtime fails clearly if a requested GPU backend is unavailable; it does
   not silently change the execution path to CPU.
 
 Backend packages are optional weak dependencies, so a fresh CPU installation
-does not fetch them. Add only the backend you need to your Julia user
-environment:
+does not fetch them. Create a separate local environment containing this
+checkout and the backend you need. Run **one** of these from the repository root:
 
 ```bash
-julia -e 'using Pkg; Pkg.add("CUDA")'  # NVIDIA
-julia -e 'using Pkg; Pkg.add("Metal")' # Apple Silicon
+julia -e 'using Pkg; Pkg.activate("gpu-env"); Pkg.develop(path="."); Pkg.add("CUDA")'
+# Apple Silicon instead:
+julia -e 'using Pkg; Pkg.activate("gpu-env"); Pkg.develop(path="."); Pkg.add("Metal")'
 ```
 
 Then diagnose it after the base installation succeeds:
 
 ```bash
-julia --project=. -e 'using CUDA; CUDA.versioninfo()'
-julia --project=. -e 'using Metal; Metal.versioninfo()'
+julia --project=gpu-env -e 'using CUDA; CUDA.versioninfo()'
+julia --project=gpu-env -e 'using Metal; Metal.versioninfo()'
 ```
 
-Run only the command appropriate for your hardware.
+Run only the command appropriate for your hardware. Use
+`julia --project=gpu-env scripts/run_transport.jl my_run.toml` for GPU runs;
+keep using `--project=.` for the base CPU environment. Preserve the local GPU
+environment's `Project.toml` and `Manifest.toml` with your experiment records.
 
 ## Troubleshooting
 
@@ -132,7 +148,7 @@ Run only the command appropriate for your hardware.
 | `Package AtmosTransport not found` | Run from the cloned repository and include `--project=.`. |
 | A dependency “does not seem to be installed” | Re-run `julia --project=. -e 'using Pkg; Pkg.instantiate()'`. |
 | Julia loads the wrong checkout | Run `Base.active_project()` in the REPL; it should end in this repository's `Project.toml`. |
-| GPU package fails to load | Keep `[architecture].use_gpu = false` and finish the CPU quickstart before debugging drivers. |
+| GPU package fails to load | Check `--project=gpu-env`; to finish the CPU quickstart, set `backend = "cpu"` and `use_gpu = false`. |
 
 ## Next step
 

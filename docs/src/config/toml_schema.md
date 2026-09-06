@@ -19,6 +19,13 @@ The runtime infers the **target topology** from the binary header's
 `[grid]` block in the run config is therefore unnecessary and
 ignored.
 
+`validate_config(cfg)` checks runtime table shapes, input path existence,
+precision/backend compatibility, and window bounds without opening binary
+readers or allocating model state. Nested tracer `init` and `surface_flux`
+values must be tables. Shape errors are returned before value checks; a
+successful result is not a full physics or binary validation. See
+[Run with real meteorology](@ref Run-with-real-meteorology) for an example.
+
 ### `[input]` — which transport binaries to load
 
 Two valid shapes (mutually exclusive):
@@ -43,8 +50,14 @@ Path expansion + continuity validation lives in
 `src/Models/BinaryPathExpander.jl`.
 Shape B asserts that the resolved binaries form a contiguous date
 sequence; gaps fail at expansion time, not at first window-load.
+Shape A preserves the explicit list's order after expanding paths. It does
+not sort entries or validate date continuity; provide them chronologically.
 
 #### `[input.staging]` — rolling NVMe staging (opt-in)
+
+This value must be a TOML table even when staging is disabled. A scalar such
+as `staging = false` is rejected during configuration preflight; use
+`[input.staging] enabled = false` on separate TOML lines.
 
 Transport binaries (~15 GB/day) usually live on NFS-mounted storage. Cold,
 strided per-window reads over NFS make the window prefetch IO-bound (measured
@@ -67,7 +80,17 @@ cleanup_on_exit  = true                       # remove staged files at run end (
 
 Default off ⇒ bit-identical to a non-staged run. Copies run on a background
 task (overlapping GPU transport); a copy failure transparently falls back to the
-NAS path. Implementation: `src/Models/InputStaging.jl`.
+NAS path. Each active run owns its staging directory; another run targeting
+that directory falls back to the source paths. Use distinct directories when
+concurrent runs should both stage inputs.
+
+With `cleanup_on_exit = false`, retained copies can be reused on a later run.
+Reuse requires matching source path, size, modification/change times, and inode
+metadata in a `.source.toml` sidecar. This rejects equal-sized rewritten inputs
+and old copies without metadata. These checks are filesystem identity checks,
+not content checksums: source binaries must remain immutable during a run.
+Cleanup removes this run's staged files and metadata, preserving unrelated
+files in the directory. Implementation: `src/Models/InputStaging.jl`.
 
 ### `[architecture]` — backend selection
 
@@ -96,10 +119,11 @@ Optional GPU packages load on demand without injecting modules into `Main`.
 float_type = "Float32"        # default: "Float64"; one of "Float32" / "Float64"
 ```
 
-Float32 is the recommended default for L40S / consumer-GPU
-production runs; F64 needs an A100-class card or CPU. Mixing
-with the binary's `on_disk_float_type` is allowed (the runtime
-casts on load).
+Both precisions are supported on CPU and CUDA. Their speed and memory costs
+depend on the GPU and enabled operators; the V100 experiments in
+[Validation status](@ref) cover both. Metal requires Float32. Mixing with the
+binary's `on_disk_float_type` is allowed: the runtime casts on load, which
+does not recover precision already lost in the stored forcing.
 
 ### `[run]` — runtime knobs
 
@@ -111,7 +135,15 @@ air_mass_reset_mode = "preserve_tracer_mass"
 ```
 
 `stop_window` is the inclusive last window; setting it lets you
-run a partial day for smoke tests. `air_mass_reset_mode` is one of
+run a partial day for smoke tests with a single input file. Multi-file runs
+require complete window ranges so no forcing is skipped between files.
+The index is local to each input file, not cumulative across the run. For two
+daily binaries with 24 windows each, omit `stop_window`; the result covers
+48 hours while each file supplies windows 1–24. Output times are cumulative.
+Both indices must be integers: Boolean and floating-point values are rejected.
+`start_window` must be at least 1, and `stop_window` must not precede it.
+Cubed-sphere runs currently require `start_window = 1`.
+`air_mass_reset_mode` is one of
 `"none"`, `"preserve_vmr"`, or `"preserve_tracer_mass"`. Advection belongs
 in the separate `[advection]` table.
 
@@ -142,6 +174,15 @@ Initial-condition kinds (declared in `src/Models/InitialConditionIO.jl`):
 | `"catrine_co2"` | yes | yes | yes | optional `file`, `variable`, `time_index` overrides for the built-in defaults |
 | `"pressure_layer"` | no | no | yes | `lowest_layer = true` or `psurf_fraction`; optional `total_molecules` |
 | `"cs_native"` | no | no | yes | `file`, `variable`; optional `time_index`, `vertical_order`, `clamp_negative` (default `false`) |
+
+`pressure_layer` places tracer in one level per column. With
+`lowest_layer = true`, it uses the bottom level and ignores `psurf_fraction`.
+Otherwise it chooses the level whose logarithmic pressure midpoint is nearest
+`psurf_fraction * surface_pressure`, using the binary's hybrid coefficients and
+per-column surface pressure. The fraction defaults to `0.5` and must be in
+`(0, 1]`; equal distances select the first level. One uniform dry VMR across
+the selected cells is normalized to the positive `total_molecules`
+(default `1e22`), using their summed dry-air mass. Other levels start at zero.
 
 Surface-flux emission is configured as a nested sub-table under each
 tracer. Each tracer that emits gets one `[tracers.<name>.surface_flux]`
@@ -223,17 +264,13 @@ kind = "cmfmc"                  # "none" | "cmfmc" | "cmfmc_matrix" | "tm5"
 # Collaborative-LU knobs (cmfmc_matrix and tm5). use_collab_lu is REQUIRED for
 # lmax_conv / n_merge to take effect — setting them without it is a hard error.
 use_collab_lu = true            # batched/collaborative column LU (fast path)
-lmax_conv     = 0               # 0 = full column; >0 truncates convection above
-                                # that level (cloud-top closure keeps it mass-safe)
-n_merge       = 2               # merge n adjacent columns per LU solve; 1 is
-                                # bit-exact, 2 is the best-accuracy production
-                                # merge (the historical n=2 blow-up was a
-                                # clipping bug, since fixed)
+lmax_conv     = 0               # 0 = full column; >0 retains that many bottom layers
+n_merge       = 1               # 1 = no aggregation; >1 merges adjacent vertical
+                                # layers within each column (a numerical approximation)
 
-# TM5-only — per-topology budget for the column-tile workspace,
-# in binary GiB. Default 1.0 (fits production through C720/L137 on
-# H100). Set lower on memory-tight GPUs; setting it higher beyond
-# the topology's total cells is a no-op.
+# TM5 and CMFMC-matrix: per-topology legacy column-tile budget in GiB.
+# Collaborative GPU runs defer this global scratch allocation. A CPU or
+# unsupported Float64 fallback allocates the tile when first needed.
 tile_workspace_gib = 1.0
 
 [chemistry]
@@ -241,6 +278,33 @@ kind = "decay"                  # currently only first-order decay
   [chemistry.half_lives_seconds]
   rn222 = 330350.4              # per-tracer half-lives (seconds)
 ```
+
+For Float32 GPU matrix convection, each column's LU factors remain in shared
+memory while tracers pass through in batches of six. This buffer size does not
+limit the run to six tracers; 65-tracer runs are covered by V100 regression
+tests. The effective vertical matrix depth must still fit the supported
+1–85-level envelope. Float64 CUDA uses the same batched solver for unmerged
+(`n_merge=1`) depths 1–73, with Float64 shared arrays and arithmetic. CPU and
+unsupported Float64 configurations keep the legacy solver with a warning;
+that fallback uses the full column without aggregation, so requested
+`lmax_conv`/`n_merge` approximations do not apply there. There is no automatic
+truncation or precision conversion. CS adjoint footprints
+continue to require `use_collab_lu=false`, `lmax_conv=0`, and `n_merge=1`.
+An eligible Float64 request now engages the collaborative solver instead of
+falling back; a positive `lmax_conv` therefore selects that lower-atmosphere
+region. Use the full-column legacy settings above to retain the previous solve.
+Tracer batching requires neither truncation nor layer aggregation. Choose
+`lmax_conv` and `n_merge` from scientific accuracy checks;
+conservation alone does not establish that either approximation is acceptable.
+
+With layer aggregation, the solver uses `L_super = fld(L, n_merge)`, where
+`L` is the requested active depth (or `Nz` when `lmax_conv=0`). Its fine span is
+`L_super*n_merge`, so a nondivisible choice omits up to `n_merge-1` additional
+top layers. Cloud-top closure forces remaining updraft mass to detrain at the
+active boundary; it does not recover the mixing excluded by that boundary.
+Redistribution follows each tracer's prior fine-layer profile, using uniform
+weights when its old super-layer total is zero. Conservation is to rounding,
+not exact arithmetic. The default `n_merge` is 1.
 
 Topology checks happen while the runtime recipe is built: reduced-Gaussian
 runs accept `upwind` or `none` advection and require midpoint surface-flux
@@ -312,15 +376,17 @@ julia --threads=2 --project=. scripts/run_transport.jl <cfg.toml>
 
 Some preprocessing kernels (spectral synthesis, regridding) and
 some host-side workspace operations parallelize across threads.
-The runtime also overlaps I/O with compute when ≥2 threads are
-available: each met window is **prefetched** on a background task
-while the current window integrates (`_start_window_prefetch!` in
-`DrivenSimulation.jl`), and the per-day snapshot write runs on a
-spawned task (`pending_write` in `DrivenRunner.jl`) so disk output
-overlaps the next day's transport. For multi-day/-year runs over
-NFS, opt into rolling local-NVMe input staging via `[input.staging]`
-(above). There is no `[buffering]` TOML block — these overlaps are
-automatic; give the run `--threads=2` (or more) to enable them.
+GPU runs also prefetch the next meteorological window when ≥2 Julia threads
+are available. Startup reads the first window once and creates two independent
+device buffers, so loading the next window cannot overwrite active forcing.
+Daily snapshot writes run on an owned background task and overlap the next
+day's transport. The runner drains both tasks before closing their resources,
+including when stepping fails. Single-file NetCDF appends each snapshot without
+retaining earlier frames.
+
+For multi-day or multi-year runs over NFS, opt into rolling local-NVMe input
+staging via `[input.staging]` (above). There is no `[buffering]` TOML block.
+Give GPU runs `--threads=2` (or more) to enable prefetch.
 
 ## Preprocessing config (`config/preprocessing/*.toml`)
 

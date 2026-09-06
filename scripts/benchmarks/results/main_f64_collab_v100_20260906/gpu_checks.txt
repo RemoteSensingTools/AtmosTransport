@@ -1,0 +1,19 @@
+Precompiling packages...
+  18187.3 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 39 seconds. 192 already precompiled.
+Precompiling packages...
+   4533.5 ms  ✓ AtmosTransportNVTXExt (serial)
+  1 dependency successfully precompiled in 5 seconds
+Precompiling packages...
+   6424.2 ms  ✓ AtmosTransportCUDAExt (serial)
+  1 dependency successfully precompiled in 6 seconds
+Test Summary:                               | Pass  Total  Time
+Float64 CUDA collaborative contract on V100 |   22     22  0.3s
+Test Summary:                                       | Pass  Total   Time
+Float64 positive and signed tracer batching on V100 | 1920   1920  40.3s
+Test Summary:                       | Pass  Total  Time
+Deferred scratch adaptation on V100 |    7      7  0.7s
+Test Summary:                         | Pass  Total   Time
+Collaborative tracer batching on V100 |  480    480  10.9s
+Test Summary:                  | Pass  Total  Time
+Signed tracer batching on V100 |  240    240  0.2s

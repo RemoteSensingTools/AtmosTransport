@@ -17,7 +17,7 @@
 using Test
 using Dates
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 
 using .AtmosTransport.Preprocessing: ERA5N320Settings, ERA5GRIBDayHandles,
                                       ERA5N320ConvectionFields,

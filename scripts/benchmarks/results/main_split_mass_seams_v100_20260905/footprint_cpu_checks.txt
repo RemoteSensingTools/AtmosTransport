@@ -1,0 +1,20 @@
+Precompiling packages...
+    AtmosTransport Being precompiled by another process (pid: 3219533, pidfile: /home/cfranken/.julia/compiled/v1.12/AtmosTransport/EPpqJ_BLbwW.ji.pidfile)
+  20083.3 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 21 seconds. 193 already precompiled.
+Precompiling packages...
+   2980.2 ms  ✓ AtmosTransportNVTXExt (serial)
+  1 dependency successfully precompiled in 3 seconds
+Precompiling packages...
+   8835.3 ms  ✓ AtmosTransportCUDAExt (serial)
+  1 dependency successfully precompiled in 9 seconds
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+Test Summary:                                       | Pass  Total   Time
+CS split-sweep surface-emission footprint prototype |   72     72  47.6s

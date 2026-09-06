@@ -1,0 +1,14 @@
+all tracer1_column_mean extrema=(-4.2724546f-11, 4.1037085f-9)
+all tracer2_column_mean extrema=(-4.1814444f-11, 4.566227f-9)
+all tracer3_column_mean extrema=(-2.7918019f-11, 3.7117969f-9)
+all tracer4_column_mean extrema=(-3.3036268f-11, 4.028626f-9)
+all tracer5_column_mean extrema=(2.7084293f-11, 4.4466657f-9)
+all tracer6_column_mean extrema=(2.7358345f-11, 5.1246682f-9)
+all_float64 tracer1_column_mean extrema=(-4.2724396747071233e-11, 4.103712879575708e-9)
+all_float64 tracer2_column_mean extrema=(-4.1814328766729083e-11, 4.566230835590884e-9)
+all_float64 tracer3_column_mean extrema=(-2.7918061737284308e-11, 3.7118017202065257e-9)
+all_float64 tracer4_column_mean extrema=(-3.303602284905487e-11, 4.028626347608425e-9)
+all_float64 tracer5_column_mean extrema=(2.7084265168283655e-11, 4.4466691123149934e-9)
+all_float64 tracer6_column_mean extrema=(2.7358447133483368e-11, 5.124667005395581e-9)
+Test Summary:                                          | Pass  Total  Time
+Split PPM hourly output completeness and finite fields |   64     64  4.3s

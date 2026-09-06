@@ -1,0 +1,4 @@
+Test Summary:                         | Pass  Total  Time
+Split PPM full-day compensated totals |   52     52  1.5s
+Test Summary:                                        | Pass  Total  Time
+Analytic solid-body rotation fields and conservation |   37     37  0.0s

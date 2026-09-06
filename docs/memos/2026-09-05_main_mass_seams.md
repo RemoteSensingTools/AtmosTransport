@@ -98,3 +98,11 @@ The complete 118-file core collection plus regridding passes across the initial
 run and the resume after repairing one README file-map entry. The final focused
 CS file passes 660 checks, including the additional strong tracer-adjoint test.
 The strict docs build passes with deployment disabled.
+
+## Completed split-scheme validation
+
+The [subsequent split-scheme report](2026-09-05_main_split_mass_seams.md)
+records production adoption after the required forward/adjoint, CFL,
+independent analytic-field, CPU, and V100 checks. The prototype-only status
+above describes the earlier checkpoint. Both schemes' Float64 full-day totals
+now remain at roundoff; the temporal-order limitation remains documented.

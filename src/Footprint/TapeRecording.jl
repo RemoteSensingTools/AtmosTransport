@@ -13,9 +13,9 @@
 #     recorder for the requested scheme; LinRood goes through
 #     `_record_cs_linrood_tape` in `LinRoodTape.jl`.
 #
-# Relocated unchanged from `src/Adjoints/Adjoints.jl` lines 586-702 and
-# 718-1050; no semantic change. Loaded into the
-# `Adjoints` module via an `include` from `Adjoints.jl`.
+# Loaded into the `Adjoints` module from `Adjoints.jl`. Horizontal records
+# use the same paired physical-seam groups as the production forward pass;
+# their stored inputs also supply the shared reconstruction's reverse pass.
 # ---------------------------------------------------------------------------
 
 struct _CSTapeCounts
@@ -82,17 +82,13 @@ function _tape_byte_estimate(panels_m0,
         fs_z = fs / FT(n_z)
 
         for _ in 1:n_x
-            for p in 1:6
-                _sweep_x_panel!(dummy_rm[p], panels_m[p], panels_am[p], scheme,
-                                ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_x)
-            end
+            _sweep_cs_horizontal!(dummy_rm, panels_m, panels_am, mesh,
+                                  scheme, ws, Val(1); flux_scale=fs_x)
             fill_panel_halos!(panels_m, mesh; dir=1)
         end
         for _ in 1:n_y
-            for p in 1:6
-                _sweep_y_panel!(dummy_rm[p], panels_m[p], panels_bm[p], scheme,
-                                ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_y)
-            end
+            _sweep_cs_horizontal!(dummy_rm, panels_m, panels_bm, mesh,
+                                  scheme, ws, Val(2); flux_scale=fs_y)
             fill_panel_halos!(panels_m, mesh; dir=2)
         end
         for _ in 1:n_z
@@ -109,18 +105,14 @@ function _tape_byte_estimate(panels_m0,
         end
         fill_panel_halos!(panels_m, mesh; dir=2)
         for _ in 1:n_y
-            for p in 1:6
-                _sweep_y_panel!(dummy_rm[p], panels_m[p], panels_bm[p], scheme,
-                                ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_y)
-            end
+            _sweep_cs_horizontal!(dummy_rm, panels_m, panels_bm, mesh,
+                                  scheme, ws, Val(2); flux_scale=fs_y)
             fill_panel_halos!(panels_m, mesh; dir=2)
         end
         fill_panel_halos!(panels_m, mesh; dir=1)
         for _ in 1:n_x
-            for p in 1:6
-                _sweep_x_panel!(dummy_rm[p], panels_m[p], panels_am[p], scheme,
-                                ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_x)
-            end
+            _sweep_cs_horizontal!(dummy_rm, panels_m, panels_am, mesh,
+                                  scheme, ws, Val(1); flux_scale=fs_x)
             fill_panel_halos!(panels_m, mesh; dir=1)
         end
     end
@@ -269,20 +261,16 @@ function _record_cs_mass_tape(panels_m0,
 
         for _ in 1:n_x
             record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_am, fs_x, storage)
-            for p in 1:6
-                _sweep_x_panel!(dummy_rm[p], panels_m[p], panels_am[p], scheme,
-                                ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_x)
-            end
+            _sweep_cs_horizontal!(dummy_rm, panels_m, panels_am, mesh,
+                                  scheme, ws, Val(1); flux_scale=fs_x)
             fill_panel_halos!(panels_m, mesh; dir=1)
             record_ops && push!(ops, _CSHaloRecord(1))
         end
 
         for _ in 1:n_y
             record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_bm, fs_y, storage)
-            for p in 1:6
-                _sweep_y_panel!(dummy_rm[p], panels_m[p], panels_bm[p], scheme,
-                                ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_y)
-            end
+            _sweep_cs_horizontal!(dummy_rm, panels_m, panels_bm, mesh,
+                                  scheme, ws, Val(2); flux_scale=fs_y)
             fill_panel_halos!(panels_m, mesh; dir=2)
             record_ops && push!(ops, _CSHaloRecord(2))
         end
@@ -332,10 +320,8 @@ function _record_cs_mass_tape(panels_m0,
         record_ops && push!(ops, _CSHaloRecord(2))
         for _ in 1:n_y
             record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_bm, fs_y, storage)
-            for p in 1:6
-                _sweep_y_panel!(dummy_rm[p], panels_m[p], panels_bm[p], scheme,
-                                ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_y)
-            end
+            _sweep_cs_horizontal!(dummy_rm, panels_m, panels_bm, mesh,
+                                  scheme, ws, Val(2); flux_scale=fs_y)
             fill_panel_halos!(panels_m, mesh; dir=2)
             record_ops && push!(ops, _CSHaloRecord(2))
         end
@@ -344,10 +330,8 @@ function _record_cs_mass_tape(panels_m0,
         record_ops && push!(ops, _CSHaloRecord(1))
         for _ in 1:n_x
             record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_am, fs_x, storage)
-            for p in 1:6
-                _sweep_x_panel!(dummy_rm[p], panels_m[p], panels_am[p], scheme,
-                                ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_x)
-            end
+            _sweep_cs_horizontal!(dummy_rm, panels_m, panels_am, mesh,
+                                  scheme, ws, Val(1); flux_scale=fs_x)
             fill_panel_halos!(panels_m, mesh; dir=1)
             record_ops && push!(ops, _CSHaloRecord(1))
         end
@@ -435,10 +419,8 @@ function _record_cs_tracer_tape(panels_rm0,
 
         for _ in 1:n_x
             record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_rm, panels_am, fs_x, storage)
-            for p in 1:6
-                _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
-                                scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_x)
-            end
+            _sweep_cs_horizontal!(panels_rm, panels_m, panels_am, mesh,
+                                  scheme, ws, Val(1); flux_scale=fs_x)
             fill_panel_halos!(panels_rm, mesh; dir=1)
             fill_panel_halos!(panels_m, mesh; dir=1)
             record_ops && push!(ops, _CSHaloRecord(1))
@@ -446,10 +428,8 @@ function _record_cs_tracer_tape(panels_rm0,
 
         for _ in 1:n_y
             record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_rm, panels_bm, fs_y, storage)
-            for p in 1:6
-                _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
-                                scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_y)
-            end
+            _sweep_cs_horizontal!(panels_rm, panels_m, panels_bm, mesh,
+                                  scheme, ws, Val(2); flux_scale=fs_y)
             fill_panel_halos!(panels_rm, mesh; dir=2)
             fill_panel_halos!(panels_m, mesh; dir=2)
             record_ops && push!(ops, _CSHaloRecord(2))
@@ -508,10 +488,8 @@ function _record_cs_tracer_tape(panels_rm0,
         record_ops && push!(ops, _CSHaloRecord(2))
         for _ in 1:n_y
             record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_rm, panels_bm, fs_y, storage)
-            for p in 1:6
-                _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
-                                scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_y)
-            end
+            _sweep_cs_horizontal!(panels_rm, panels_m, panels_bm, mesh,
+                                  scheme, ws, Val(2); flux_scale=fs_y)
             fill_panel_halos!(panels_rm, mesh; dir=2)
             fill_panel_halos!(panels_m, mesh; dir=2)
             record_ops && push!(ops, _CSHaloRecord(2))
@@ -522,10 +500,8 @@ function _record_cs_tracer_tape(panels_rm0,
         record_ops && push!(ops, _CSHaloRecord(1))
         for _ in 1:n_x
             record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_rm, panels_am, fs_x, storage)
-            for p in 1:6
-                _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
-                                scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_x)
-            end
+            _sweep_cs_horizontal!(panels_rm, panels_m, panels_am, mesh,
+                                  scheme, ws, Val(1); flux_scale=fs_x)
             fill_panel_halos!(panels_rm, mesh; dir=1)
             fill_panel_halos!(panels_m, mesh; dir=1)
             record_ops && push!(ops, _CSHaloRecord(1))

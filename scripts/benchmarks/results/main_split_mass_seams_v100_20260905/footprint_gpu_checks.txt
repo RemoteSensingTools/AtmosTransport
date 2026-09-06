@@ -1,0 +1,16 @@
+Precompiling packages...
+  18143.9 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 39 seconds. 192 already precompiled.
+Precompiling packages...
+  11909.6 ms  ✓ AtmosTransportCUDAExt (serial)
+  1 dependency successfully precompiled in 12 seconds
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+┌ Info: strang_split_cs! subcycle count grew
+│   n_x = 2
+│   n_y = 2
+└   n_z = 2
+Test Summary:                                       | Pass  Total     Time
+CS split-sweep surface-emission footprint prototype |   91     91  1m57.7s

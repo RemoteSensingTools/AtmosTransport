@@ -64,6 +64,7 @@ include("multitracer_kernels.jl")
 # Cubed-sphere halo exchange and Strang splitting
 include("HaloExchange.jl")
 include("CubedSphereStrang.jl")
+include("CubedSphereSeams.jl")
 
 # PPM subgrid distributions (shared by CS PPM kernels and LinRood)
 include("ppm_subgrid_distributions.jl")

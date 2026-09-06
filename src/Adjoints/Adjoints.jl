@@ -28,7 +28,8 @@ using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     LinRoodPPMScheme,
     fill_panel_halos!, strang_split_cs!, copy_corners!,
     _cs_static_palindrome_subcycle_count,
-    _sweep_x_panel!, _sweep_y_panel!, _sweep_z_panel!,
+    _sweep_z_panel!, _sweep_cs_horizontal!,
+    _CSInteriorFlux, _cs_seam_axis, _cs_seam_sign, _cs_seam_face_index,
     apply_linrood_horizontal_adjoint_single_panel!,
     apply_linrood_update_adjoint!, _share_lr_seam_faces!,
     _init_q_buf_kernel!, _ppm_y_face_kernel!, _ppm_x_face_kernel!,
@@ -135,16 +136,20 @@ include("../Inversion/Preconditioning.jl")
     CSAdjointWorkspace(mesh, prototype)
 
 Scratch storage for CS adjoint sweeps. `lambda_A` is one halo-padded panel
-used as the per-panel transpose output.
+used as the per-panel transpose output. `seam_seeds` caches both neighbors'
+output-seed difference before any panel transpose overwrites those values.
 """
 struct CSAdjointWorkspace{FT, A <: AbstractArray{FT, 3}}
     lambda_A::A
+    seam_seeds::A
 end
 
 function CSAdjointWorkspace(mesh::CubedSphereMesh,
                             prototype::AbstractArray{FT, 3}) where {FT <: AbstractFloat}
     N = mesh.Nc + 2 * mesh.Hp
-    return CSAdjointWorkspace{FT, typeof(prototype)}(similar(prototype, FT, N, N, size(prototype, 3)))
+    lambda_A = similar(prototype, FT, N, N, size(prototype, 3))
+    seam_seeds = similar(prototype, FT, mesh.Nc, size(prototype, 3), 12)
+    return CSAdjointWorkspace{FT, typeof(lambda_A)}(lambda_A, seam_seeds)
 end
 
 struct _SingleSurfaceRatePerturbation{FT}
@@ -243,6 +248,7 @@ end
 
 # Split-sweep advection adjoint kernels.
 include("AdvectionAdjoint.jl")
+include("CubedSphereSeams.jl")
 
 # CS halo-exchange adjoint kernels.
 include("HaloAdjoint.jl")

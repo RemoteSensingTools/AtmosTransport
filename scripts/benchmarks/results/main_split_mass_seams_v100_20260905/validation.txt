@@ -1,0 +1,17 @@
+Candidate: paired split-seam implementation on revamp/current-main, parent bf9ae4cb.
+CPU: Julia 1.12.6, CUDA_VISIBLE_DEVICES=, JULIA_NUM_THREADS=4, OPENBLAS_NUM_THREADS=1.
+Default test/runtests.jl: all 119 core files plus regridding completed, process exit 0.
+Optional diagnostic, real-data, and orphan tiers excluded; pre-existing broken/skipped tests retained.
+Final focused test_cubed_sphere_advection.jl: 692 passed.
+Final focused test_cs_seam_exchange.jl: 260 passed (240 independent loops, 16 finite-difference adjoints, 4 cache guards).
+CPU test_cs_ppm_adjoint_footprint.jl: 72 passed. V100-enabled run: 91 passed, including device/pinned-host/mmap tape.
+Julia 1.10.12 focused seam tests: 256 passed before the four cache guards were added.
+Aqua: 10 passed. JET 0.11.5 / Julia 1.12.6: 148 reports, baseline 148 (four documented KA reports added).
+Isolated Julia 1.10 JET: zero reports; not comparable evidence for changing its historical 130 allowance.
+V100 test_cs_seam_exchange_gpu.jl: 2552 forward checks through 65 tracers and 24 adjoint comparisons passed.
+Stored hourly totals and independent rotation result checks: 52 + 37 passed.
+Six-tracer NetCDF completeness and finite-field checks: 64 passed.
+32-tracer profile output checks: 432 passed, max final relative drift 8.203781159418402e-7.
+Strict docs build: process exit 0, ATMOSTR_DOCS_BUILD_ONLY=true, deployment disabled.
+Final maintained documentation links and README freshness: 75 + 1 + 83 passed.
+Codex diff review: recorded in docs/memos/2026-09-05_main_split_mass_seams.md.

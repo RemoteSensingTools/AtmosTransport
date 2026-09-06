@@ -59,10 +59,13 @@ The same telescoping argument extends to:
 
 - Cubed-sphere Lin–Rood via shared final panel-edge tracer fluxes
   (`src/Operators/Advection/LinRoodSeams.jl`) and mirrored air-mass fluxes.
-  Halo exchange alone is insufficient. The dimensionally split CS schemes
-  still have an open seam defect; see [Panel-edge halo treatment (cubed sphere)](@ref).
   The q-space Lin–Rood path requires CFL-safe inputs: its existing cell-local
   emergency flux scaling breaks conservation when activated.
+- Cubed-sphere Upwind, Slopes, and PPM via one cached physical seam transfer
+  applied to both neighbors in the same directional group
+  (`src/Operators/Advection/CubedSphereSeams.jl`). This also pairs rotated X/Y
+  contacts. Halo exchange alone is insufficient; see
+  [Panel-edge halo treatment (cubed sphere)](@ref).
 - The reduced-Gaussian grid via the LCM-based ring-boundary face
   segmentation in `_boundary_counts(nlon_per_ring)` in
   `src/Grids/ReducedGaussianMesh.jl`. Each ring-pair boundary is split

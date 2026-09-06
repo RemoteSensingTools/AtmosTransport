@@ -186,7 +186,7 @@ If you're running `LinRoodPPMScheme` on a flow with locally large
 Courant numbers, the recourse is to halve `dt` in the run config
 rather than rely on the operator to subcycle internally.
 
-## Strang palindrome — second-order time accuracy via symmetry
+## Strang palindrome and temporal accuracy
 
 The full transport step is the time-symmetric composition
 
@@ -194,11 +194,13 @@ The full transport step is the time-symmetric composition
 S(Δt) = X(Δt/2) Y(Δt/2) Z(Δt/2) ∘ V(Δt) ∘ Z(Δt/2) Y(Δt/2) X(Δt/2)
 ```
 
-(with `V(Δt) → V(Δt/2) S(Δt) V(Δt/2)` when surface flux is on). The
-symmetry around the center is what gives the composition its
-second-order time accuracy: each direction's truncation error has the
-form `c · Δt² + O(Δt⁴)` and the leading `c · Δt²` cancels between the
-forward and reverse halves.
+(with `V(Δt) → V(Δt/2) S(Δt) V(Δt/2)` when surface flux is on). Strang
+composition gives second-order splitting accuracy for sufficiently accurate
+subflows. The palindrome alone does not establish second-order accuracy of
+the implemented transport: reconstruction, halo evolution, and each subflow's
+time integration must also be validated. A cubed-sphere seam fixture shows
+first-order timestep refinement for both the original split PPM and its paired
+seam update. Conservation and temporal accuracy are separate requirements.
 
 Convection and chemistry are NOT inside the palindrome — they are
 applied once per met window, post-palindrome — because their natural
@@ -226,20 +228,40 @@ mixing ratios are scalars, and the mirrored air-mass flux supplies the normal
 sign. This makes the two tracer transfers cancel to roundoff. The adjoint
 applies the transpose of the same averaging operation.
 
-The dimensionally split cubed-sphere Upwind, Slopes, and PPM paths still have
-an open seam conservation defect: rotated contacts can be evaluated at
-different X/Y stages. A Float64 seam test at Courant numbers around 0.1
-exposes drift that was hidden by the previous low-Courant fixture. Use
-Lin–Rood for cubed-sphere runs requiring the corrected seam exchange; its
-numerical behavior and cost differ from split PPM.
+The dimensionally split cubed-sphere Upwind, Slopes, and PPM paths assign each
+physical seam to the lower-numbered panel and that panel edge's local axis.
+Each X/Y group updates its panel-interior faces and all seams assigned to it.
+A seam transfer is reconstructed once, before any panel changes, then applied
+with opposite signs to both neighboring cells in the same group. This includes
+rotated contacts whose neighbor edge lies on the other local axis. The local
+panel kernels mask boundary fluxes so each physical exchange occurs once.
+Air and signed tracer mass therefore cancel across contacts; mirrored input
+mass fluxes remain required for consistency with the binary's continuity budget.
+
+The forward tape records these same grouped sweeps. At fixed meteorology, the
+adjoint first collects both neighbors' output seeds, reverses interior sweeps,
+and then differentiates the shared seam reconstruction. This preserves the
+tracer-gradient contract without changing the tape format. The forward cache
+uses `12 × Nc × Nz × (Nt + 1)` values, including air mass: 9.41 MB for C90 L66,
+32 tracers, Float32. It has no six-tracer cap; Lin–Rood does not allocate this
+split-sweep buffer.
 
 In a six-tracer C90 L66, 24-hour V100 test with TM5 convection and Dkg diffusion,
 sharing Lin–Rood seam estimates reduces maximum final relative tracer-total
 drift from `3.77e-5` to `6.98e-7` in Float32 and from `3.80e-5` to `7.93e-16`
-in Float64. These are measured results for one forcing archive, not universal
-error bounds. Positive initial layers still develop negative undershoots in
-that workload both before and after the fix; conserving totals does not
-establish positivity or reference-model agreement.
+in Float64. The paired split PPM update reduces the corresponding maxima
+from `2.24e-5` to `8.17e-7` in Float32 and from `2.28e-5` to `9.91e-16` in
+Float64, with no global normalization. These are measured results for one
+forcing archive, not universal error bounds. Positive initial layers still
+develop negative column means: about `-2.09e-10` mol/mol in Lin–Rood before
+and after its fix, and `-4.27e-11` mol/mol in the corrected split PPM run.
+Conserving totals does not establish positivity or reference-model agreement.
+
+An independent tilted solid-body rotation of a smooth Gaussian tracer on C8,
+C16, and C32 grids, with both panel conventions, gives slightly smaller
+area-weighted field errors for paired split PPM at quarter and full rotations.
+Float64 mass drift remains below `6.1e-15`. This checks transported fields as
+well as totals; it is not a general temporal-order or positivity guarantee.
 
 ## Reduced-Gaussian per-ring face segmentation
 
@@ -269,6 +291,8 @@ between them. Performance-tuning notes live beside the implementation.
 | CFL subcycle counters (structured) | `StrangSplitting.jl::_subcycling_pass_count`, `_static_*_subcycle_count` |
 | CFL subcycle counters (CS) | `CubedSphereStrang.jl::_cs_static_subcycle_count`, `_cs_static_palindrome_subcycle_count` |
 | CS multi-tracer fused kernels (X / Y / Z) | `src/Operators/Advection/multitracer_kernels.jl` |
+| CS paired split seam exchange | `src/Operators/Advection/CubedSphereSeams.jl` |
+| CS paired split seam adjoint | `src/Adjoints/CubedSphereSeams.jl` |
 | CS panel-edge halo sync | `src/Grids/PanelConnectivity.jl` + `cs_transport_helpers.jl::_propagate_cs_outflow_to_halo!` |
 | Lin-Rood cross-term + del-2 damping | `src/Operators/Advection/LinRood.jl` |
 

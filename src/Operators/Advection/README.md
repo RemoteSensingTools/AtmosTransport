@@ -60,6 +60,8 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   exchange and corner fill
 - [`CubedSphereStrang.jl`](CubedSphereStrang.jl) — panel-native
   cubed-sphere palindrome
+- [`CubedSphereSeams.jl`](CubedSphereSeams.jl) — canonical physical seam
+  transfers paired across panels within each directional group
 - [`ppm_subgrid_distributions.jl`](ppm_subgrid_distributions.jl) — PPM
   subcell distributions shared by CS-specific code
 - [`LinRoodSeams.jl`](LinRoodSeams.jl) — shared final seam estimates and

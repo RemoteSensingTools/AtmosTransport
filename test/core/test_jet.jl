@@ -23,6 +23,9 @@ Two patterns dominate the current report count and are NOT bugs:
    exact-TM5 `dkg` diffusion path adds two kernels and four reports
    (the failed GPU union-split branch and its propagated return type
    for each kernel), without introducing runtime type instability.
+   Conservative CS seam caching and paired application add two more kernels
+   with the same four-report pattern on Julia 1.12 (measured separately with
+   the V100 paths passing through 65 tracers).
 
 2. **Parametric `@kwdef` zero-arg constructors** — `Base.@kwdef`
    auto-generates a zero-arg constructor for
@@ -66,12 +69,14 @@ const HOT_PATH_MODULES = (
 
 # Snapshot baselines captured during CI runs. Dominant sources are the
 # known-tolerated patterns documented above.
-# The 1.12 baseline was re-measured with JET 0.11.5 after the runtime-contract
-# cleanup. The 1.10 baseline retains its prior CI-measured allowance; the
-# compatible JET stack does not surface the two new kernel call sites.
+# The 1.12 baseline was re-measured with JET 0.11.5 after paired CS seams:
+# 144 prior reports plus four from the two new kernel call sites above.
+# The 1.10 baseline retains its prior CI-measured allowance. An isolated
+# compatible JET run produced zero reports, so it is not comparable evidence
+# for tightening that allowance.
 # Keep these at the expected counts so the snapshot remains a real gate.
 const JET_HOT_PATH_BASELINE_1_10 = 130
-const JET_HOT_PATH_BASELINE_1_12 = 144
+const JET_HOT_PATH_BASELINE_1_12 = 148
 const JET_HOT_PATH_BASELINE =
     VERSION >= v"1.12" ? JET_HOT_PATH_BASELINE_1_12 :
                          JET_HOT_PATH_BASELINE_1_10

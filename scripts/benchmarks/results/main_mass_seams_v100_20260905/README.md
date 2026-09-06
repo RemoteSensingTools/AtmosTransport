@@ -3,7 +3,8 @@
 The full-day tracer drift persists in Float64. It is dominated by inconsistent
 horizontal tracer exchange at panel seams, not Float32 roundoff. Lin–Rood now
 shares one final face estimate between both panels before applying divergence.
-The split PPM seam defect remains open.
+The split PPM defect at this checkpoint is corrected in the
+[subsequent paired-seam experiment](../main_split_mass_seams_v100_20260905/README.md).
 
 ## Conservation result
 

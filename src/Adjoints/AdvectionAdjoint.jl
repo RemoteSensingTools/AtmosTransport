@@ -598,22 +598,26 @@ function _adjoint_scheme_sweep!(lambda_panels, m_before, flux_panels,
                                 flux_scale)
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(lambda_panels[1], 3)
+    horizontal = direction === :x || direction === :y
+    axis = direction === :x ? Val(1) : Val(2)
+    horizontal && _cache_cs_seam_seeds!(ws.seam_seeds, lambda_panels, mesh, axis)
     @inbounds for p in 1:6
         fill!(ws.lambda_A, zero(eltype(ws.lambda_A)))
         backend = get_backend(lambda_panels[p])
+        panel_flux = horizontal ? _CSInteriorFlux(flux_panels[p], mesh, axis) : flux_panels[p]
         if direction === :x
             kernel! = _cs_xsweep_adjoint_kernel!(backend, 256)
-            kernel!(ws.lambda_A, lambda_panels[p], m_before[p], flux_panels[p],
+            kernel!(ws.lambda_A, lambda_panels[p], m_before[p], panel_flux,
                     scheme, Int32(Nc), Int32(Hp), eltype(ws.lambda_A)(flux_scale);
                     ndrange=(Nc, Nc, Nz))
         elseif direction === :y
             kernel! = _cs_ysweep_adjoint_kernel!(backend, 256)
-            kernel!(ws.lambda_A, lambda_panels[p], m_before[p], flux_panels[p],
+            kernel!(ws.lambda_A, lambda_panels[p], m_before[p], panel_flux,
                     scheme, Int32(Nc), Int32(Hp), eltype(ws.lambda_A)(flux_scale);
                     ndrange=(Nc, Nc, Nz))
         elseif direction === :z
             kernel! = _cs_zsweep_adjoint_kernel!(backend, 256)
-            kernel!(ws.lambda_A, lambda_panels[p], m_before[p], flux_panels[p],
+            kernel!(ws.lambda_A, lambda_panels[p], m_before[p], panel_flux,
                     scheme, Int32(Nc), Int32(Hp), Int32(Nz), eltype(ws.lambda_A)(flux_scale);
                     ndrange=(Nc, Nc, Nz))
         else
@@ -622,6 +626,8 @@ function _adjoint_scheme_sweep!(lambda_panels, m_before, flux_panels,
         synchronize(backend)
         copyto!(lambda_panels[p], ws.lambda_A)
     end
+    horizontal && _apply_cs_seam_adjoint!(lambda_panels, m_before, nothing,
+        flux_panels, ws.seam_seeds, mesh, scheme, axis, flux_scale)
     return nothing
 end
 
@@ -631,25 +637,29 @@ function _adjoint_scheme_sweep!(lambda_panels, m_before, rm_before, flux_panels,
                                 flux_scale)
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(lambda_panels[1], 3)
+    horizontal = direction === :x || direction === :y
+    axis = direction === :x ? Val(1) : Val(2)
+    horizontal && _cache_cs_seam_seeds!(ws.seam_seeds, lambda_panels, mesh, axis)
     @inbounds for p in 1:6
         fill!(ws.lambda_A, zero(eltype(ws.lambda_A)))
         backend = get_backend(lambda_panels[p])
+        panel_flux = horizontal ? _CSInteriorFlux(flux_panels[p], mesh, axis) : flux_panels[p]
         if direction === :x
             kernel! = _cs_xsweep_adjoint_kernel!(backend, 256)
             kernel!(ws.lambda_A, lambda_panels[p], m_before[p], rm_before[p],
-                    flux_panels[p], scheme, Int32(Nc), Int32(Hp),
+                    panel_flux, scheme, Int32(Nc), Int32(Hp),
                     eltype(ws.lambda_A)(flux_scale);
                     ndrange=(Nc, Nc, Nz))
         elseif direction === :y
             kernel! = _cs_ysweep_adjoint_kernel!(backend, 256)
             kernel!(ws.lambda_A, lambda_panels[p], m_before[p], rm_before[p],
-                    flux_panels[p], scheme, Int32(Nc), Int32(Hp),
+                    panel_flux, scheme, Int32(Nc), Int32(Hp),
                     eltype(ws.lambda_A)(flux_scale);
                     ndrange=(Nc, Nc, Nz))
         elseif direction === :z
             kernel! = _cs_zsweep_adjoint_kernel!(backend, 256)
             kernel!(ws.lambda_A, lambda_panels[p], m_before[p], rm_before[p],
-                    flux_panels[p], scheme, Int32(Nc), Int32(Hp), Int32(Nz),
+                    panel_flux, scheme, Int32(Nc), Int32(Hp), Int32(Nz),
                     eltype(ws.lambda_A)(flux_scale);
                     ndrange=(Nc, Nc, Nz))
         else
@@ -658,5 +668,7 @@ function _adjoint_scheme_sweep!(lambda_panels, m_before, rm_before, flux_panels,
         synchronize(backend)
         copyto!(lambda_panels[p], ws.lambda_A)
     end
+    horizontal && _apply_cs_seam_adjoint!(lambda_panels, m_before, rm_before,
+        flux_panels, ws.seam_seeds, mesh, scheme, axis, flux_scale)
     return nothing
 end

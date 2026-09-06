@@ -144,8 +144,18 @@ Float32 and from 3.801e-5 to 7.931e-16 in Float64. The forward tape and adjoint
 include the same coupling. The full 118-file core collection plus regridding
 passes after repairing a README file-map entry and resuming the remaining
 files; 660 final focused CS checks and the strict docs build also pass.
-Split PPM still needs a separate treatment of rotated contacts evaluated at
-different directional stages.
+The subsequent [split-scheme correction](2026-09-05_main_split_mass_seams.md)
+pairs each physical contact within one directional group, including rotated
+X/Y contacts, and updates the tracer adjoint and tape. Six-tracer full-day
+PPM drift falls from 2.239e-5 to 8.169e-7 in Float32 (27-fold) and from
+2.281e-5 to 9.914e-16 in Float64. No total normalization is applied. Independent
+solid-body rotation field errors are slightly lower across C8/C16/C32 and both
+panel conventions. The complete 119-file CPU core collection plus regridding,
+260 additional focused reference/adjoint/cache checks, and 2,576 V100 checks
+through 65 tracers pass. The original 32-tracer full-day benchmark takes
+34.574 s versus 32.598 s (about 6.1% higher), while maximum final drift falls
+31-fold to 8.204e-7. Conservation does not resolve the observed negative
+undershoots or establish second-order time accuracy.
 
 ## Remaining work
 
@@ -155,8 +165,9 @@ different directional stages.
 - Profile multi-day input movement and peak host/device memory on representative
   archives before changing host-window ownership or staging. Current timing
   evidence covers warm-cache runs of at most one day.
-- Correct the separate split-PPM seam defect with consistent forward and
-  adjoint exchange, then measure residual Float32 error. The Lin–Rood fix
-  establishes that the earlier full-day drift was not merely roundoff.
+- Measure the residual Float32 precision budget after the two seam fixes,
+  including implicit diffusion. Keep conservation, positivity, and transported
+  field accuracy as separate validation criteria. Improve temporal accuracy
+  at seams against independent reference fields before claiming second order.
 - Retain the six-tracer matrix batch until an alternative improves measured
   whole-run performance. Other GPU architectures need their own measurements.

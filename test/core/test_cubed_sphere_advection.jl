@@ -158,7 +158,7 @@ function run_mirrored_seam_advection_conservation(scheme; FT=Float64, Nc=8, Nz=2
         return (total_air_mass(state) - m0) / m0, (total_mass(state, :tracer) - rm0) / rm0
     end
 
-    ws = CSAdvectionWorkspace(mesh, Nz)
+    ws = CSAdvectionWorkspace(mesh, Nz; FT)
     m0 = total_interior(panels_m, Nc, Hp, Nz)
     rm0 = total_interior(panels_rm, Nc, Hp, Nz)
     for _ in 1:steps
@@ -406,11 +406,8 @@ end
             rm_ref = deepcopy(rm_in)
             m_ref = deepcopy(m_in)
             ws_ref = CSAdvectionWorkspace(mesh, Nz; n_tracers = Nt)
-            for p in 1:6
-                _sweep_x_panel_mt!(rm_ref[p], m_ref[p], panels_am[p],
-                                   scheme, ws_ref.rm_4d_A, ws_ref.m_A,
-                                   Nc, Hp, Nz, Nt; flux_scale = 0.75)
-            end
+            AtmosTransport.Operators.Advection._sweep_cs_horizontal!(
+                rm_ref, m_ref, panels_am, mesh, scheme, ws_ref, Val(1); flux_scale=0.75)
             fill_panel_halos!(rm_ref, mesh; dir = 1)
             fill_panel_halos!(m_ref, mesh; dir = 1)
 
@@ -426,11 +423,8 @@ end
 
             rm_ref = deepcopy(rm_in)
             m_ref = deepcopy(m_in)
-            for p in 1:6
-                _sweep_y_panel_mt!(rm_ref[p], m_ref[p], panels_bm[p],
-                                   scheme, ws_ref.rm_4d_A, ws_ref.m_A,
-                                   Nc, Hp, Nz, Nt; flux_scale = 0.75)
-            end
+            AtmosTransport.Operators.Advection._sweep_cs_horizontal!(
+                rm_ref, m_ref, panels_bm, mesh, scheme, ws_ref, Val(2); flux_scale=0.75)
             fill_panel_halos!(rm_ref, mesh; dir = 2)
             fill_panel_halos!(m_ref, mesh; dir = 2)
 
@@ -806,16 +800,19 @@ end
     end
 end
 
-@testset "Lin-Rood conserves across seams at appreciable Courant number" begin
-    # The old seam test used ~0.001 Courant numbers and a 1e-9 budget, which
-    # hid a truncation error: independently predicted boundary tracer fluxes
-    # did not cancel. At ~0.1 Courant number the old F64 error was ~7e-6.
+@testset "CS schemes conserve across seams at appreciable Courant number" begin
+    # The old seam fixture used ~0.001 Courant numbers and loose tolerances,
+    # hiding a truncation error from independently evaluated boundary fluxes.
     for convention in (AtmosTransport.Grids.GnomonicPanelConvention(),
-                       AtmosTransport.Grids.GEOSNativePanelConvention()), ord in (5, 7)
+                       AtmosTransport.Grids.GEOSNativePanelConvention()),
+            FT in (Float32, Float64), scheme in
+            (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(),
+             LinRoodPPMScheme(5), LinRoodPPMScheme(7))
         air_rel, tracer_rel = run_mirrored_seam_advection_conservation(
-            LinRoodPPMScheme(ord); flux_gain=100, convention)
-        @test abs(air_rel) < 2e-14
-        @test abs(tracer_rel) < 2e-14
+            scheme; FT, flux_gain=100, convention)
+        tolerance = FT == Float32 ? 3e-7 : 2e-14
+        @test abs(air_rel) < tolerance
+        @test abs(tracer_rel) < tolerance
     end
 end
 

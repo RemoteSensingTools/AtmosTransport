@@ -10,16 +10,18 @@
 #   1. Halo exchange after each horizontal sweep (fill_panel_halos!)
 #   2. Kernel launch on interior indices with Hp offset
 #   3. Per-panel loop over 6 panels
+#   4. Paired physical-seam transfers within each horizontal group
 #
 # The panel arrays have layout (Nc+2Hp, Nc+2Hp, Nz) with interior at
 # [Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]. The reconstruction stencil reads into
 # the halo region naturally.
 #
-# Conservation caveat: halo values alone do not enforce one shared tracer
-# flux at panel seams. Rotated contacts can be evaluated at different X/Y
-# stages, causing a truncation-level tracer imbalance even in Float64.
-# Vertical sweeps are panel-local and closed. LinRoodSeams.jl corrects the
-# separate unsplit Lin-Rood path; the split path below still needs coupling.
+# Each global X/Y group includes its panel-interior faces plus physical seams
+# owned by the lower-numbered panel's corresponding local axis. CubedSphereSeams
+# caches those transfers before any panel update and applies them with opposite
+# signs to both neighbors, including rotated X/Y contacts. Each group therefore
+# conserves air and tracer mass for mirrored input fluxes. Vertical sweeps are
+# panel-local and closed. Temporal accuracy at seams needs separate validation.
 #
 # References:
 #   Strang (1968) — symmetric splitting for second-order accuracy
@@ -440,15 +442,21 @@ function _sweep_x_panels_mt_pingpong!(panels_rm_4d_out::NTuple{6},
                                       panels_am::NTuple{6},
                                       mesh::CubedSphereMesh,
                                       scheme::AbstractAdvectionScheme;
-                                      flux_scale = one(eltype(panels_m[1])))
+                                      flux_scale = one(eltype(panels_m[1])),
+                                      seam_flux = nothing)
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(panels_m[1], 3)
     Nt = size(panels_rm_4d[1], 4)
+    cache = seam_flux === nothing ?
+        similar(panels_rm_4d[1], eltype(panels_m[1]), Nc, Nz, Nt + 1, 12) : seam_flux
+    _cache_cs_seams!(cache, panels_rm_4d, panels_m, panels_am, mesh,
+                     scheme, Val(1), flux_scale)
     for p in 1:6
         _sweep_x_panel_mt_pingpong!(panels_rm_4d_out[p], panels_m_out[p],
-                                   panels_rm_4d[p], panels_m[p], panels_am[p],
+                                   panels_rm_4d[p], panels_m[p], _CSInteriorFlux(panels_am[p], mesh, Val(1)),
                                    scheme, Nc, Hp, Nz, Nt; flux_scale)
     end
+    _apply_cs_seams!(panels_rm_4d_out, panels_m_out, cache, mesh, Val(1))
     return panels_rm_4d_out, panels_m_out
 end
 
@@ -617,15 +625,21 @@ function _sweep_y_panels_mt_pingpong!(panels_rm_4d_out::NTuple{6},
                                       panels_bm::NTuple{6},
                                       mesh::CubedSphereMesh,
                                       scheme::AbstractAdvectionScheme;
-                                      flux_scale = one(eltype(panels_m[1])))
+                                      flux_scale = one(eltype(panels_m[1])),
+                                      seam_flux = nothing)
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(panels_m[1], 3)
     Nt = size(panels_rm_4d[1], 4)
+    cache = seam_flux === nothing ?
+        similar(panels_rm_4d[1], eltype(panels_m[1]), Nc, Nz, Nt + 1, 12) : seam_flux
+    _cache_cs_seams!(cache, panels_rm_4d, panels_m, panels_bm, mesh,
+                     scheme, Val(2), flux_scale)
     for p in 1:6
         _sweep_y_panel_mt_pingpong!(panels_rm_4d_out[p], panels_m_out[p],
-                                   panels_rm_4d[p], panels_m[p], panels_bm[p],
+                                   panels_rm_4d[p], panels_m[p], _CSInteriorFlux(panels_bm[p], mesh, Val(2)),
                                    scheme, Nc, Hp, Nz, Nt; flux_scale)
     end
+    _apply_cs_seams!(panels_rm_4d_out, panels_m_out, cache, mesh, Val(2))
     return panels_rm_4d_out, panels_m_out
 end
 
@@ -893,6 +907,9 @@ Pre-allocated cubed-sphere transport workspace.
   as structured grids.
 - `m_pp_buf`, `rm_4d_pp_buf` are full-panel spare buffers for the packed
   ping-pong path, avoiding the per-sweep copy-back kernels.
+- `seam_flux` holds one air and N-tracer transfer per physical panel edge;
+  its storage scales with edge length, not panel area. Lin–Rood workspaces
+  disable this split-sweep cache (`seam_transport=false`).
 - `max_subcycles` tracks this workspace's high-water mark for CFL diagnostics;
   keeping it with the workspace prevents unrelated simulations sharing state.
 """
@@ -905,13 +922,15 @@ struct CSAdvectionWorkspace{FT, A <: AbstractArray{FT, 3},
     rm_4d_A    :: A4
     m_pp_buf   :: P3
     rm_4d_pp_buf :: P4
+    seam_flux  :: A4
     max_subcycles :: Base.RefValue{NTuple{3, Int}}
 end
 
 function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
                               FT::Type{<:AbstractFloat} = Float64,
                               array_type::Type{<:AbstractArray} = Array,
-                              n_tracers::Integer = 0)
+                              n_tracers::Integer = 0,
+                              seam_transport::Bool = true)
     N = mesh.Nc + 2 * mesh.Hp
     Nt = Int(n_tracers)
     Nt >= 0 || throw(ArgumentError("CSAdvectionWorkspace: n_tracers must be non-negative, got $n_tracers"))
@@ -922,16 +941,18 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
                          ntuple(_ -> m_A, 6)
     rm_4d_pp_buf = Nt > 0 ? ntuple(_ -> array_type(zeros(FT, N, N, Nz, Nt)), 6) :
                             ntuple(_ -> rm_4d_A, 6)
+    seam_flux = similar(rm_4d_A, FT, mesh.Nc, Nz, max(Nt, 1) + 1, seam_transport ? 12 : 0)
     return CSAdvectionWorkspace{FT, typeof(rm_A),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf)}(
-        rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf,
+        rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf, seam_flux,
         Ref((1, 1, 1)))
 end
 
 function CSAdvectionWorkspace(mesh::CubedSphereMesh,
                               prototype::AbstractArray{FT, 3};
-                              n_tracers::Integer = 0) where {FT <: AbstractFloat}
+                              n_tracers::Integer = 0,
+                              seam_transport::Bool = true) where {FT <: AbstractFloat}
     N = mesh.Nc + 2 * mesh.Hp
     Nz = size(prototype, 3)
     Nt = Int(n_tracers)
@@ -943,10 +964,11 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh,
                          ntuple(_ -> m_A, 6)
     rm_4d_pp_buf = Nt > 0 ? ntuple(_ -> similar(prototype, FT, N, N, Nz, Nt), 6) :
                             ntuple(_ -> rm_4d_A, 6)
+    seam_flux = similar(rm_4d_A, FT, mesh.Nc, Nz, max(Nt, 1) + 1, seam_transport ? 12 : 0)
     return CSAdvectionWorkspace{FT, typeof(rm_A),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf)}(
-        rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf,
+        rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf, seam_flux,
         Ref((1, 1, 1)))
 end
 
@@ -956,10 +978,11 @@ function Adapt.adapt_structure(to, ws::CSAdvectionWorkspace{FT}) where FT
     rm_4d_A = Adapt.adapt(to, ws.rm_4d_A)
     m_pp_buf = Adapt.adapt(to, ws.m_pp_buf)
     rm_4d_pp_buf = Adapt.adapt(to, ws.rm_4d_pp_buf)
+    seam_flux = Adapt.adapt(to, ws.seam_flux)
     return CSAdvectionWorkspace{FT, typeof(rm_A),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf)}(
-        rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf,
+        rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf, seam_flux,
         Ref(ws.max_subcycles[]))
 end
 
@@ -1130,18 +1153,17 @@ with automatic CFL-based subcycling per direction.
     → fill_panel_halos!(dir=1)
     → X sweep (n_x subcycles)
 
-This palindromic sequence (X-Y-Z-Z-Y-X) gives second-order temporal accuracy
-via Strang (1968) symmetry. The halo exchanges must happen BETWEEN successive
-horizontal sweeps because the panel-edge reconstruction stencil reads from
-adjacent panels.
+This sequence follows Strang's X-Y-Z-Z-Y-X ordering. Second-order splitting
+requires sufficiently accurate subflows; the palindrome alone does not prove
+the transport's temporal order. Horizontal groups pair physical seam transfers
+before halo exchange supplies neighboring values for the next reconstruction.
 
 ## Subcycling
 
-Each direction `D ∈ {X, Y, Z}` has its own subcycle count `n_D` determined
-by an evolving-mass CFL pilot: the pilot applies `n_D` passes of
-`flux_scale/n_D`, checking that no cell mass goes negative or that
-`|outgoing_flux| < cfl_limit × cell_mass` at each pass. If the pilot fails,
-`n_D` is incremented until it passes (or hits `max_n_sub` and errors).
+All six legs use one count from the initial-mass palindrome budget
+`2 * (out_x + out_y + out_z) / m_start`, with flux divided by that count.
+A supplied `subcycle_count` uses the binary's schedule; setting
+`ATMOSTR_ASSERT_CS_BINARY_CFL=1` checks it against the runtime budget.
 
 ## Panel array layout
 
@@ -1159,7 +1181,7 @@ kernels only update interior cells; halo regions are filled by
   `cm[Nc+2Hp, Nc+2Hp, Nz+1]`. Read-only.
 - `mesh`: `CubedSphereMesh` with Nc, Hp, and panel connectivity.
 - `scheme`: advection scheme — `UpwindScheme()` uses gamma-clamped upwind
-  (positivity-safe). `SlopesScheme()` and `PPMScheme()` use the generic
+  for tracer face transfers. `SlopesScheme()` and `PPMScheme()` use the generic
   KA kernels with `_xface_tracer_flux` dispatch. Higher-order schemes
   require `mesh.Hp ≥ 2` (Slopes) or `mesh.Hp ≥ 3` (PPM).
 - `workspace`: pre-allocated `CSAdvectionWorkspace` buffers.
@@ -1186,10 +1208,8 @@ function strang_split_cs!(panels_rm::NTuple{6},
     cfl_ft = convert(FT, cfl_limit)
 
     n_pal = if subcycle_count === nothing
-        # Static CFL subcycle count. Gamma clamping in the sweep kernels handles
-        # per-cell CFL > 1 correctly (tracer flux saturates at donor mass, mass
-        # update is exact). Subcycling reduces the average CFL but isn't required
-        # for stability — it's for accuracy (second-order advection needs CFL < 1).
+        # Budget all six legs against initial carrier mass. Face-local tracer
+        # clamping does not replace a safe total-outflow budget.
         SectionTimer.@section :cs_cfl_x _cs_static_palindrome_subcycle_count(
             panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
             flux_scale = fs)
@@ -1220,20 +1240,16 @@ function strang_split_cs!(panels_rm::NTuple{6},
 
     # ---- X sweep (subcycled) ----
     SectionTimer.@section :cs_sweep_x for _ in 1:n_x
-        for p in 1:6
-            _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
-                             scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_x)
-        end
+        _sweep_cs_horizontal!(panels_rm, panels_m, panels_am, mesh,
+                              scheme, workspace, Val(1); flux_scale=fs_x)
         SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
         SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
     end
 
     # ---- Y sweep (subcycled) ----
     SectionTimer.@section :cs_sweep_y for _ in 1:n_y
-        for p in 1:6
-            _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
-                             scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_y)
-        end
+        _sweep_cs_horizontal!(panels_rm, panels_m, panels_bm, mesh,
+                              scheme, workspace, Val(2); flux_scale=fs_y)
         SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm, mesh; dir=2)
         SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,  mesh; dir=2)
     end
@@ -1259,10 +1275,8 @@ function strang_split_cs!(panels_rm::NTuple{6},
     SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm, mesh; dir=2)
     SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,  mesh; dir=2)
     SectionTimer.@section :cs_sweep_y for _ in 1:n_y
-        for p in 1:6
-            _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
-                             scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_y)
-        end
+        _sweep_cs_horizontal!(panels_rm, panels_m, panels_bm, mesh,
+                              scheme, workspace, Val(2); flux_scale=fs_y)
         SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm, mesh; dir=2)
         SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,  mesh; dir=2)
     end
@@ -1271,10 +1285,8 @@ function strang_split_cs!(panels_rm::NTuple{6},
     SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
     SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
     SectionTimer.@section :cs_sweep_x for _ in 1:n_x
-        for p in 1:6
-            _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
-                             scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_x)
-        end
+        _sweep_cs_horizontal!(panels_rm, panels_m, panels_am, mesh,
+                              scheme, workspace, Val(1); flux_scale=fs_x)
         SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
         SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
     end
@@ -1355,19 +1367,15 @@ function _strang_split_cs_mt_copyback!(panels_rm_4d::NTuple{6},
     fs_z = fs / FT(n_z)
 
     SectionTimer.@section :cs_sweep_x for _ in 1:n_x
-        for p in 1:6
-            _sweep_x_panel_mt!(panels_rm_4d[p], panels_m[p], panels_am[p],
-                               scheme, rm_4d_A, m_A, Nc, Hp, Nz, Nt; flux_scale = fs_x)
-        end
+        _sweep_cs_horizontal!(panels_rm_4d, panels_m, panels_am, mesh,
+                              scheme, workspace, Val(1); flux_scale=fs_x)
         SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm_4d, mesh; dir = 1)
         SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,     mesh; dir = 1)
     end
 
     SectionTimer.@section :cs_sweep_y for _ in 1:n_y
-        for p in 1:6
-            _sweep_y_panel_mt!(panels_rm_4d[p], panels_m[p], panels_bm[p],
-                               scheme, rm_4d_A, m_A, Nc, Hp, Nz, Nt; flux_scale = fs_y)
-        end
+        _sweep_cs_horizontal!(panels_rm_4d, panels_m, panels_bm, mesh,
+                              scheme, workspace, Val(2); flux_scale=fs_y)
         SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm_4d, mesh; dir = 2)
         SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,     mesh; dir = 2)
     end
@@ -1391,10 +1399,8 @@ function _strang_split_cs_mt_copyback!(panels_rm_4d::NTuple{6},
     SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm_4d, mesh; dir = 2)
     SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,     mesh; dir = 2)
     SectionTimer.@section :cs_sweep_y for _ in 1:n_y
-        for p in 1:6
-            _sweep_y_panel_mt!(panels_rm_4d[p], panels_m[p], panels_bm[p],
-                               scheme, rm_4d_A, m_A, Nc, Hp, Nz, Nt; flux_scale = fs_y)
-        end
+        _sweep_cs_horizontal!(panels_rm_4d, panels_m, panels_bm, mesh,
+                              scheme, workspace, Val(2); flux_scale=fs_y)
         SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm_4d, mesh; dir = 2)
         SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,     mesh; dir = 2)
     end
@@ -1402,10 +1408,8 @@ function _strang_split_cs_mt_copyback!(panels_rm_4d::NTuple{6},
     SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm_4d, mesh; dir = 1)
     SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,     mesh; dir = 1)
     SectionTimer.@section :cs_sweep_x for _ in 1:n_x
-        for p in 1:6
-            _sweep_x_panel_mt!(panels_rm_4d[p], panels_m[p], panels_am[p],
-                               scheme, rm_4d_A, m_A, Nc, Hp, Nz, Nt; flux_scale = fs_x)
-        end
+        _sweep_cs_horizontal!(panels_rm_4d, panels_m, panels_am, mesh,
+                              scheme, workspace, Val(1); flux_scale=fs_x)
         SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm_4d, mesh; dir = 1)
         SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,     mesh; dir = 1)
     end
@@ -1498,7 +1502,8 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
 
     SectionTimer.@section :cs_sweep_x for _ in 1:n_x
         _sweep_x_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
-                                     panels_am, mesh, scheme; flux_scale = fs_x)
+                                     panels_am, mesh, scheme; flux_scale = fs_x,
+                                     seam_flux = workspace.seam_flux)
         SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1)
         SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1)
         active_rm, spare_rm = spare_rm, active_rm
@@ -1507,7 +1512,8 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
 
     SectionTimer.@section :cs_sweep_y for _ in 1:n_y
         _sweep_y_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
-                                     panels_bm, mesh, scheme; flux_scale = fs_y)
+                                     panels_bm, mesh, scheme; flux_scale = fs_y,
+                                     seam_flux = workspace.seam_flux)
         SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2)
         SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2)
         active_rm, spare_rm = spare_rm, active_rm
@@ -1544,7 +1550,8 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
     SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(active_m,  mesh; dir = 2)
     SectionTimer.@section :cs_sweep_y for _ in 1:n_y
         _sweep_y_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
-                                     panels_bm, mesh, scheme; flux_scale = fs_y)
+                                     panels_bm, mesh, scheme; flux_scale = fs_y,
+                                     seam_flux = workspace.seam_flux)
         SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2)
         SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2)
         active_rm, spare_rm = spare_rm, active_rm
@@ -1555,7 +1562,8 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
     SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(active_m,  mesh; dir = 1)
     SectionTimer.@section :cs_sweep_x for _ in 1:n_x
         _sweep_x_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
-                                     panels_am, mesh, scheme; flux_scale = fs_x)
+                                     panels_am, mesh, scheme; flux_scale = fs_x,
+                                     seam_flux = workspace.seam_flux)
         SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1)
         SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1)
         active_rm, spare_rm = spare_rm, active_rm

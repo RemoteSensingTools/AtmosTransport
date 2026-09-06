@@ -267,7 +267,9 @@ tests. The effective vertical matrix depth must still fit the supported
 1–85-level envelope. Float64 CUDA uses the same batched solver for unmerged
 (`n_merge=1`) depths 1–73, with Float64 shared arrays and arithmetic. CPU and
 unsupported Float64 configurations keep the legacy solver with a warning;
-there is no automatic truncation or precision conversion. CS adjoint footprints
+that fallback uses the full column without aggregation, so requested
+`lmax_conv`/`n_merge` approximations do not apply there. There is no automatic
+truncation or precision conversion. CS adjoint footprints
 continue to require `use_collab_lu=false`, `lmax_conv=0`, and `n_merge=1`.
 An eligible Float64 request now engages the collaborative solver instead of
 falling back; a positive `lmax_conv` therefore selects that lower-atmosphere

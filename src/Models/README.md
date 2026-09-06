@@ -100,6 +100,22 @@ read.
 
 ## Common Tasks
 
+To follow a TOML physics option from input to execution:
+
+| Stage | Read here | Responsibility |
+|---|---|---|
+| Parse the option | [`RuntimePhysicsSpecs.jl`](RuntimePhysicsSpecs.jl) | Convert section values into a typed specification; validate values and combinations. |
+| Build an operator | `materialize` methods in the same file | Apply topology gates and construct the scheme; diffusion also needs driver context and tracer precision. |
+| Check the forcing | [`RuntimePhysicsRecipe.jl`](RuntimePhysicsRecipe.jl) | Assemble operators and check required binary capabilities. |
+| Allocate state and workspaces | [`runner/model_setup.jl`](runner/model_setup.jl) | Initialize tracer storage and build workspaces on its backend. |
+| Advance the model | [`TransportModel.jl`](TransportModel.jl), [`DrivenSimulation.jl`](DrivenSimulation.jl) | Execute operator blocks and refresh forcing across meteorological windows. |
+
+Matrix-convection solver eligibility is checked when the state backend,
+precision, and vertical depth are known. Parsing `use_collab_lu=true` is a
+request, not proof that a particular GPU kernel will run; see
+[`../Operators/Convection/TM5Convection.jl`](../Operators/Convection/TM5Convection.jl)
+for the support gates and fallback diagnostics.
+
 - Changing operator block order:
   start in [`TransportModel.jl`](TransportModel.jl) and the runtime
   walkthrough in [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)

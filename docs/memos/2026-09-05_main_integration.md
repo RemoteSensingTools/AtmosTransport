@@ -229,6 +229,11 @@ The archived memory traces and separate RSS/device counters cover both runs.
 
 ## Remaining work
 
+- Longer controlled standard PPM / LR5 / LR7 comparisons are deferred to the
+  **A100**, per the September 6 user instruction. Current work continues on
+  source and documentation readability. Preserve the distinction between the
+  standard PPM month and the earlier LR7 day; the maintained
+  [coverage table](../src/theory/validation_status.md) links their evidence.
 - Isolate the measured prefetch waits, host loads, and backend copies under
   controlled cache conditions before changing host-window ownership or staging.
   Extend the measurements to other representative forcing archives.

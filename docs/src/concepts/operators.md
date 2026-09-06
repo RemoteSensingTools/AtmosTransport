@@ -81,12 +81,16 @@ specialized kernels via Julia's multiple dispatch on the grid type.
 `AbstractAdvectionScheme` is the root; the concrete schemes live in
 `src/Operators/Advection/schemes.jl`:
 
-| Subtype | Order | Notes |
+| Subtype | Smooth-region reconstruction | Notes |
 | --- | --- | --- |
-| `UpwindScheme` | 1 | Donor-cell; cheap, very diffusive. |
-| `SlopesScheme{L}` | 2 | Russell-Lerner slopes (TM5 `sl_advection` port). Limiter parameter `L`. |
-| `PPMScheme{L}` | 3 in smooth regions | Putman-Lin Piecewise Parabolic. Limiter parameter `L`. Supported on LL and CS split-sweep; RG supports upwind only. |
-| `LinRoodPPMScheme` | 5 or 7 | FV3 Lin-Rood PPM with cross-term advection (CS only); ORD=7 adds a panel-boundary correction. Selectable `ppm_order ∈ {5, 7}`. |
+| `UpwindScheme` | First order | Donor-cell; cheap, very diffusive. |
+| `SlopesScheme{L}` | Second order | Russell-Lerner slopes (TM5 `sl_advection` port). Limiter parameter `L`. |
+| `PPMScheme{L}` | Third order | Putman-Lin Piecewise Parabolic. Limiter parameter `L`. Supported on LL and CS split-sweep, including vertical PPM; RG supports upwind only. |
+| `LinRoodPPMScheme` | Piecewise parabolic | FV3 horizontal cross terms (CS only), paired with vertical upwind. `ppm_order=5` or `7` selects the edge-value family; both share the same interior reconstruction. |
+
+Reconstruction order does not establish the temporal order or positivity of
+the complete transport update. See [Advection schemes](@ref) for the boundary
+treatment and [Validation status](@ref) for measured scheme coverage.
 
 Limiter parameter `L` ranges over `NoLimiter`, `MonotoneLimiter`,
 `PositivityLimiter` — declared in the same file. `PPMScheme()` defaults
@@ -99,7 +103,7 @@ equivariant; only `PositivityLimiter` uses tracer zero as a bound.
 [advection]
 scheme = "slopes"     # "upwind" | "slopes" | "ppm" | "linrood"
 
-# Cubed-sphere only: pick the LinRoodPPM order (5 or 7).
+# Cubed-sphere only: pick the Lin–Rood edge-value family (5 or 7).
 # Only valid with scheme = "linrood"; setting ppm_order with
 # scheme = "ppm" errors at config-parse time.
 # scheme    = "linrood"

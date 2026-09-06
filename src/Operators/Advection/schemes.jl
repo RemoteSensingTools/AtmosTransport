@@ -276,9 +276,14 @@ Reconstructs a parabolic subcell profile constrained by the cell mean
 and limited edge values.  Third-order accurate in smooth regions with
 appropriate limiting.
 
-**Status**: structured-grid face-flux kernels are implemented and covered by
-kernel tests. `PPMScheme` is not yet part of the official real-data
-reference path, and face-connected support is still unimplemented.
+Implemented for structured latitude-longitude and cubed-sphere grids, including
+vertical PPM sweeps. The TOML runner selects the default monotone variant with
+`scheme = "ppm"`; it does not accept `ppm_order` for this scheme. Reduced-Gaussian
+face-indexed transport does not support PPM.
+
+Kernel tests and real-input V100 conservation/performance experiments cover
+this path. These do not establish full-model TM5/GCHP parity or positivity of
+the complete cubed-sphere update: small negative column means have been observed.
 
 # Fields
 - `limiter::L` — parabolic profile limiting policy (default: `MonotoneLimiter()`)
@@ -298,7 +303,7 @@ PPMScheme() = PPMScheme(MonotoneLimiter())
     LinRoodPPMScheme{ORD} <: AbstractAdvectionScheme
 
 Cubed-sphere Lin-Rood / FV3-style cross-term PPM advection with compile-time
-PPM order `ORD`.
+edge-value family `ORD` (not a global spatial or temporal accuracy order).
 
 This is distinct from [`PPMScheme`](@ref): `PPMScheme` participates in the
 standard Strang split implemented by `strang_split_cs!`, while

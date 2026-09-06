@@ -1,6 +1,7 @@
 # Advection
 
-Tracer advection via finite-volume Strang splitting.
+Finite-volume tracer advection with directional splitting or cubed-sphere
+Lin–Rood horizontal cross terms.
 
 This folder owns the transport core: reconstruction, limiter logic,
 structured and face-indexed sweeps, cubed-sphere panel transport, and
@@ -11,13 +12,16 @@ the model-facing `apply!` entrypoints that the transport block calls.
 - Scheme hierarchy:
   [`schemes.jl`](schemes.jl)
   defines `AbstractAdvectionScheme`, `UpwindScheme`, `SlopesScheme`,
-  and `PPMScheme`
+  `PPMScheme`, and `LinRoodPPMScheme`
 - Structured and face-indexed runtime orchestrators:
   [`StrangSplitting.jl`](StrangSplitting.jl)
   provides `strang_split!`, `strang_split_mt!`, and `apply!`
 - Cubed-sphere runtime orchestrator:
   [`CubedSphereStrang.jl`](CubedSphereStrang.jl)
   provides `strang_split_cs!` and `CSAdvectionWorkspace`
+- Lin–Rood horizontal transport:
+  [`LinRood.jl`](LinRood.jl) provides `fv_tp_2d_cs!` and
+  `CSLinRoodAdvectionWorkspace`; the runtime pairs it with vertical upwind
 - Cubed-sphere halo support:
   [`HaloExchange.jl`](HaloExchange.jl)
   provides `fill_panel_halos!` and `copy_corners!`
@@ -25,6 +29,13 @@ the model-facing `apply!` entrypoints that the transport block calls.
   `diagnose_cm_from_continuity!`.
 
 ## Runtime Shape
+
+`scheme="ppm"` selects standard split PPM with its default monotone limiter.
+`scheme="linrood"` selects the CS cross-term path; `ppm_order=5` (default) or
+`7` chooses its edge-value family. ORD=7 retains the order-5 interior and adds
+special panel-edge treatment. It does not select a seventh-order transport
+method. Configuration parsing lives in
+[`../../Models/RuntimePhysicsSpecs.jl`](../../Models/RuntimePhysicsSpecs.jl).
 
 - LatLon and reduced-Gaussian transport run through
   [`StrangSplitting.jl`](StrangSplitting.jl)

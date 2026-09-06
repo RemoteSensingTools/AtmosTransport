@@ -113,6 +113,36 @@ Outstanding work includes drift/memory measurements on other forcing archives, t
 field positivity and seam time accuracy, and adjoint tape profiling. Hardware
 outside the measured V100 needs its own validation.
 
+The user deferred longer advection comparisons to the **A100** on September 6.
+Do not launch that campaign as part of the current readability work. Compare
+standard monotone PPM, LR5, and LR7 under controlled forcing and runtime
+settings, measuring fields and bounds as well as totals, time, and memory.
+The current 31-day numbers cover standard PPM only; LR7 has an earlier full-day
+seam comparison, and LR5/unlimited PPM have focused kernel/adjoint coverage.
+The maintained [validation page](../src/theory/validation_status.md) records
+the scope and links the experiment artifacts.
+
+The accompanying readability pass aligns the operator overview, advection
+theory, and public scheme docstrings with the runtime selectors and vertical
+sweeps. It removes unsupported full-update positivity claims and corrects the
+manual's minmod slope formula to match `limiters.jl`. Configuration source
+comments now describe parsing, materialization, and runtime eligibility
+separately, without carrying old hardware speed claims as general advice.
+The convection configuration error no longer claims that the collaborative
+solver requires Float32. The manual explains that legacy fallback uses the
+full column without aggregation, and the Models README maps each configuration
+stage to its source file.
+
+Critical Codex self-review checked the scheme dispatch, limiter formula,
+precision/depth gates, and benchmark configurations against their sources.
+Two executable-syntax comparisons confirm unchanged implementation after
+excluding docstrings and the exact reviewed diagnostic replacement. The 120
+runtime-builder and 191 documentation checks pass, along with the strict manual
+build (doctests, exported docstrings, cross-references, and VitePress rendering).
+Benchmark links use the recorded Git commit so they resolve from the published
+manual as well as the repository. No GPU run is needed for these prose and
+diagnostic changes.
+
 The public `has_surface` and `has_vdiff_fields` queries now share one generic
 between binary readers and preprocessing settings. Previously the top-level
 exports could not dispatch on settings and produced competing-export warnings

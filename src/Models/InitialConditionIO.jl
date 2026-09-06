@@ -498,7 +498,10 @@ Passing an `AtmosGrid` additionally enables file-backed modes (`file`,
 mapping and log-pressure vertical interpolation. Cubed-sphere construction
 requires an `AtmosGrid` and also supports `pressure_layer` and `cs_native`.
 File-backed and pressure-layer construction require the transport window's
-`surface_pressure` where indicated by the selected mode.
+`surface_pressure` where indicated by the selected mode. Each public call owns
+fresh output arrays. The driven cubed-sphere runner separately reuses private
+interior buffers between analytic initializers before copying each tracer into
+its independent packed state slot.
 
 Returns an array shaped like `air_mass` for lat-lon and reduced-Gaussian grids,
 or an `NTuple{6}` of interior `(Nc, Nc, Nz)` arrays for cubed-sphere grids.

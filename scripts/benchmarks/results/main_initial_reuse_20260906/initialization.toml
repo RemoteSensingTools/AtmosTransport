@@ -1,0 +1,120 @@
+[[measurements]]
+tracers = 6
+method = "allocating"
+bytes = 166919696
+sample = 1
+seconds = 0.084872091
+[[measurements]]
+tracers = 6
+method = "reusing"
+bytes = 102762560
+sample = 1
+seconds = 0.079383499
+[[measurements]]
+tracers = 6
+method = "reusing"
+bytes = 102762560
+sample = 2
+seconds = 0.068756938
+[[measurements]]
+tracers = 6
+method = "allocating"
+bytes = 166917840
+sample = 2
+seconds = 0.084186632
+[[measurements]]
+tracers = 6
+method = "allocating"
+bytes = 166917840
+sample = 3
+seconds = 0.081071597
+[[measurements]]
+tracers = 6
+method = "reusing"
+bytes = 102762560
+sample = 3
+seconds = 0.066352542
+[[measurements]]
+tracers = 6
+method = "reusing"
+bytes = 102762560
+sample = 4
+seconds = 0.067993499
+[[measurements]]
+tracers = 6
+method = "allocating"
+bytes = 166917840
+sample = 4
+seconds = 0.078343263
+[[measurements]]
+tracers = 6
+method = "allocating"
+bytes = 166917840
+sample = 5
+seconds = 0.080920211
+[[measurements]]
+tracers = 6
+method = "reusing"
+bytes = 102762560
+sample = 5
+seconds = 0.066957306
+[[measurements]]
+tracers = 32
+method = "allocating"
+bytes = 890246504
+sample = 1
+seconds = 0.462401545
+[[measurements]]
+tracers = 32
+method = "reusing"
+bytes = 492483704
+sample = 1
+seconds = 0.377796548
+[[measurements]]
+tracers = 32
+method = "reusing"
+bytes = 492483704
+sample = 2
+seconds = 0.381057323
+[[measurements]]
+tracers = 32
+method = "allocating"
+bytes = 890246216
+sample = 2
+seconds = 0.452566115
+[[measurements]]
+tracers = 32
+method = "allocating"
+bytes = 890246216
+sample = 3
+seconds = 0.421359253
+[[measurements]]
+tracers = 32
+method = "reusing"
+bytes = 492483704
+sample = 3
+seconds = 0.38663119
+[[measurements]]
+tracers = 32
+method = "reusing"
+bytes = 492483704
+sample = 4
+seconds = 0.376239171
+[[measurements]]
+tracers = 32
+method = "allocating"
+bytes = 890246216
+sample = 4
+seconds = 0.418415386
+[[measurements]]
+tracers = 32
+method = "allocating"
+bytes = 890246216
+sample = 5
+seconds = 0.418684196
+[[measurements]]
+tracers = 32
+method = "reusing"
+bytes = 492483704
+sample = 5
+seconds = 0.379200052

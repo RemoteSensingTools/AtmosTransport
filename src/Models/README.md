@@ -83,7 +83,10 @@ read.
   directly on the device, avoiding temporary CPU workspaces. CS initialization
   converts one tracer at a time directly into its final packed state slot,
   using the shared VMR-to-storage conversion and preserving signed values,
-  zero halos, and the existing tracer order.
+  zero halos, and the existing tracer order. Analytic initializers reuse one
+  private tuple of interior VMR panels across tracers. Native/file builders
+  may replace that tuple; the public allocating builder always returns
+  independent output arrays.
 - [`initial_conditions/`](initial_conditions/) — cubed-sphere initialization,
   surface-inventory loading and storage-unit conversion, and conservative
   surface-flux remapping, included inside `InitialConditionIO`.

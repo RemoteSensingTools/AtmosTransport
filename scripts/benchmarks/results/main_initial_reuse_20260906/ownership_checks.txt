@@ -1,0 +1,9 @@
+Precompiling packages...
+  13785.8 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 15 seconds. 193 already precompiled.
+Test Summary:                                   | Pass  Total   Time
+Cubed-sphere initialization into packed storage |  558    558  22.1s
+Test Summary:                                                          | Pass  Total  Time
+Private CS VMR reuse preserves public ownership and mixed initializers |   54     54  1.3s
+Test Summary:                                                   | Pass  Total  Time
+Native CS file initialization can replace private reuse buffers |   14     14  6.5s

@@ -57,6 +57,14 @@ arrays are constructed directly on the state backend, avoiding a temporary
 host copy. The matrix-convection fallback defers its large global scratch
 allocation until that fallback is used.
 
+During cubed-sphere initialization, the runner fills one tracer's final packed
+slot at a time and reuses one private tuple of interior VMR buffers for analytic
+initial conditions. The public `build_initial_mixing_ratio` still returns fresh
+arrays; file/native initializers may replace the private buffer. On a C90 L66
+32-tracer pressure-layer setup, this reduces cumulative initialization allocation
+from 890.2 to 492.5 MB with the same packed values. These figures include final
+state allocation and do not measure peak RAM.
+
 This design has two practical consequences:
 
 - operator application does not rebuild large scratch arrays every step;

@@ -1,0 +1,9 @@
+[ Info: JET hot-path modules: 152 reports (baseline 152)
+Test Summary:                                   | Pass  Total   Time
+Cubed-sphere initialization into packed storage |  558    558  22.3s
+Test Summary:                                                          | Pass  Total  Time
+Private CS VMR reuse preserves public ownership and mixed initializers |   54     54  1.3s
+Test Summary:        | Pass  Total   Time
+Aqua: package health |   10     10  10.7s
+Test Summary:                    | Pass  Total   Time
+JET: hot-path inference snapshot |    1      1  41.3s

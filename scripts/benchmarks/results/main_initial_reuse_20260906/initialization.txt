@@ -1,0 +1,24 @@
+PROBE air=(96, 96, 66) Float32 mass33=2.829608e12 kg; ps=100869.164 Pa
+Dict{String, Any}("tracers" => 6, "method" => "allocating", "bytes" => 166919696, "sample" => 1, "seconds" => 0.084872091)
+Dict{String, Any}("tracers" => 6, "method" => "reusing", "bytes" => 102762560, "sample" => 1, "seconds" => 0.079383499)
+Dict{String, Any}("tracers" => 6, "method" => "reusing", "bytes" => 102762560, "sample" => 2, "seconds" => 0.068756938)
+Dict{String, Any}("tracers" => 6, "method" => "allocating", "bytes" => 166917840, "sample" => 2, "seconds" => 0.084186632)
+Dict{String, Any}("tracers" => 6, "method" => "allocating", "bytes" => 166917840, "sample" => 3, "seconds" => 0.081071597)
+Dict{String, Any}("tracers" => 6, "method" => "reusing", "bytes" => 102762560, "sample" => 3, "seconds" => 0.066352542)
+Dict{String, Any}("tracers" => 6, "method" => "reusing", "bytes" => 102762560, "sample" => 4, "seconds" => 0.067993499)
+Dict{String, Any}("tracers" => 6, "method" => "allocating", "bytes" => 166917840, "sample" => 4, "seconds" => 0.078343263)
+Dict{String, Any}("tracers" => 6, "method" => "allocating", "bytes" => 166917840, "sample" => 5, "seconds" => 0.080920211)
+Dict{String, Any}("tracers" => 6, "method" => "reusing", "bytes" => 102762560, "sample" => 5, "seconds" => 0.066957306)
+Dict{String, Any}("tracers" => 32, "method" => "allocating", "bytes" => 890246504, "sample" => 1, "seconds" => 0.462401545)
+Dict{String, Any}("tracers" => 32, "method" => "reusing", "bytes" => 492483704, "sample" => 1, "seconds" => 0.377796548)
+Dict{String, Any}("tracers" => 32, "method" => "reusing", "bytes" => 492483704, "sample" => 2, "seconds" => 0.381057323)
+Dict{String, Any}("tracers" => 32, "method" => "allocating", "bytes" => 890246216, "sample" => 2, "seconds" => 0.452566115)
+Dict{String, Any}("tracers" => 32, "method" => "allocating", "bytes" => 890246216, "sample" => 3, "seconds" => 0.421359253)
+Dict{String, Any}("tracers" => 32, "method" => "reusing", "bytes" => 492483704, "sample" => 3, "seconds" => 0.38663119)
+Dict{String, Any}("tracers" => 32, "method" => "reusing", "bytes" => 492483704, "sample" => 4, "seconds" => 0.376239171)
+Dict{String, Any}("tracers" => 32, "method" => "allocating", "bytes" => 890246216, "sample" => 4, "seconds" => 0.418415386)
+Dict{String, Any}("tracers" => 32, "method" => "allocating", "bytes" => 890246216, "sample" => 5, "seconds" => 0.418684196)
+Dict{String, Any}("tracers" => 32, "method" => "reusing", "bytes" => 492483704, "sample" => 5, "seconds" => 0.379200052)
+Precompiling packages...
+  13539.7 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 33 seconds. 192 already precompiled.

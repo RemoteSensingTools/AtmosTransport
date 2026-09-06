@@ -45,6 +45,28 @@ function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                     grid::AtmosGrid{<:CubedSphereMesh},
                                     cfg;
                                     surface_pressure::Union{Nothing, NTuple{6, <:AbstractMatrix}} = nothing) where FT
+    return _build_cs_initial_mixing_ratio(air_mass, grid, cfg, nothing; surface_pressure)
+end
+
+# The allocating public API always owns fresh panels. The runner may reuse its
+# private interior buffers between tracers; file/native builders may replace
+# those buffers with their own newly allocated output.
+function _cs_initial_vmr_storage(::Nothing, ::Type{FT}, Nc, Nz) where FT
+    return ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), CS_PANEL_COUNT)
+end
+
+function _cs_initial_vmr_storage(vmr::NTuple{6, <:AbstractArray{FT, 3}},
+                                 ::Type{FT}, Nc, Nz) where FT
+    for p in 1:CS_PANEL_COUNT
+        size(vmr[p]) == (Nc, Nc, Nz) || throw(DimensionMismatch(
+            "CS initial VMR panel $p must have shape $((Nc, Nc, Nz)); got $(size(vmr[p]))"))
+    end
+    return vmr
+end
+
+function _build_cs_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
+                                       grid::AtmosGrid{<:CubedSphereMesh}, cfg, vmr;
+                                       surface_pressure::Union{Nothing, NTuple{6, <:AbstractMatrix}} = nothing) where FT
     kind = _init_kind(cfg)
     mesh = grid.horizontal
     Nc = mesh.Nc
@@ -52,27 +74,31 @@ function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
     background = FT(get(cfg, "background", 4.0e-4))
 
     if kind === :uniform
-        return ntuple(_ -> fill(background, Nc, Nc, Nz), CS_PANEL_COUNT)
+        vmr = _cs_initial_vmr_storage(vmr, FT, Nc, Nz)
+        foreach(panel -> fill!(panel, background), vmr)
+        return vmr
     elseif _is_latitude_step_kind(kind)
         vals = _latitude_step_values(cfg, FT)
-        return ntuple(p -> begin
+        vmr = _cs_initial_vmr_storage(vmr, FT, Nc, Nz)
+        for p in 1:CS_PANEL_COUNT
             _lons, lats = panel_cell_center_lonlat(mesh, p)
-            q = Array{FT}(undef, Nc, Nc, Nz)
+            q = vmr[p]
             for j in 1:Nc, i in 1:Nc
                 value = _latitude_step_value(lats[i, j], vals)
                 @views q[i, j, :] .= value
             end
-            q
-        end, CS_PANEL_COUNT)
+        end
+        return vmr
     elseif kind === :gaussian_blob
         lon0 = FT(get(cfg, "lon0_deg", 0.0))
         lat0 = FT(get(cfg, "lat0_deg", 0.0))
         sigma_lon = FT(get(cfg, "sigma_lon_deg", 10.0))
         sigma_lat = FT(get(cfg, "sigma_lat_deg", 10.0))
         amplitude = FT(get(cfg, "amplitude", background))
-        return ntuple(p -> begin
+        vmr = _cs_initial_vmr_storage(vmr, FT, Nc, Nz)
+        for p in 1:CS_PANEL_COUNT
             lons, lats = panel_cell_center_lonlat(mesh, p)
-            q = Array{FT}(undef, Nc, Nc, Nz)
+            q = vmr[p]
             for j in 1:Nc, i in 1:Nc
                 dlon = wrapped_longitude_distance(lons[i, j], lon0)
                 dlat = lats[i, j] - lat0
@@ -80,14 +106,14 @@ function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                     ((dlon / sigma_lon)^2 + (dlat / sigma_lat)^2))
                 @views q[i, j, :] .= value
             end
-            q
-        end, CS_PANEL_COUNT)
+        end
+        return vmr
     elseif kind === :pressure_layer
         surface_pressure === nothing && throw(ArgumentError(
             "init.kind=pressure_layer requires `surface_pressure` " *
             "(NTuple{6, Matrix}) so the target layer can be selected by " *
             "per-column ps. Pass `window.surface_pressure` from the binary."))
-        return _build_cs_pressure_layer_ic(air_mass, grid, cfg, FT, surface_pressure)
+        return _build_cs_pressure_layer_ic(air_mass, grid, cfg, FT, surface_pressure, vmr)
     elseif kind === :cs_native
         return _build_cs_native_ic(grid, air_mass, cfg, FT)
     elseif _is_file_init_kind(kind)
@@ -281,7 +307,8 @@ const _AVOGADRO                  = 6.02214076e23
 function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                       grid::AtmosGrid{<:CubedSphereMesh},
                                       cfg, ::Type{FT},
-                                      surface_pressure::NTuple{6, <:AbstractMatrix}) where FT
+                                      surface_pressure::NTuple{6, <:AbstractMatrix},
+                                      vmr = nothing) where FT
     mesh = grid.horizontal
     Nc   = mesh.Nc
     Hp   = mesh.Hp
@@ -355,7 +382,8 @@ function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}}
 
     # Build the VMR panels (interior-shaped `(Nc, Nc, Nz)`): zero except
     # in the chosen layer per column.
-    vmr = ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT)
+    vmr = _cs_initial_vmr_storage(vmr, FT, Nc, Nz)
+    foreach(panel -> fill!(panel, zero(FT)), vmr)
     for p in 1:CS_PANEL_COUNT
         kt = k_target[p]
         for j in 1:Nc, i in 1:Nc

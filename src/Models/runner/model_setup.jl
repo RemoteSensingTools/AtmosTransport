@@ -1,10 +1,9 @@
 """
     _assert_gpu_residency!(state, arch)
 
-See `feedback_verify_gpu_runs_on_gpu`. When a GPU backend is
-selected, assert that `state.air_mass` lives on that backend. A silent CPU
-fallback aborts with a precise error. Called once after model construction,
-before the run loop.
+When a GPU backend is selected, assert that `state.air_mass` lives on that
+backend. Called once after model construction, before the run loop; a backend
+mismatch raises an error that identifies the state storage.
 """
 function _assert_gpu_residency!(state, arch)
     is_gpu(arch) || return nothing
@@ -18,12 +17,10 @@ function _assert_gpu_residency!(state, arch)
 end
 
 # ===========================================================================
-# Model construction (hoisted from run_transport_binary.jl:153-188)
+# Model construction
 #
-# Uses `pack_initial_tracer_mass` (C1b) rather than raw `.* air_mass`:
-# bit-exact on DryBasis, errors loudly on MoistBasis without qv
-# (correctness rule feedback_vmr_to_mass_basis_aware). No LL/RG config
-# in-tree uses MoistBasis, so no behaviour change for shipped configs.
+# Initial conditions are dry mixing ratios. The basis-aware packer converts
+# them to conservative storage; moist carrier mass requires humidity (`qv`).
 # ===========================================================================
 
 function _allocate_structured_runner_fluxes(mesh::LatLonMesh, Nz::Int, FT, basis)
@@ -67,8 +64,11 @@ function _initialize_cs_dry_state(grid::AtmosGrid{<:CubedSphereMesh},
         tracer_indices[name] = index
     end
     raw = ntuple(p -> similar(air_mass[p], size(air_mass[p])..., length(names)), 6)
+    # Reuse one interior VMR buffer across analytic initializers. Each tracer
+    # is copied into its independent packed slot before the buffer is reused.
+    vmr = nothing
     for (name, init_cfg) in tracer_init
-        vmr = build_initial_mixing_ratio(air_mass, grid, init_cfg; surface_pressure)
+        vmr = _build_cs_initial_mixing_ratio(air_mass, grid, init_cfg, vmr; surface_pressure)
         index = tracer_indices[name]
         destination = ntuple(p -> selectdim(raw[p], 4, index), 6)
         _cs_pack_interior_into_halo!(destination, grid, air_mass, vmr, nothing)

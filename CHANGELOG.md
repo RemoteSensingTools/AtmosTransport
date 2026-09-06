@@ -1,6 +1,6 @@
 # Release notes
 
-## 0.4.0 — unreleased
+## 0.4.0 — 2026-09-06
 
 This release changes cubed-sphere numerical results and runtime/output
 behavior. Keep the version, forcing binary, run TOML and dependency manifest

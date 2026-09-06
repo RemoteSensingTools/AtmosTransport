@@ -2,6 +2,22 @@ using Test, AtmosTransport, NCDatasets
 using AtmosTransport.Output
 using AtmosTransport.Grids: ncells
 
+@testset "Column fallback retains cancellation across slab boundaries" begin
+    O = AtmosTransport.Output
+    for shape in ((7, 33), (4, 3, 33)), levels in ((1, 2, 3), (15, 16, 17), (16, 17, 33))
+        values = zeros(Float32, shape)
+        axis = ndims(values)
+        selectdim(values, axis, levels[1]) .= 2f0^24
+        selectdim(values, axis, levels[2]) .= 1f0
+        selectdim(values, axis, levels[3]) .= -2f0^24
+        actual = O._backend_column_sum(values, Float32)
+        @test eltype(actual) === Float64
+        @test actual == ones(Float64, shape[1:end-1])
+        @test actual == O._column_sum(values)
+    end
+    @test O._backend_column_sum(zeros(Float32, 4, 0), Float32) == zeros(4)
+end
+
 @testset "Selected capture preserves full-capture NetCDF values" begin
     for FT in (Float32, Float64), topology in (:ll, :rg, :cs)
         Nz = 4

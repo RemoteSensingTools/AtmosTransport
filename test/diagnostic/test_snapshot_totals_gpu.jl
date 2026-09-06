@@ -9,6 +9,27 @@ if get(ENV, "ATMOSTR_RUN_SNAPSHOT_GPU_TESTS", "0") == "1"
         error("This test requires the selected $expected GPU")
     CUDA.allowscalar(false)
 
+    @testset "Column reductions retain signed residuals with and without device Float64" begin
+        for shape in ((7, 33), (4, 3, 33)), levels in ((1, 2, 3), (15, 16, 17), (16, 17, 33))
+            values = zeros(Float32, shape)
+            axis = ndims(values)
+            selectdim(values, axis, levels[1]) .= 2f0^24
+            selectdim(values, axis, levels[2]) .= 1f0
+            selectdim(values, axis, levels[3]) .= -2f0^24
+            device = CuArray(values)
+            # Exercise the host-slab policy used by Metal on real device arrays.
+            @test O._backend_column_sum(device, Float32) == O._column_sum(values)
+            @test O._backend_column_sum(device) == O._column_sum(values)
+        end
+        parent_values = zeros(Float32, 10, 10, 33)
+        parent_values[4:7, 4:7, 15] .= 2f0^24
+        parent_values[4:7, 4:7, 16] .= 1f0
+        parent_values[4:7, 4:7, 17] .= -2f0^24
+        interior = view(CuArray(parent_values), 4:7, 4:7, :)
+        @test O._backend_column_sum(interior, Float32) == ones(4, 4)
+        @test O._backend_column_sum(interior) == ones(4, 4)
+    end
+
     @testset "Compensated device totals retain signed residuals" begin
         for FT in (Float32,Float64), n in (3,257,2049,1048577)
             values = zeros(FT,n)

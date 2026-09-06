@@ -32,15 +32,36 @@ end
 _snapshot_accumulator_type(backend) = Float64
 
 function _backend_column_sum(values::AbstractArray)
-    get_backend(values) isa KA_CPU && return _column_sum(values)
+    backend = get_backend(values)
+    backend isa KA_CPU && return _column_sum(values)
+    return _backend_column_sum(values, _snapshot_accumulator_type(backend))
+end
+
+function _backend_column_sum(values::AbstractArray, ::Type{Float64})
     horizontal = size(values)[1:end-1]
-    # Metal cannot execute Float64; CUDA and CPU retain Float64 accumulation.
-    T = _snapshot_accumulator_type(get_backend(values))
-    out = similar(values, T, horizontal)
+    out = similar(values, Float64, horizontal)
     _snapshot_column_sum!(get_backend(values), 256)(out, values, length(out),
         size(values, ndims(values)); ndrange=length(out))
     synchronize(get_backend(values))
     return Array(out)
+end
+
+# Backends without Float64 (Metal) still need the CPU diagnostic's precision.
+# Carry each column's sum across bounded slabs in the original vertical order;
+# reducing a slab in Float32 first would lose signed cancellation residuals.
+function _backend_column_sum(values::AbstractArray, ::Type{Float32})
+    axis = ndims(values)
+    out = zeros(Float64, size(values)[1:end-1])
+    totals = vec(out)
+    for first in 1:16:size(values, axis)
+        last = min(first + 15, size(values, axis))
+        slab = Array(selectdim(values, axis, first:last))
+        columns = reshape(slab, length(out), last - first + 1)
+        @inbounds for k in axes(columns, 2), c in eachindex(totals)
+            totals[c] += Float64(columns[c, k])
+        end
+    end
+    return out
 end
 _backend_column_sum(values::NTuple{6}) = map(_backend_column_sum, values)
 

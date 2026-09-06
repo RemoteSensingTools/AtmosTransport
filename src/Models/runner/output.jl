@@ -55,11 +55,13 @@ function _wait_pending_output!(output::RunSnapshotOutput)
 end
 
 function Base.close(output::RunSnapshotOutput)
-    try
+    stream = output.stream
+    if stream === nothing
         _wait_pending_output!(output)
-    finally
-        stream = output.stream
-        stream === nothing || close(stream)
+    else
+        _with_run_resource(stream) do
+            _wait_pending_output!(output)
+        end
     end
     return nothing
 end

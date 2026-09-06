@@ -88,3 +88,41 @@ end
         @test close(output) === nothing
     end
 end
+
+# Use a distinct grid type to inject a close failure without changing the
+# behavior of real NetCDF streams or corrupting an on-disk dataset.
+struct FailingCloseGrid
+    failure::ErrorException
+    calls::Base.RefValue{Int}
+end
+function Base.close(stream::O.NetCDFSnapshotStream{FailingCloseGrid})
+    stream.closed && return nothing
+    stream.closed = true
+    stream.grid.calls[] += 1
+    throw(stream.grid.failure)
+end
+
+@testset "Asynchronous write and stream-close failures are both preserved" begin
+    close_failure = ErrorException("stream close failed")
+    grid = FailingCloseGrid(close_failure, Ref(0))
+    stream = O.NetCDFSnapshotStream("unused.nc", grid)
+    output = R.RunSnapshotOutput(stream, Threads.@spawn error("daily write failed"))
+    failure = try
+        close(output)
+    catch e
+        e
+    end
+    @test failure isa CompositeException
+    @test length(failure.exceptions) == 2
+    @test failure.exceptions[1] isa TaskFailedException
+    @test occursin("daily write failed", sprint(showerror, failure.exceptions[1]))
+    @test failure.exceptions[2] === close_failure
+    @test output.pending_write === nothing
+    @test stream.closed
+    @test grid.calls[] == 1
+    @test close(output) === nothing
+
+    output = R.RunSnapshotOutput(O.NetCDFSnapshotStream("unused.nc", grid), nothing)
+    @test_throws ErrorException close(output)
+    @test grid.calls[] == 2
+end

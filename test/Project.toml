@@ -56,11 +56,12 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 [sources]
 AtmosTransport = {path = ".."}
 
+# Pkg.test() injects the checkout itself. Do not duplicate its release version
+# in compat: a stale self-bound prevents the test sandbox from resolving.
 [compat]
 Adapt = "4"
 Aqua = "0.8"
 ArgParse = "1.2.0"
-AtmosTransport = "0.3"
 ConservativeRegridding = "0.2"
 CubedSphere = "0.3.4"
 Dates = "1"
@@ -73,7 +74,7 @@ GRIB = "0.4.0"
 GeoInterface = "1.6.1"
 GeometryOps = "0.1.38"
 GeometryOpsCore = "0.1.10"
-HDF5_jll = "2.1"
+HDF5_jll = "1.14, 2"
 JET = "0.9, 0.10, 0.11"
 JLD2 = "0.6.4"
 JSON3 = "1.14.3"

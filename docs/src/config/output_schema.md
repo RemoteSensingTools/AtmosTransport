@@ -45,6 +45,12 @@ cannot execute Float64 arithmetic, uses bounded host slabs for these totals.
 Different reduction orders need not be bitwise identical, but output precision
 does not erase small signed residuals.
 
+Column means and column mass diagnostics also accumulate in Float64. CUDA
+performs those reductions on the device. Metal transfers at most 16 vertical
+levels at a time and carries each column's Float64 sum across host slabs in
+model-level order, matching the CPU diagnostic without retaining a complete
+tracer volume. This avoids losing signed residuals in a Float32 column sum.
+
 ## Global attributes
 
 Every snapshot file carries a CF-style global header set by

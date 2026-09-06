@@ -23,6 +23,10 @@ repository root first (also required on Julia 1.10, which does not use the
 julia --project=test -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
 ```
 
+The test environment intentionally has no version bound for AtmosTransport
+itself: `Pkg.test()` supplies the checkout, and direct invocations develop it
+with the command above. Release version bumps need no matching test bound.
+
 ```bash
 julia --project=. -e 'using Pkg; Pkg.test()'         # CI-equivalent default
 julia --project=test test/runtests.jl                # core + regridding

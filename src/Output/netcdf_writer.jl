@@ -194,7 +194,7 @@ function _write_tracer_total_mass!(ds, frames, tracer_keys, mass_basis_sym::Symb
     return nothing
 end
 
-# HDF5 2.1's automatic error handler is thread-local. NetCDF initializes the
+# Thread-safe HDF5 builds use thread-local error handlers. NetCDF initializes the
 # main thread quietly, but a first `nc_create` on a `Threads.@spawn` worker can
 # print an alarming H5Fis_accessible stack while probing a path that does not
 # exist yet. Silence only that expected constructor probe, then restore the

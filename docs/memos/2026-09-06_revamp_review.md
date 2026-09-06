@@ -39,6 +39,12 @@ complete meteorological adjoint or full TM5/GCHP forcing parity.
 - CUDA Dkg tracer solves now read shared column factors in parallel. The
   32-tracer day falls from 38.635 to 29.543 s median with identical outputs.
   No new persistent workspace is added. CPU and Metal retain the fused loop.
+- Float64 CUDA now supports the collaborative matrix solve on unmerged depths
+  through 73. The C90 L66 day falls from 92.853 to 21.759 s with six tracers
+  and from 147.673 to 63.943 s with 32. Full-precision state comparisons stay
+  within 1.73e-16 relative L2; the week remains within 1.99e-16 total drift.
+  Unsupported Float64 requests retain the legacy fallback and the CS adjoint
+  API still requires the full-column, unmerged legacy variant.
 - The convection shared-memory buffer holds batches of six tracers, not a
   six-species model limit. The collaborative solver is tested through 65
   positive and signed tracers. Changing vertical truncation or aggregation
@@ -80,3 +86,9 @@ replace evidence with a blanket `Any` purge or repository-wide formatting.
 Outstanding work includes long-duration drift/memory measurements, transported
 field positivity and seam time accuracy, and adjoint tape profiling. Hardware
 outside the measured V100 needs its own validation.
+
+The public `has_surface` and `has_vdiff_fields` queries now share one generic
+between binary readers and preprocessing settings. Previously the top-level
+exports could not dispatch on settings and produced competing-export warnings
+on Julia 1.10. Source flags, reader payload checks, Aqua, JET, and the updated
+API documentation validate the unified queries.

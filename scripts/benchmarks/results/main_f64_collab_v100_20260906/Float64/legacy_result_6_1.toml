@@ -1,0 +1,16 @@
+output_bytes = 6725217
+tracers = 6
+gc_seconds = 5.807369507
+sample = 1
+collab = false
+precision = "Float64"
+wall_seconds = 93.229018254
+host_allocated_bytes = 10781380504
+
+[final_totals]
+tracer02 = 4.809651775725018e9
+tracer04 = 4.809651775725017e9
+tracer06 = 4.809651775725017e9
+tracer03 = 4.809651775725017e9
+tracer01 = 4.809651775725016e9
+tracer05 = 4.809651775725017e9

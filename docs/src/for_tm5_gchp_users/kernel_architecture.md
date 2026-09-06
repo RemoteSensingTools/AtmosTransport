@@ -130,13 +130,16 @@ precisions, including halos and partial blocks through 65 tracers.
 ## Matrix convection and many tracers
 
 TM5 and CMFMC-matrix convection use the same backward-Euler solve after their
-forcing is prepared. In the collaborative Float32 GPU path, one workgroup
+forcing is prepared. In the collaborative GPU path, one workgroup
 builds and factors a column's matrix in shared memory. It retains the factors
 while loading, solving, and storing successive batches of six tracers.
 Additional tracers require more solves and memory traffic, but no larger shared
 matrix or tracer buffer. The final batch can be partially filled.
 The six-tracer batch is a workgroup's temporary shared-memory buffer, not a
-limit on the number of species in the model state.
+limit on the number of species in the model state. Float32 supports effective
+matrix depths through 85; Float64 CUDA supports unmerged depths through 73,
+using Float64 throughout. Deeper or merged Float64 requests retain the legacy
+solver. These limits reflect shared-memory capacity, not tracer count.
 
 The solver uses the matrix's upper-Hessenberg structure for columns without
 downdrafts and retains the general pivoted path when downdrafts are present.

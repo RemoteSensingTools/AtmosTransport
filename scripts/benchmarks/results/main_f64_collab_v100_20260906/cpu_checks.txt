@@ -1,0 +1,6 @@
+Complete CPU suite on the numerical port, before capability-API/prose cleanup: exit 0; 120 core files and 628 regridding assertions.
+Julia 1.12.6; four Julia threads; one OpenBLAS thread; CUDA_VISIBLE_DEVICES empty.
+Aqua: 10 pass. JET snapshot gate: pass against unchanged 152-report baseline.
+Collaborative batching host selection: 18 pass; shared RHS helpers: 964 pass.
+Strict documentation build: exit 0; 160 final local link/map checks pass.
+Subsequent integrated source/reader, Aqua/JET, and executable-syntax checks pass.

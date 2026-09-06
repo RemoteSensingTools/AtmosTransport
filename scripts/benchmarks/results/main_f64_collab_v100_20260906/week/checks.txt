@@ -1,0 +1,4 @@
+Test Summary:                                     | Pass  Total  Time
+Float64 collaborative and legacy seven-day output |   83     83  5.1s
+MAX_DAILY_DRIFT 1.9828344355813393e-16
+MAX_COLUMN_RELATIVE_L2 2.6046289707742404e-16

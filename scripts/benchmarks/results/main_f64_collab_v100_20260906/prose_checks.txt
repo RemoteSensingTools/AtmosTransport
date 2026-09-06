@@ -1,0 +1,2 @@
+Test Summary:                                        | Pass  Total  Time
+Convection prose cleanup preserves executable syntax |    2      2  1.1s

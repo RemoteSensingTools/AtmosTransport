@@ -195,14 +195,28 @@ The largest Float64 daily total drift is 1.98e-16. Conservative runs peak at
 compilation/mmap and allocator-pool costs respectively; they do not establish
 longer-run bounds or cold-storage throughput.
 
+## Float64 matrix solve and capability API
+
+The [Float64 CUDA matrix comparison](../../scripts/benchmarks/results/main_f64_collab_v100_20260906/README.md)
+reduces a full 66-level day from 92.853 to 21.759 s with six tracers and from
+147.673 to 63.943 s with 32. Shared arrays and arithmetic stay Float64;
+maximum final-state relative L2 difference is 1.73e-16. The seven-day maximum
+daily total drift remains 1.98e-16. Float32 outputs are unchanged. Supported
+Float64 CUDA depths are 1–73 with `n_merge=1`; unsupported requests retain the
+legacy fallback. The CS adjoint variant restriction remains in place.
+
+Public surface/vertical-diffusion capability queries now also accept source
+settings through the same generics as binary readers. This fixes a competing
+export and unavailable top-level settings method without changing payload tests.
+
 ## Remaining work
 
 - Extend the seven-day input/memory measurements to longer runs and other
   representative archives before changing host-window ownership or staging.
   Cold-storage throughput remains unmeasured.
-- Extend Float32 drift checks beyond one week and improve Float64 convection
-  performance without narrowing arithmetic or changing the requested vertical
-  grid. Keep conservation and positivity as separate criteria. Improve temporal accuracy
+- Extend Float32/Float64 drift and memory checks beyond one week, and measure
+  the remaining Float64 advection cost. Keep conservation and positivity as
+  separate criteria. Improve temporal accuracy
   at seams against independent reference fields before claiming second order.
 - Retain the six-tracer matrix batch until an alternative improves measured
   whole-run performance. Other GPU architectures need their own measurements.

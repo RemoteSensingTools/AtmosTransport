@@ -19,8 +19,9 @@
 # (a) deriving non-negative entrainment/detrainment rates from the GEOS
 # binary's `cmfmc/dtrain` and (b) solving the resulting backward-Euler
 # matrix LU — the same conservative core used by `TM5Convection`. The
-# matrix is column-stochastic by the `Σ entu = Σ detu` closure that the
-# derivation kernels enforce defensively per column.
+# backward-Euler matrix has unit column sums under the `Σ entu = Σ detu`
+# closure enforced by the derivation kernels. Its off-diagonal entries need
+# not be nonnegative, so the matrix itself is not column-stochastic.
 #
 # It is NOT GCHP RAS numerics — it is GEOS-derived rates through TM5
 # transport numerics. Use it where the conservation contract is required
@@ -50,9 +51,10 @@ result in [`CMFMCMatrixWorkspace`](@ref) for reuse across all substeps.
 # Conservation contract
 
 `Σ(m·q)` is preserved to floating-point roundoff for any inert tracer:
-the TM5 LU matrix is column-stochastic once `Σ entu = Σ detu`, which the
-derivation kernels guarantee by absorbing any boundary-residual at the
-surface layer.
+the backward-Euler matrix has unit column sums once `Σ entu = Σ detu`,
+which the derivation kernels guarantee by absorbing any boundary residual
+at the surface layer. The solve therefore preserves the sum of its
+right-hand side up to rounding.
 
 # Adjoint
 

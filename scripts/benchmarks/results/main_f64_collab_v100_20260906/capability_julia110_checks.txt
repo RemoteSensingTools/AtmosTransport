@@ -1,0 +1,7 @@
+WARNING: using Trees.ncells in module Regridding conflicts with an existing identifier.
+Test Summary:                                            | Pass  Total  Time
+Public capability queries include preprocessing settings |   12     12  0.1s
+Test Summary:                          | Pass  Total  Time
+Plan 41 P0a — typed met-reader surface |   43     43  0.3s
+Test Summary:    | Pass  Total  Time
+Met source trait |   18     18  0.0s

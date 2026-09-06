@@ -15,6 +15,9 @@ struct BatchTestBackend <: KernelAbstractions.GPU end
     end
     @test !C._use_collab_path(op, 85, 65, Float32, KernelAbstractions.CPU())
     @test !C._use_collab_path(op, 85, 65, Float64, backend)
+    @test !C._use_collab_path(op, 66, 6, Float64, backend)
+    @test !C._use_collab_path(op, 66, 6, Float64, KernelAbstractions.CPU())
+    @test !C._use_collab_path(op, 66, 6, Float16, backend)
     @test !C._use_collab_path(C.TM5Convection(), 85, 65, Float32, backend)
     @test_throws ArgumentError C._should_use_collab(op, 86, 65, Float32, backend)
     @test_throws ArgumentError C._should_use_collab(op, 85, 0, Float32, backend)

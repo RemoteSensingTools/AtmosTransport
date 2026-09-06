@@ -175,7 +175,8 @@ end
 # across tracer batches; total tracer count does not change shared memory.
 # The current 1..85 matrix envelope fits the 32 KiB cross-backend budget.
 # Float32 GPU requests outside that envelope error in the host dispatcher;
-# CPU and Float64 use the legacy solver with a warning.
+# CPU and unsupported precisions/depths retain the legacy fallback. CUDA
+# additionally supports unmerged Float64 matrices through depth 73 (48 KiB).
 #
 # Plume recurrences and pivot search still run in thread 1. Matrix columns
 # independently form I - dt*D across the workgroup, preserving level order.
@@ -202,6 +203,13 @@ choice that must cover the forcing's active depth; batching requires neither.
 """
 @inline _tm5_collab_supports(lmax_conv::Integer, Nt::Integer) =
     lmax_conv > 0 && lmax_conv <= 85 && Nt > 0
+
+# Backends opt into additional precisions only within their static shared-memory
+# budget. Float32 retains the portable 32 KiB envelope; CUDA adds Float64.
+@inline _tm5_collab_max_depth(::Type, backend) = 0
+@inline _tm5_collab_max_depth(::Type{Float32}, backend) = 85
+@inline _tm5_collab_supports(L::Integer, Nt::Integer, ::Type{FT}, backend) where FT =
+    0 < L <= _tm5_collab_max_depth(FT, backend) && Nt > 0
 
 # A thread owns one complete shared-memory RHS. There are no workgroup
 # operations here, so KA can inline this helper in each topology kernel.
@@ -252,12 +260,12 @@ end
 # LU, pivot-apply, forward/back solve, store-back) is identical.
 #
 # Shared-memory allocations per kernel:
-#   A_loc      : @localmem Float32 (LMAX_CONV, LMAX_CONV)
-#   q_loc      : @localmem Float32 (LMAX_CONV, TRACER_BATCH)
+#   A_loc      : @localmem FT (LMAX_CONV, LMAX_CONV)
+#   q_loc      : @localmem FT (LMAX_CONV, TRACER_BATCH)
 #   piv_loc    : @localmem Int32   (LMAX_CONV,)
-#   bmass_loc  : @localmem Float32 (LMAX_CONV,)
-#   amu_loc    : @localmem Float32 (LMAX_CONV + 1,)
-#   amd_loc    : @localmem Float32 (LMAX_CONV + 1,)
+#   bmass_loc  : @localmem FT (LMAX_CONV,)
+#   amu_loc    : @localmem FT (LMAX_CONV + 1,)
+#   amd_loc    : @localmem FT (LMAX_CONV + 1,)
 #   icl_top    : @localmem Int32   (1,)
 #   icl_lfs    : @localmem Int32   (1,)
 
@@ -272,17 +280,17 @@ end
     @Const(air_mass_arr), # (Nx, Ny, Nz)
     @Const(entu), @Const(detu), @Const(entd), @Const(detd),
     @Const(cell_areas_y), # (Ny,) — LL contract
-    Nx::Int, Nz::Int, Nt::Int, dt::Float32, ::Val{LMAX_CONV},
-) where {LMAX_CONV}
+    Nx::Int, Nz::Int, Nt::Int, dt::FT, ::Val{LMAX_CONV},
+) where {LMAX_CONV, FT}
     @uniform g = @index(Group)
     t = @index(Local)
 
-    A_loc     = @localmem Float32 (LMAX_CONV, LMAX_CONV)
-    q_loc     = @localmem Float32 (LMAX_CONV, _TM5_COLLAB_TRACER_BATCH)
+    A_loc     = @localmem FT (LMAX_CONV, LMAX_CONV)
+    q_loc     = @localmem FT (LMAX_CONV, _TM5_COLLAB_TRACER_BATCH)
     piv_loc   = @localmem Int32   (LMAX_CONV,)
-    bmass_loc = @localmem Float32 (LMAX_CONV,)
-    amu_loc   = @localmem Float32 (LMAX_CONV + 1,)
-    amd_loc   = @localmem Float32 (LMAX_CONV + 1,)
+    bmass_loc = @localmem FT (LMAX_CONV,)
+    amu_loc   = @localmem FT (LMAX_CONV + 1,)
+    amd_loc   = @localmem FT (LMAX_CONV + 1,)
     icl_top   = @localmem Int32   (1,)
     icl_lfs   = @localmem Int32   (1,)
 
@@ -296,8 +304,8 @@ end
 
     # ---- 1. Boundary init (parallel) -------------------------
     @inbounds for k in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV + 1)
-        amu_loc[k] = 0f0
-        amd_loc[k] = 0f0
+        amu_loc[k] = zero(FT)
+        amd_loc[k] = zero(FT)
     end
 
     # ---- 2. Cloud-dim diagnosis (serial in thread 1) ---------
@@ -306,11 +314,11 @@ end
         icl_lfs[1] = Int32(LMAX_CONV + 1)
         @inbounds for k in 1:LMAX_CONV
             d = _tm5_read_forcing(detu, i, j, Hp, k_shift + k, Val(:ll))
-            if d > 0f0 && icl_top[1] == LMAX_CONV + 1
+            if d > zero(FT) && icl_top[1] == LMAX_CONV + 1
                 icl_top[1] = Int32(k)
             end
             e = _tm5_read_forcing(entd, i, j, Hp, k_shift + k, Val(:ll))
-            if e > 0f0 && icl_lfs[1] == LMAX_CONV + 1
+            if e > zero(FT) && icl_lfs[1] == LMAX_CONV + 1
                 icl_lfs[1] = Int32(k)
             end
         end
@@ -335,11 +343,11 @@ end
             k_  = (idx - 1) % LMAX_CONV + 1
             kk_ = (idx - 1) ÷ LMAX_CONV + 1
             if k_ >= k_lo && kk_ >= k_lo
-                A_loc[k_, kk_] = 0f0
+                A_loc[k_, kk_] = zero(FT)
             elseif k_ == kk_
-                A_loc[k_, kk_] = 1f0
+                A_loc[k_, kk_] = one(FT)
             else
-                A_loc[k_, kk_] = 0f0
+                A_loc[k_, kk_] = zero(FT)
             end
         end
         @synchronize
@@ -363,15 +371,15 @@ end
                     d = amu_loc[k + 1] + e
                 end
                 amu_loc[k] = amu_loc[k + 1] + e - d
-                zxi = 0f0
-                if amu_loc[k] > 0f0
+                zxi = zero(FT)
+                if amu_loc[k] > zero(FT)
                     denom = amu_loc[k + 1] + e
-                    zxi = max(0f0, 1f0 - d / denom)
+                    zxi = max(zero(FT), one(FT) - d / denom)
                 else
-                    amu_loc[k] = 0f0
+                    amu_loc[k] = zero(FT)
                 end
                 for kk in (k + 1):LMAX_CONV
-                    f_below = k == LMAX_CONV ? 0f0 : A_loc[k + 1, kk]
+                    f_below = k == LMAX_CONV ? zero(FT) : A_loc[k + 1, kk]
                     A_loc[k, kk] = f_below * zxi
                 end
                 bmass_k = bmass_loc[k]
@@ -383,12 +391,12 @@ end
                     e = _tm5_read_forcing(entd, i, j, Hp, k_shift + k, Val(:ll))
                     d = _tm5_read_forcing(detd, i, j, Hp, k_shift + k, Val(:ll))
                     amd_loc[k + 1] = amd_loc[k] - e + d
-                    zxi = 0f0
-                    if amd_loc[k + 1] < 0f0
+                    zxi = zero(FT)
+                    if amd_loc[k + 1] < zero(FT)
                         denom = amd_loc[k] - e
-                        zxi = max(0f0, 1f0 + d / denom)
+                        zxi = max(zero(FT), one(FT) + d / denom)
                     else
-                        amd_loc[k + 1] = 0f0
+                        amd_loc[k + 1] = zero(FT)
                     end
                     for kk in icllfs:(k - 1)
                         A_loc[k + 1, kk] = A_loc[k, kk] * zxi
@@ -411,14 +419,14 @@ end
         @inbounds for kk in t:_TM5_COLLAB_WG_SIZE:LMAX_CONV
             for k in 1:LMAX_CONV
                 if k < k_lo || kk < k_lo
-                    A_loc[k, kk] = (k == kk) ? 1f0 : 0f0
+                    A_loc[k, kk] = (k == kk) ? one(FT) : zero(FT)
                 else
-                    f_below = k == LMAX_CONV ? 0f0 : A_loc[k + 1, kk]
+                    f_below = k == LMAX_CONV ? zero(FT) : A_loc[k + 1, kk]
                     fdiff = f_below - A_loc[k, kk]
                     A_loc[k, kk] = -dt * fdiff
                 end
                 if k == kk
-                    A_loc[k, kk] += 1f0
+                    A_loc[k, kk] += one(FT)
                 end
             end
         end
@@ -520,17 +528,17 @@ end
     @Const(air_mass_arr), # (ncells, Nz)
     @Const(entu), @Const(detu), @Const(entd), @Const(detd),
     @Const(cell_areas),   # (ncells,)
-    Nz::Int, Nt::Int, dt::Float32, ::Val{LMAX_CONV},
-) where {LMAX_CONV}
+    Nz::Int, Nt::Int, dt::FT, ::Val{LMAX_CONV},
+) where {LMAX_CONV, FT}
     @uniform g = @index(Group)
     t = @index(Local)
 
-    A_loc     = @localmem Float32 (LMAX_CONV, LMAX_CONV)
-    q_loc     = @localmem Float32 (LMAX_CONV, _TM5_COLLAB_TRACER_BATCH)
+    A_loc     = @localmem FT (LMAX_CONV, LMAX_CONV)
+    q_loc     = @localmem FT (LMAX_CONV, _TM5_COLLAB_TRACER_BATCH)
     piv_loc   = @localmem Int32   (LMAX_CONV,)
-    bmass_loc = @localmem Float32 (LMAX_CONV,)
-    amu_loc   = @localmem Float32 (LMAX_CONV + 1,)
-    amd_loc   = @localmem Float32 (LMAX_CONV + 1,)
+    bmass_loc = @localmem FT (LMAX_CONV,)
+    amu_loc   = @localmem FT (LMAX_CONV + 1,)
+    amd_loc   = @localmem FT (LMAX_CONV + 1,)
     icl_top   = @localmem Int32   (1,)
     icl_lfs   = @localmem Int32   (1,)
 
@@ -544,8 +552,8 @@ end
     # WG_SIZE is _TM5_COLLAB_WG_SIZE (32); used directly below to satisfy KA scoping.
 
     @inbounds for k in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV + 1)
-        amu_loc[k] = 0f0
-        amd_loc[k] = 0f0
+        amu_loc[k] = zero(FT)
+        amd_loc[k] = zero(FT)
     end
 
     if t == 1
@@ -553,11 +561,11 @@ end
         icl_lfs[1] = Int32(LMAX_CONV + 1)
         @inbounds for k in 1:LMAX_CONV
             d = _tm5_read_forcing(detu, c, b, Hp, k_shift + k, Val(:rg))
-            if d > 0f0 && icl_top[1] == LMAX_CONV + 1
+            if d > zero(FT) && icl_top[1] == LMAX_CONV + 1
                 icl_top[1] = Int32(k)
             end
             e = _tm5_read_forcing(entd, c, b, Hp, k_shift + k, Val(:rg))
-            if e > 0f0 && icl_lfs[1] == LMAX_CONV + 1
+            if e > zero(FT) && icl_lfs[1] == LMAX_CONV + 1
                 icl_lfs[1] = Int32(k)
             end
         end
@@ -580,11 +588,11 @@ end
             k_  = (idx - 1) % LMAX_CONV + 1
             kk_ = (idx - 1) ÷ LMAX_CONV + 1
             if k_ >= k_lo && kk_ >= k_lo
-                A_loc[k_, kk_] = 0f0
+                A_loc[k_, kk_] = zero(FT)
             elseif k_ == kk_
-                A_loc[k_, kk_] = 1f0
+                A_loc[k_, kk_] = one(FT)
             else
-                A_loc[k_, kk_] = 0f0
+                A_loc[k_, kk_] = zero(FT)
             end
         end
         @synchronize
@@ -607,15 +615,15 @@ end
                     d = amu_loc[k + 1] + e
                 end
                 amu_loc[k] = amu_loc[k + 1] + e - d
-                zxi = 0f0
-                if amu_loc[k] > 0f0
+                zxi = zero(FT)
+                if amu_loc[k] > zero(FT)
                     denom = amu_loc[k + 1] + e
-                    zxi = max(0f0, 1f0 - d / denom)
+                    zxi = max(zero(FT), one(FT) - d / denom)
                 else
-                    amu_loc[k] = 0f0
+                    amu_loc[k] = zero(FT)
                 end
                 for kk in (k + 1):LMAX_CONV
-                    f_below = k == LMAX_CONV ? 0f0 : A_loc[k + 1, kk]
+                    f_below = k == LMAX_CONV ? zero(FT) : A_loc[k + 1, kk]
                     A_loc[k, kk] = f_below * zxi
                 end
                 bmass_k = bmass_loc[k]
@@ -626,12 +634,12 @@ end
                     e = _tm5_read_forcing(entd, c, b, Hp, k_shift + k, Val(:rg))
                     d = _tm5_read_forcing(detd, c, b, Hp, k_shift + k, Val(:rg))
                     amd_loc[k + 1] = amd_loc[k] - e + d
-                    zxi = 0f0
-                    if amd_loc[k + 1] < 0f0
+                    zxi = zero(FT)
+                    if amd_loc[k + 1] < zero(FT)
                         denom = amd_loc[k] - e
-                        zxi = max(0f0, 1f0 + d / denom)
+                        zxi = max(zero(FT), one(FT) + d / denom)
                     else
-                        amd_loc[k + 1] = 0f0
+                        amd_loc[k + 1] = zero(FT)
                     end
                     for kk in icllfs:(k - 1)
                         A_loc[k + 1, kk] = A_loc[k, kk] * zxi
@@ -653,14 +661,14 @@ end
         @inbounds for kk in t:_TM5_COLLAB_WG_SIZE:LMAX_CONV
             for k in 1:LMAX_CONV
                 if k < k_lo || kk < k_lo
-                    A_loc[k, kk] = (k == kk) ? 1f0 : 0f0
+                    A_loc[k, kk] = (k == kk) ? one(FT) : zero(FT)
                 else
-                    f_below = k == LMAX_CONV ? 0f0 : A_loc[k + 1, kk]
+                    f_below = k == LMAX_CONV ? zero(FT) : A_loc[k + 1, kk]
                     fdiff = f_below - A_loc[k, kk]
                     A_loc[k, kk] = -dt * fdiff
                 end
                 if k == kk
-                    A_loc[k, kk] += 1f0
+                    A_loc[k, kk] += one(FT)
                 end
             end
         end
@@ -765,17 +773,17 @@ end
     @Const(entu), @Const(detu),
     @Const(entd), @Const(detd),
     @Const(cell_areas_panel),           # (Nc, Nc)
-    Hp::Int, Nc::Int, Nz::Int, Nt::Int, dt::Float32, ::Val{LMAX_CONV},
-) where {LMAX_CONV}
+    Hp::Int, Nc::Int, Nz::Int, Nt::Int, dt::FT, ::Val{LMAX_CONV},
+) where {LMAX_CONV, FT}
     @uniform g = @index(Group)
     t = @index(Local)
 
-    A_loc     = @localmem Float32 (LMAX_CONV, LMAX_CONV)
-    q_loc     = @localmem Float32 (LMAX_CONV, _TM5_COLLAB_TRACER_BATCH)
+    A_loc     = @localmem FT (LMAX_CONV, LMAX_CONV)
+    q_loc     = @localmem FT (LMAX_CONV, _TM5_COLLAB_TRACER_BATCH)
     piv_loc   = @localmem Int32   (LMAX_CONV,)
-    bmass_loc = @localmem Float32 (LMAX_CONV,)
-    amu_loc   = @localmem Float32 (LMAX_CONV + 1,)
-    amd_loc   = @localmem Float32 (LMAX_CONV + 1,)
+    bmass_loc = @localmem FT (LMAX_CONV,)
+    amu_loc   = @localmem FT (LMAX_CONV + 1,)
+    amd_loc   = @localmem FT (LMAX_CONV + 1,)
     icl_top   = @localmem Int32   (1,)
     icl_lfs   = @localmem Int32   (1,)
 
@@ -788,8 +796,8 @@ end
     # WG_SIZE is _TM5_COLLAB_WG_SIZE (32); used directly below to satisfy KA scoping.
 
     @inbounds for k in t:_TM5_COLLAB_WG_SIZE:(LMAX_CONV + 1)
-        amu_loc[k] = 0f0
-        amd_loc[k] = 0f0
+        amu_loc[k] = zero(FT)
+        amd_loc[k] = zero(FT)
     end
 
     if t == 1
@@ -797,11 +805,11 @@ end
         icl_lfs[1] = Int32(LMAX_CONV + 1)
         @inbounds for k in 1:LMAX_CONV
             d = _tm5_read_forcing(detu, c1, c2, Hp, k_shift + k, Val(:cs))
-            if d > 0f0 && icl_top[1] == LMAX_CONV + 1
+            if d > zero(FT) && icl_top[1] == LMAX_CONV + 1
                 icl_top[1] = Int32(k)
             end
             e = _tm5_read_forcing(entd, c1, c2, Hp, k_shift + k, Val(:cs))
-            if e > 0f0 && icl_lfs[1] == LMAX_CONV + 1
+            if e > zero(FT) && icl_lfs[1] == LMAX_CONV + 1
                 icl_lfs[1] = Int32(k)
             end
         end
@@ -824,11 +832,11 @@ end
             k_  = (idx - 1) % LMAX_CONV + 1
             kk_ = (idx - 1) ÷ LMAX_CONV + 1
             if k_ >= k_lo && kk_ >= k_lo
-                A_loc[k_, kk_] = 0f0
+                A_loc[k_, kk_] = zero(FT)
             elseif k_ == kk_
-                A_loc[k_, kk_] = 1f0
+                A_loc[k_, kk_] = one(FT)
             else
-                A_loc[k_, kk_] = 0f0
+                A_loc[k_, kk_] = zero(FT)
             end
         end
         @synchronize
@@ -851,15 +859,15 @@ end
                     d = amu_loc[k + 1] + e
                 end
                 amu_loc[k] = amu_loc[k + 1] + e - d
-                zxi = 0f0
-                if amu_loc[k] > 0f0
+                zxi = zero(FT)
+                if amu_loc[k] > zero(FT)
                     denom = amu_loc[k + 1] + e
-                    zxi = max(0f0, 1f0 - d / denom)
+                    zxi = max(zero(FT), one(FT) - d / denom)
                 else
-                    amu_loc[k] = 0f0
+                    amu_loc[k] = zero(FT)
                 end
                 for kk in (k + 1):LMAX_CONV
-                    f_below = k == LMAX_CONV ? 0f0 : A_loc[k + 1, kk]
+                    f_below = k == LMAX_CONV ? zero(FT) : A_loc[k + 1, kk]
                     A_loc[k, kk] = f_below * zxi
                 end
                 bmass_k = bmass_loc[k]
@@ -870,12 +878,12 @@ end
                     e = _tm5_read_forcing(entd, c1, c2, Hp, k_shift + k, Val(:cs))
                     d = _tm5_read_forcing(detd, c1, c2, Hp, k_shift + k, Val(:cs))
                     amd_loc[k + 1] = amd_loc[k] - e + d
-                    zxi = 0f0
-                    if amd_loc[k + 1] < 0f0
+                    zxi = zero(FT)
+                    if amd_loc[k + 1] < zero(FT)
                         denom = amd_loc[k] - e
-                        zxi = max(0f0, 1f0 + d / denom)
+                        zxi = max(zero(FT), one(FT) + d / denom)
                     else
-                        amd_loc[k + 1] = 0f0
+                        amd_loc[k + 1] = zero(FT)
                     end
                     for kk in icllfs:(k - 1)
                         A_loc[k + 1, kk] = A_loc[k, kk] * zxi
@@ -897,14 +905,14 @@ end
         @inbounds for kk in t:_TM5_COLLAB_WG_SIZE:LMAX_CONV
             for k in 1:LMAX_CONV
                 if k < k_lo || kk < k_lo
-                    A_loc[k, kk] = (k == kk) ? 1f0 : 0f0
+                    A_loc[k, kk] = (k == kk) ? one(FT) : zero(FT)
                 else
-                    f_below = k == LMAX_CONV ? 0f0 : A_loc[k + 1, kk]
+                    f_below = k == LMAX_CONV ? zero(FT) : A_loc[k + 1, kk]
                     fdiff = f_below - A_loc[k, kk]
                     A_loc[k, kk] = -dt * fdiff
                 end
                 if k == kk
-                    A_loc[k, kk] += 1f0
+                    A_loc[k, kk] += one(FT)
                 end
             end
         end

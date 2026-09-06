@@ -35,6 +35,12 @@ AtmosTransport.Operators.Diffusion._cs_dkg_mass_workgroupsize(
 AtmosTransport.Operators.Diffusion._cs_dkg_tracer_workgroupsize(
     ::CUDABackend, ::Type) = (32, 1, 2)
 
+# Static shared storage for a six-tracer Float64 batch is
+# 8*(L^2 + 9L + 2) + 4*(L + 2) bytes. L=73 uses 48,204 bytes;
+# L=74 exceeds the 48 KiB budget. Keep Float32's portable 85-level gate.
+AtmosTransport.Operators.Convection._tm5_collab_max_depth(
+    ::Type{Float64}, ::CUDABackend) = 73
+
 AtmosTransport.Architectures.array_type(::GPU{:cuda}) = CuArray
 AtmosTransport.Architectures.device(::GPU{:cuda})     = CUDABackend()
 AtmosTransport.Architectures.architecture(::CUDA.AbstractGPUArray) = GPU(:cuda)

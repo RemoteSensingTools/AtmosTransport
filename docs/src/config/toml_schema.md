@@ -250,8 +250,8 @@ n_merge       = 1               # 1 = no aggregation; >1 merges adjacent vertica
                                 # layers within each column (a numerical approximation)
 
 # TM5 and CMFMC-matrix: per-topology legacy column-tile budget in GiB.
-# Collaborative GPU runs defer this global scratch allocation. A CPU/Float64
-# fallback allocates the configured tile when first needed.
+# Collaborative GPU runs defer this global scratch allocation. A CPU or
+# unsupported Float64 fallback allocates the tile when first needed.
 tile_workspace_gib = 1.0
 
 [chemistry]
@@ -264,9 +264,26 @@ For Float32 GPU matrix convection, each column's LU factors remain in shared
 memory while tracers pass through in batches of six. This buffer size does not
 limit the run to six tracers; 65-tracer runs are covered by V100 regression
 tests. The effective vertical matrix depth must still fit the supported
-1–85-level envelope. Tracer batching requires neither truncation nor layer
-aggregation. Choose `lmax_conv` and `n_merge` from scientific accuracy checks;
+1–85-level envelope. Float64 CUDA uses the same batched solver for unmerged
+(`n_merge=1`) depths 1–73, with Float64 shared arrays and arithmetic. CPU and
+unsupported Float64 configurations keep the legacy solver with a warning;
+there is no automatic truncation or precision conversion. CS adjoint footprints
+continue to require `use_collab_lu=false`, `lmax_conv=0`, and `n_merge=1`.
+An eligible Float64 request now engages the collaborative solver instead of
+falling back; a positive `lmax_conv` therefore selects that lower-atmosphere
+region. Use the full-column legacy settings above to retain the previous solve.
+Tracer batching requires neither truncation nor layer aggregation. Choose
+`lmax_conv` and `n_merge` from scientific accuracy checks;
 conservation alone does not establish that either approximation is acceptable.
+
+With layer aggregation, the solver uses `L_super = fld(L, n_merge)`, where
+`L` is the requested active depth (or `Nz` when `lmax_conv=0`). Its fine span is
+`L_super*n_merge`, so a nondivisible choice omits up to `n_merge-1` additional
+top layers. Cloud-top closure forces remaining updraft mass to detrain at the
+active boundary; it does not recover the mixing excluded by that boundary.
+Redistribution follows each tracer's prior fine-layer profile, using uniform
+weights when its old super-layer total is zero. Conservation is to rounding,
+not exact arithmetic. The default `n_merge` is 1.
 
 Topology checks happen while the runtime recipe is built: reduced-Gaussian
 runs accept `upwind` or `none` advection and require midpoint surface-flux

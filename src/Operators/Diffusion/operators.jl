@@ -603,11 +603,22 @@ function _apply_cs_dkg_mass!(rm::NTuple{6}, air_mass::NTuple{6}, op,
         Nz, Nt = size(rm[p], 3), size(rm[p], 4)
         backend = get_backend(rm[p])
         dkg = panel_field(op.kz_field, p)
-        if packed
-            kernel! = _vertical_diffusion_cs_mass_dkg_packed_kernel!(backend, (8, 8))
+        column_tile = _cs_dkg_mass_workgroupsize(backend, FT)
+        tracer_tile = _cs_dkg_tracer_workgroupsize(backend, FT)
+        if packed && Nt > 1 && tracer_tile !== nothing
+            factor! = _vertical_diffusion_cs_dkg_factors_kernel!(backend, column_tile)
+            solve! = _vertical_diffusion_cs_mass_dkg_tracers_kernel!(backend, tracer_tile)
+            # Queue the read-only tracer solves after factor construction on
+            # the same backend stream. The panel synchronization completes both.
+            factor!(workspace.factors[p], air_mass[p], dkg, FT(dt), Nz, Hp;
+                    ndrange=(Nc, Ny))
+            solve!(rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Hp;
+                   ndrange=(Nc, Ny, Nt))
+        elseif packed
+            kernel! = _vertical_diffusion_cs_mass_dkg_packed_kernel!(backend, column_tile)
             kernel!(rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Nt, Hp; ndrange=(Nc, Ny))
         else
-            kernel! = _vertical_diffusion_cs_mass_dkg_kernel!(backend, (8, 8))
+            kernel! = _vertical_diffusion_cs_mass_dkg_kernel!(backend, column_tile)
             kernel!(rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Hp;
                     ndrange=(Nc, Ny))
         end

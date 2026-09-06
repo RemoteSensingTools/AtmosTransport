@@ -27,6 +27,14 @@ AtmosTransport.Operators.Advection._cs_packed_sweep_workgroupsize(
     ::CUDABackend, ::AtmosTransport.Operators.Advection.PPMScheme,
     ::Type{Float32}) = (32, 2)
 
+# Share one factorization per diffusion column, then distribute independent
+# tracer solves across warps. The tracer tile pairs two tracers while keeping
+# all 32 i cells of each warp contiguous. No extra workspace is required.
+AtmosTransport.Operators.Diffusion._cs_dkg_mass_workgroupsize(
+    ::CUDABackend, ::Type) = (32, 2)
+AtmosTransport.Operators.Diffusion._cs_dkg_tracer_workgroupsize(
+    ::CUDABackend, ::Type) = (32, 1, 2)
+
 AtmosTransport.Architectures.array_type(::GPU{:cuda}) = CuArray
 AtmosTransport.Architectures.device(::GPU{:cuda})     = CUDABackend()
 AtmosTransport.Architectures.architecture(::CUDA.AbstractGPUArray) = GPU(:cuda)

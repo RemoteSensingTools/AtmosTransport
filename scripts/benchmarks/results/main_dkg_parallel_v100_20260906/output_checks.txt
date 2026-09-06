@@ -1,0 +1,4 @@
+Test Summary:                         | Pass  Total  Time
+Full-day parallel Dkg output identity |  454    454  4.4s
+/tmp/atmos-dkg-day-profile-after median whole-run seconds=38.6349346815; median cumulative host bytes=6.413687048e9
+/tmp/atmos-dkg-parallel-day-after median whole-run seconds=29.5433961335; median cumulative host bytes=6.414270756e9

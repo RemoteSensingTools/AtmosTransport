@@ -188,9 +188,11 @@ this diffusion path reduces the maximum final Float32 relative tracer-total
 drift from `8.17e-7` to `3.14e-7`. All six final Float64 compensated totals
 match initialization; their maximum hourly relative drift is `1.98e-16`.
 The exploratory Float32 target `1e-7` is not met. All six final Float32
-column-mean fields are closer to the Float64 result. The 32-tracer day costs
-11.7% more wall time (`34.574` to `38.635` s median) with no new persistent
-workspace. These measurements cover one archive and do not bound multi-day drift.
+column-mean fields are closer to the Float64 result. The initial conservative solve
+costs `38.635` s median for the 32-tracer day; distributing CUDA tracer solves
+across threads reduces this to `29.543` s with identical output and no new
+persistent workspace. The earlier VMR solve with paired advection seams takes
+`34.574` s. These measurements cover one archive and do not bound multi-day drift.
 
 ## Dry-basis vs moist-basis
 

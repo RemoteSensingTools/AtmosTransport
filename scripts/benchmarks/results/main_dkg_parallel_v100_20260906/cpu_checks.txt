@@ -1,0 +1,20 @@
+Precompiling packages...
+  13491.0 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 30 seconds. 193 already precompiled.
+[ Info: JET hot-path modules: 152 reports (baseline 152)
+Test Summary:                             |  Pass  Total   Time
+Conservative Dkg mass solve and transpose | 12000  12000  11.8s
+Test Summary:                                 | Pass  Total  Time
+Dkg resolves weak transfers into empty layers |   78     78  0.6s
+Test Summary:                        | Pass  Total  Time
+Dkg leaves isolated layers bit-exact |    2      2  0.2s
+Test Summary:                                      | Pass  Total  Time
+Dkg validates all workspace panels before mutation |    4      4  0.2s
+Test Summary:                                     | Pass  Total  Time
+Dkg zero-carrier convention matches the VMR solve |    1      1  1.0s
+Test Summary:                                        | Pass  Total  Time
+Dkg closed interfaces do not pass rounding residuals |    2      2  0.3s
+Test Summary:        | Pass  Total   Time
+Aqua: package health |   10     10  11.2s
+Test Summary:                    | Pass  Total   Time
+JET: hot-path inference snapshot |    1      1  47.0s

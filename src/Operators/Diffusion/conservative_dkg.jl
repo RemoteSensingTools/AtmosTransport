@@ -147,3 +147,22 @@ end
         _dkg_diffuse_mass_column!(rm, air_mass, dkg_field, factors, dt, ii, jj, Nz, Hp, t)
     end
 end
+
+# Backend extensions may separate the tracer solves from factor construction.
+# Every tracer still uses the same column arithmetic and read-only factors.
+@inline _cs_dkg_mass_workgroupsize(backend, ::Type) = (8, 8)
+@inline _cs_dkg_tracer_workgroupsize(backend, ::Type) = nothing
+
+@kernel function _vertical_diffusion_cs_dkg_factors_kernel!(factors, @Const(air_mass),
+                                                           dkg_field, dt,
+                                                           Nz::Int, Hp::Int)
+    ii, jj = @index(Global, NTuple)
+    _dkg_factor_column!(factors, air_mass, dkg_field, dt, ii, jj, Nz, Hp)
+end
+
+@kernel function _vertical_diffusion_cs_mass_dkg_tracers_kernel!(rm, @Const(air_mass),
+                                                               dkg_field, @Const(factors),
+                                                               dt, Nz::Int, Hp::Int)
+    ii, jj, t = @index(Global, NTuple)
+    _dkg_diffuse_mass_column!(rm, air_mass, dkg_field, factors, dt, ii, jj, Nz, Hp, t)
+end

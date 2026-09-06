@@ -1,0 +1,15 @@
+Baseline cee9fed3, revamp/current-main (includes main a0698dde).
+CPU focused Dkg 12087, Aqua 10, JET 152 vs unchanged 152: pass.
+V100 old-launch whole-state comparisons 36: pass.
+V100 independent Dkg/adjoint/weak-exchange checks 6989800: pass.
+Full-day output identity/completeness/finite-field assertions 454: pass.
+Documentation links/maps 160: pass.
+Strict Documenter/VitePress build run with ATMOSTR_DOCS_BUILD_ONLY=true.
+GPU environment: tofu GPU0 V100 UUID GPU-59ee7ef9-898f-524a-dde1-7a0426a41ecb,
+Julia 1.12.6, CUDA.jl 5.11.3, CUDA runtime 12.6.
+Critical Codex self-review: see README; no additional agent used.
+
+SHA256 tested production sources:
+7284af5616c37fb3ddc242a692f95ab80bb5495db17c9576331eb7484dfbe5a6  src/Operators/Diffusion/conservative_dkg.jl
+15ba46f6a49c8e1ea23b2f33bbd94ae457b8dedf8daed2da6a11d121523919d2  src/Operators/Diffusion/operators.jl
+32699ef139bea442c92303d5208d915cfe676d6d46fbd6f70453e5ac23e5ef95  ext/AtmosTransportCUDAExt.jl

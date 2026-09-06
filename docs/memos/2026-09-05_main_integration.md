@@ -167,6 +167,16 @@ column errors and all six cross-precision final field errors improve. The full
 tracers pass. The 32-tracer day costs 38.635 s versus 34.574 s (11.7% more), with
 no new persistent workspace. No total normalization is applied.
 
+## Overnight follow-up: parallel diffusion
+
+[CUDA tracer parallelism](../../scripts/benchmarks/results/main_dkg_parallel_v100_20260906/README.md)
+recovers the conservative diffusion cost: the 32-tracer full-day run falls from
+38.635 to 29.543 s median (23.5%), with all output arrays exactly unchanged.
+A factor kernel runs once per column; independent tracer threads then read those
+factors. No workspace or numerical approximation is added. V100 checks cover
+partial blocks, signed tracers, weak exchanges, and adjoints through 65 tracers.
+Focused CPU/Aqua/JET checks and the strict documentation build pass.
+
 ## Remaining work
 
 - Evaluate whether reusing interior VMR buffers justifies the added initialization

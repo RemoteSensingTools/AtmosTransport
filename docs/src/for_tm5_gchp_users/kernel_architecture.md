@@ -102,6 +102,23 @@ reconstruction and limiter formulas are unchanged. CPU, Metal, Float64, and
 other schemes retain their existing launch defaults. This choice was measured
 on a V100; performance on other NVIDIA architectures has not been measured.
 
+## Precomputed diffusion and many tracers
+
+Precomputed cubed-sphere Dkg uses the
+[conservative mass-space solve](../theory/mass_conservation.md#Implicit-diffusion-and-roundoff).
+On CUDA, a 32×2 kernel first factors each atmospheric column. For packed states
+with multiple tracers, a second kernel assigns each column/tracer pair to its
+own thread, using a 32×1×2 block. Each warp reads contiguous `i` cells, and the
+two warps process different tracers. All tracers read the same factor buffer;
+no per-tracer factor storage or additional persistent workspace is needed.
+A single tracer uses the fused factor-and-solve kernel. CPU and Metal retain
+the fused column loop.
+
+Only the launch decomposition changes: weak transfers, compensated sums,
+background handling, and the adjoint equation retain their existing arithmetic.
+V100 launch checks compare all stored values against the serial kernel in both
+precisions, including halos and partial blocks through 65 tracers.
+
 ## Matrix convection and many tracers
 
 TM5 and CMFMC-matrix convection use the same backward-Euler solve after their

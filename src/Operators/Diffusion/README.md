@@ -30,6 +30,11 @@ retention/transfer passes. It shares factors across tracers, carries rounding
 residuals in registers, and preserves layers with no exchange exactly. There is
 no tracer-total normalization. The public VMR-level solver retains its Thomas
 implementation; state-mass entry points dispatch to the conservative path.
+On CUDA, packed states with multiple tracers factor each column once and then
+solve distinct column/tracer pairs in parallel. Factors are read-only during
+those solves; no extra workspace is allocated. CPU and Metal retain the fused
+column loop. The CUDA launch regression compares all stored values, including
+halos, against that serial kernel.
 
 ## Supported Layouts
 

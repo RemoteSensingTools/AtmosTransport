@@ -8,6 +8,25 @@ else
     expected = get(ENV,"ATMOSTR_DKG_GPU_NAME","A100")
     @assert !isempty(expected) && occursin(expected,CUDA.name(CUDA.device()))
     include(joinpath(@__DIR__,"..","helpers","conservative_dkg.jl"))
+    @testset "CUDA Dkg launch preserves serial results and halos" begin
+        for FT in (Float32, Float64), (Nc, Nz) in ((1, 1), (3, 66), (35, 3)), Nt in (1, 2, 3, 7, 32, 65)
+            m, d, rm = dkg_mass_fixture(FT, Nc, Nz, Nt, 40)
+            air, actual = map(CuArray, m), map(CuArray, rm)
+            expected = map(copy, actual)
+            field = Adapt.adapt(CuArray, DkgState.PrecomputedCSDkgField(d))
+            op = DkgDiff.ImplicitVerticalDiffusion(; kz_field=field)
+            workspace = DkgDiff.DiffusionWorkspace(air, 1, Nt)
+            serial! = DkgDiff._vertical_diffusion_cs_mass_dkg_packed_kernel!(
+                get_backend(actual[1]), (8, 8))
+            for p in 1:6
+                serial!(expected[p], air[p], DkgState.panel_field(field, p),
+                        workspace.factors[p], one(FT), Nz, Nt, 1; ndrange=(Nc, Nc))
+            end
+            CUDA.synchronize()
+            DkgDiff.apply_vertical_diffusion_vmr!(actual, air, op, workspace, one(FT); halo_width=1)
+            @test map(Array, actual) == map(Array, expected)
+        end
+    end
     @testset "CUDA conservative Dkg through 65 tracers" begin
         for FT in (Float32,Float64), (Nc,Nz) in ((3,66),(35,3)), Nt in (1,7,32,65), strength in (0,40)
             check_conservative_dkg(FT,Nc,Nz,Nt,strength;array_type=CuArray)

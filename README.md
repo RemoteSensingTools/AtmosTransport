@@ -7,7 +7,7 @@
 > upgrading. Broader Metal coverage and some inversion workflows still have
 > validation gaps, described in the status tables below.
 
-[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/)
+[![Documentation](https://img.shields.io/badge/docs-stable-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/)
 
 A Julia-based, GPU-portable atmospheric tracer transport model for offline
 chemistry / chemical-transport applications. Designed for **mass-conserving**
@@ -37,18 +37,20 @@ when unset.
 
 ## Documentation
 
-Full documentation lives at
-[RemoteSensingTools.github.io/AtmosTransport.jl](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/).
+The [stable manual](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/)
+describes the latest release. Use the
+[development manual](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/)
+when working from `main`, or select a version in the manual for older releases.
 The reading order:
 
-1. **[Start Here](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/getting_started/installation)** — installation, Julia orientation, zero-download quickstart, real meteorology, and output inspection.
-2. **[Architecture tour](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/concepts/architecture)** — the binary-to-model pipeline and source map.
-3. **[User Guide](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/concepts/grids)** — grids, state and basis, operators, and the binary contract.
-4. **[Workflows](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/config/toml_schema)** — runtime configuration and meteorology preprocessing.
-5. **[Examples](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/tutorials/_generated/synthetic_latlon)** — executable, Literate-driven tutorials.
-6. **[Theory & Validation](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/theory/mass_conservation)** — conservation, numerics, evidence, and known gaps.
-7. **[Learn adjoints](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/getting_started/adjoints)** — a checked emission footprint, then a synthetic inversion with explained observations, controls and priors.
-8. **[API Reference](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/api/)** — the curated public API and per-module docstrings.
+1. **[Start Here](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/getting_started/installation)** — installation, Julia orientation, zero-download quickstart, real meteorology, and output inspection.
+2. **[Architecture tour](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/concepts/architecture)** — the binary-to-model pipeline and source map.
+3. **[User Guide](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/concepts/grids)** — grids, state and basis, operators, and the binary contract.
+4. **[Workflows](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/config/toml_schema)** — runtime configuration and meteorology preprocessing.
+5. **[Examples](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/tutorials/_generated/synthetic_latlon)** — executable, Literate-driven tutorials.
+6. **[Theory & Validation](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/theory/mass_conservation)** — conservation, numerics, evidence, and known gaps.
+7. **[Learn adjoints](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/getting_started/adjoints)** — a checked emission footprint, then a synthetic inversion with explained observations, controls and priors.
+8. **[API Reference](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/api/)** — the curated public API and per-module docstrings.
 
 ## Features
 
@@ -84,7 +86,7 @@ The reading order:
 > with checkpointing, covariance preconditioning, and optimization drivers.
 > Coverage is not universal: the optimized/clamped convection variants and
 > TM5-4DVAR cross-validation remain open. See
-> [Adjoint status](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/theory/adjoint_status)
+> [Adjoint status](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/theory/adjoint_status)
 > for details.
 
 ## Architecture
@@ -301,7 +303,7 @@ documented validation run.
   cross-model validation campaign.
 - **Multi-month + observational closure:** *not yet done*; the cross-model and
   observation intercomparison reports have not been published. See
-  [Validation status](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/theory/validation_status)
+  [Validation status](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/theory/validation_status)
   for the honest current-state report.
 
 ## References

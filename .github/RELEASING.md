@@ -8,6 +8,16 @@
    pass and the registry merges it.
 4. General's `JuliaTagBot` notification triggers `TagBot.yml`, which creates
    the version tag and GitHub release. A manual workflow dispatch can retry it.
+5. Check the Documentation run triggered by the tag. Confirm that `stable`
+   reports the new version and that the release notes link to its versioned
+   manual (currently `vMAJOR.MINOR/`, such as `v0.4/`). README entry links use
+   `stable/`; the separate `dev/` link follows `main`.
+
+Keep `.nojekyll` at the root of `gh-pages`. Without it, GitHub Pages filters
+out `tutorials/_generated/` even when the documentation build succeeds.
+Check a live tutorial URL after deployment, as well as `siteinfo.js` for
+the version. The root `index.html` redirects to `stable/`; deployments should
+preserve both root files.
 
 TagBot uses the repository-scoped `TAGBOT_SSH_KEY` deploy key to push tags so
 the Documentation workflow runs for versioned docs. Its GitHub token uses this

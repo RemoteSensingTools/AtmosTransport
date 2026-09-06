@@ -26,6 +26,22 @@ Pre.windows_per_day(::_MockMetSettings, ::Date) = 4
 Pre.has_convection(::_MockMetSettings) = false
 Pre.has_surface(::_MockMetSettings)    = false
 
+@testset "Public capability queries include preprocessing settings" begin
+    settings = _MockMetSettings("capability probe")
+    @test AT.has_surface === Pre.has_surface === AT.MetDrivers.has_surface
+    @test AT.has_vdiff_fields === Pre.has_vdiff_fields === AT.MetDrivers.has_vdiff_fields
+    @test AT.has_surface(settings) === false
+    @test AT.has_vdiff_fields(settings) === false
+    for (surface, vdiff, expected_surface) in ((false,false,false), (true,false,true),
+                                              (false,true,true), (true,true,true))
+        geos = Pre.GEOSITSettings(; root_dir="/tmp/does_not_exist", Nc=24,
+                                   include_surface=surface, include_vdiff_fields=vdiff,
+                                   include_convection=false)
+        @test AT.has_surface(geos) === expected_surface
+        @test AT.has_vdiff_fields(geos) === vdiff
+    end
+end
+
 mutable struct _MockReader{FT, CP, V} <:
                 Pre.AbstractMetReader{FT, _MockMetSettings, CP}
     settings :: _MockMetSettings

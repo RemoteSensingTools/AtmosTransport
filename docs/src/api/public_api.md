@@ -30,6 +30,8 @@ model = run_driven_simulation(cfg)
 |---|---|
 | `inspect_binary(path)` | Print header/capability information and return capability flags. |
 | `binary_capabilities(reader)` | Summarize operator payload support for an open reader. |
+| `has_surface(reader_or_settings)` | Query PBL surface payloads in a binary reader, or configured surface-field support in preprocessing settings. |
+| `has_vdiff_fields(reader_or_settings)` | Query GCHP vertical-diffusion payloads in a reader, or configured support in preprocessing settings. |
 | `TransportBinaryReader`, `TransportBinaryHeader` | Read current version-4 binaries on any supported topology. |
 | `TransportBinaryDriver` | Runtime met driver shared by lat-lon, reduced-Gaussian, and cubed-sphere binaries. |
 | `load_transport_window(driver, i)` | Load a runtime forcing window. |

@@ -23,6 +23,12 @@ cubed-sphere-specific data paths.
 - ERA5-specific stack:
   [`ERA5/README.md`](ERA5/README.md)
 
+The public `has_surface` and `has_vdiff_fields` functions also accept
+preprocessing `AbstractMetSettings`. `Preprocessing` imports these same
+generics before defining its settings methods, so qualified and top-level
+queries agree. Reader methods inspect declared binary payloads; settings
+methods report configured source support without reading meteorological files.
+
 ## What This Folder Owns
 
 - The abstract met-driver capability contract used by `DrivenSimulation`

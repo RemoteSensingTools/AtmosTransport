@@ -56,7 +56,10 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 
 The first run downloads packages and precompiles them. It can take several
 minutes and may appear quiet for short periods. Later starts reuse the compiled
-cache.
+cache. The transport runner, transport preprocessor, LL-to-CS binary regridder,
+CS inversion driver, and binary-to-NetCDF converter import the installed project
+package and reuse that cache. Launch these scripts with `--project=.` from this
+checkout so Julia selects the matching source and dependencies.
 
 ## 4. Verify the package loads
 

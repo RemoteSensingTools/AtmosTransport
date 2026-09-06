@@ -29,9 +29,8 @@ using Logging
 using TOML
 using Dates
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
-using .AtmosTransport.Preprocessing
+using AtmosTransport
+using AtmosTransport.Preprocessing
 
 function _parse_cli(args::Vector{String})
     usage = "Usage: preprocess_transport_binary.jl <config.toml> " *

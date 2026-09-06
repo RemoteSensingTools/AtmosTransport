@@ -41,9 +41,8 @@
 using Logging
 using Dates
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
-using .AtmosTransport.Preprocessing: regrid_transport_binary, build_target_geometry
+using AtmosTransport
+using AtmosTransport.Preprocessing: regrid_transport_binary, build_target_geometry
 
 const USAGE = """
 Usage: julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl \\

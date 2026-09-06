@@ -1,0 +1,85 @@
+using AtmosTransport, Test
+const PackingIC = AtmosTransport.Models.InitialConditionIO
+const PackingRunner = AtmosTransport.Models.DrivenRunner
+
+@testset "Cubed-sphere initialization into packed storage" begin
+    @testset "Signed dry/moist conversion and independent slots" begin
+        for FT in (Float32, Float64), Hp in (0, 2)
+            Nc, Nz = 3, 4
+            mesh = CubedSphereMesh(; Nc, Hp, FT)
+            grid = AtmosGrid(mesh, HybridSigmaPressure(zeros(FT,Nz+1),
+                             FT.(range(0,1;length=Nz+1))), CPU(); FT)
+            air = ntuple(p -> FT[100p + 10k + 2j + i
+                                for i in 1:Nc+2Hp, j in 1:Nc+2Hp, k in 1:Nz], 6)
+            vmr = ntuple(p -> FT[(-1)^(i+j+k+p) * (p+i+j+k)*1e-6
+                                for i in 1:Nc, j in 1:Nc, k in 1:Nz], 6)
+            qv = ntuple(p -> FT[(p+i+j+k)*1e-3
+                               for i in 1:Nc+2Hp, j in 1:Nc+2Hp, k in 1:Nz], 6)
+            originals = deepcopy((air, vmr, qv))
+            for humidity in (nothing, qv)
+                raw = ntuple(p -> fill(FT(-99), size(air[p])..., 3), 6)
+                destination = map(a -> selectdim(a, 4, 2), raw)
+                result = PackingIC._cs_pack_interior_into_halo!(destination, grid, air, vmr, humidity)
+                @test result === destination
+                allocated = pack_initial_tracer_mass(grid, air, vmr;
+                    mass_basis = humidity === nothing ? DryBasis() : MoistBasis(), qv=humidity)
+                for p in 1:6
+                    expected = zeros(FT, size(air[p]))
+                    for k in 1:Nz, j in 1:Nc, i in 1:Nc
+                        value = vmr[p][i,j,k] * air[p][Hp+i,Hp+j,k]
+                        expected[Hp+i,Hp+j,k] = humidity === nothing ? value :
+                            value * (1 - humidity[p][Hp+i,Hp+j,k])
+                    end
+                    @test destination[p] == expected
+                    @test allocated[p] == expected
+                    @test all(==(FT(-99)), raw[p][:,:,:,1])
+                    @test all(==(FT(-99)), raw[p][:,:,:,3])
+                end
+                @test isequal((air,vmr,qv), originals)
+            end
+            bad_out = ntuple(_ -> zeros(FT,1,1,1),6)
+            @test_throws DimensionMismatch PackingIC._cs_pack_interior_into_halo!(bad_out, grid, air, vmr, nothing)
+            bad_vmr = ntuple(_ -> zeros(FT,1,1,1),6)
+            @test_throws DimensionMismatch pack_initial_tracer_mass(grid, air, bad_vmr; mass_basis=DryBasis())
+            bad_qv = ntuple(_ -> zeros(FT,1,1,1),6)
+            @test_throws DimensionMismatch pack_initial_tracer_mass(grid, air, vmr; mass_basis=MoistBasis(),qv=bad_qv)
+        end
+    end
+
+    @testset "Runner preserves packed order and per-tracer values" begin
+        for FT in (Float32, Float64), nt in (1, 6, 7, 17, 32, 64)
+            Nc, Hp, Nz = 3, 1, 4
+            mesh = CubedSphereMesh(; Nc, Hp, FT)
+            grid = AtmosGrid(mesh, HybridSigmaPressure(zeros(FT,Nz+1),
+                             FT.(range(0,1;length=Nz+1))), CPU(); FT)
+            air = ntuple(p -> fill(FT(1000+p),Nc+2Hp,Nc+2Hp,Nz),6)
+            ps = ntuple(p -> fill(FT(80000+1000p),Nc,Nc),6)
+            configs = Dict(Symbol("tracer", lpad(i,2,'0')) =>
+                (i % 3 == 0 ? Dict{String,Any}("kind"=>"pressure_layer", "psurf_fraction"=>0.5,
+                                               "total_molecules"=>1e28) :
+                              Dict{String,Any}("kind"=>"uniform", "background"=>(-1)^i * i*1e-6))
+                for i in 1:nt)
+            # Retain the preceding runner's two-dictionary construction, including
+            # resize-dependent order at tracer counts 17 and 64.
+            previous = Dict{Symbol,typeof(air)}()
+            for (name, cfg) in configs
+                vmr = build_initial_mixing_ratio(air,grid,cfg;surface_pressure=ps)
+                previous[name] = pack_initial_tracer_mass(grid,air,vmr;mass_basis=DryBasis())
+            end
+            reference = CubedSphereState(DryBasis,mesh,air;previous...)
+            state = PackingRunner._initialize_cs_dry_state(grid,air,configs;surface_pressure=ps)
+            @test tracer_names(state) == tracer_names(reference)
+            @test state.air_mass === air
+            @test AtmosTransport.State.halo_width(state) == Hp
+            for name in tracer_names(state)
+                @test get_tracer(state,name) == get_tracer(reference,name)
+            end
+            @test all(size(a) == (Nc+2Hp,Nc+2Hp,Nz,nt) for a in state.tracers_raw)
+            first_name = first(tracer_names(state))
+            get_tracer(state,first_name)[1][Hp+1,Hp+1,1] = FT(123)
+            @test get_tracer(reference,first_name)[1][Hp+1,Hp+1,1] != FT(123)
+            @test air[1][Hp+1,Hp+1,1] == FT(1001)
+            @test_throws ArgumentError PackingRunner._initialize_cs_dry_state(grid,air,Dict();surface_pressure=ps)
+        end
+    end
+end

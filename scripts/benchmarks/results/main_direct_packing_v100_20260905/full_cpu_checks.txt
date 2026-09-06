@@ -1,0 +1,4 @@
+Julia 1.12.6; four Julia threads; GPUs hidden
+117 core files plus regridding/runtests.jl
+{'Pass': 83556, 'Fail': 0, 'Error': 0, 'Broken': 22, 'Total': 83578}
+411 test summaries; test suite complete; process exit 0

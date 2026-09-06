@@ -32,7 +32,7 @@ documents the archive's experimental convection cadence.
 |---|---|---:|---:|
 | 6 | Median whole-run time | 3.625 s | 1.940 s |
 | 6 | Median cumulative host allocation | 1.974 GB | 1.041 GB |
-| 32 | Median whole-run time | 15.675 s | 5.675 s |
+| 32 | Median whole-run time | 15.556 s | 5.675 s |
 | 32 | Median cumulative host allocation | 7.252 GB | 2.275 GB |
 
 The 32-tracer run is 63.5% faster with 68.6% less cumulative host allocation in

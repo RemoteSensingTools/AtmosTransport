@@ -400,13 +400,26 @@ function _cs_pack_interior_into_halo(grid::AtmosGrid{<:CubedSphereMesh},
                                      air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                      vmr::NTuple{6, <:AbstractArray{FT, 3}},
                                      qv::Union{Nothing, NTuple{6}}) where FT
+    out = ntuple(p -> Array{FT}(undef, size(air_mass[p])), CS_PANEL_COUNT)
+    return _cs_pack_interior_into_halo!(out, grid, air_mass, vmr, qv)
+end
+
+# Destination panels must be independent of air_mass, vmr, and qv. The allocating
+# API owns its output; the driven runner supplies views into fresh packed storage.
+function _cs_pack_interior_into_halo!(out::NTuple{6, <:AbstractArray{FT, 3}},
+                                      grid::AtmosGrid{<:CubedSphereMesh},
+                                      air_mass::NTuple{6, <:AbstractArray{FT, 3}},
+                                      vmr::NTuple{6, <:AbstractArray{FT, 3}},
+                                      qv::Union{Nothing, NTuple{6}}) where FT
     mesh = grid.horizontal
     Nc = mesh.Nc
     Hp = mesh.Hp
-    out = ntuple(p -> zeros(FT, size(air_mass[p])...), CS_PANEL_COUNT)
     for p in 1:CS_PANEL_COUNT
+        size(out[p]) == size(air_mass[p]) || throw(DimensionMismatch(
+            "CS panel $p: destination has shape $(size(out[p])), expected $(size(air_mass[p]))"))
         size(vmr[p]) == (Nc, Nc, size(air_mass[p], 3)) || throw(DimensionMismatch(
             "CS panel $p: vmr has shape $(size(vmr[p])), expected $((Nc, Nc, size(air_mass[p], 3)))"))
+        fill!(out[p], zero(FT))
         interior_am = @view air_mass[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]
         interior_out = @view out[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]
         if qv === nothing

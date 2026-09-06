@@ -80,7 +80,10 @@ read.
   Numerical state, flux arrays, and workspaces persist across input files;
   `DrivenSimulation` refreshes forcing, diffusion geometry, and caches.
   CS GPU setup transfers state first so workspace constructors allocate scratch
-  directly on the device, avoiding temporary CPU workspaces.
+  directly on the device, avoiding temporary CPU workspaces. CS initialization
+  converts one tracer at a time directly into its final packed state slot,
+  using the shared VMR-to-storage conversion and preserving signed values,
+  zero halos, and the existing tracer order.
 - [`initial_conditions/`](initial_conditions/) — cubed-sphere initialization,
   surface-inventory loading and storage-unit conversion, and conservative
   surface-flux remapping, included inside `InitialConditionIO`.

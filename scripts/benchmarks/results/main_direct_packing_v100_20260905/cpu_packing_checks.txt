@@ -1,0 +1,5 @@
+Precompiling packages...
+  13064.3 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 15 seconds. 193 already precompiled.
+Test Summary:                                   | Pass  Total   Time
+Cubed-sphere initialization into packed storage |  558    558  21.2s

@@ -689,8 +689,9 @@ end
 
 Convert dry volume mixing ratio `vmr_dry` to conservative model storage
 matching the binary's mass-basis contract. On `DryBasis` that storage is
-`vmr_dry × dry_air_mass`; it is not physical kg species. Returns an array of
-the same shape as `air_mass`.
+`vmr_dry × dry_air_mass`; it is not physical kg species. Returns new storage
+with the same shape as `air_mass`. On cubed-sphere grids this is a six-tuple
+of halo-padded panels, with the halos set to zero.
 
 ## Dispatch
 
@@ -704,11 +705,11 @@ CS dispatch handles per-panel halo packing.
 
 ## Arguments
 
-- `grid`           — `AtmosGrid{<:LatLonMesh}` or `AtmosGrid{<:ReducedGaussianMesh}`
-                     (CS added in 1c).
-- `air_mass`       — storage-shaped air mass from the transport
-                     window. Shape matches `vmr_dry`.
-- `vmr_dry`        — dry volume mixing ratio, same shape as `air_mass`.
+- `grid`           — `AtmosGrid` with a lat-lon, reduced-Gaussian, or cubed-sphere mesh.
+- `air_mass`       — storage-shaped air mass from the transport window;
+                     a six-tuple of halo-padded 3D panels on cubed-sphere grids.
+- `vmr_dry`        — dry volume mixing ratio. On cubed-sphere grids, a six-tuple
+                     of interior 3D panels; otherwise the same shape as `air_mass`.
 - `mass_basis`     — `DryBasis()` or `MoistBasis()`.
 - `qv`             — specific humidity, same shape as `air_mass`;
                      required iff `mass_basis isa MoistBasis`.

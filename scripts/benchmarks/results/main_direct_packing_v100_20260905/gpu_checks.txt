@@ -1,0 +1,2 @@
+Test Summary:                              | Pass  Total     Time
+CS multifile GPU physics and CPU reference |   75     75  2m54.8s

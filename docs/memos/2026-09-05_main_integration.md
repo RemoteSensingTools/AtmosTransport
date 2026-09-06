@@ -56,11 +56,12 @@ pass; maximum relative total-storage drift is 2.572e-6. See the complete
 ## Main-based validation
 
 The complete Julia 1.12.6 CPU baseline (`julia --startup-file=no --project=test test/runtests.jl`, four Julia threads,
-GPUs hidden) passes 82,059 checks across
-115 core files plus the regridding runner after output, input, staging, and
-direct device workspace integration. There are 22 existing skips or
-expected-broken checks and no failures. Aqua passes; JET reports 142 findings
-against main's unchanged 144-report allowance. The run includes signed
+GPUs hidden) passes 83,556 checks across
+117 core files plus the regridding runner after output, input, staging, device
+workspace, pressure-layer typing, and direct tracer-packing integration. There are 22 existing skips or
+expected-broken checks and no failures. Aqua passes. The final focused JET
+check reports 142 findings against main's unchanged 144-report allowance after
+restricting the new initialization helper to CS grids and six-panel arrays. The run includes signed
 advection, signed native initialization, surface-inventory conversions, model
 construction, and the extracted runner's CLI workflow.
 
@@ -92,19 +93,26 @@ whole-run speedup.
 
 [Pressure-layer configuration typing](2026-09-05_main_pressure_initialization.md)
 removes 4.98 GB of temporary scalar allocation from 32-tracer initialization.
-The corresponding real V100 workload now takes 5.675 s versus 15.675 s at the
+The corresponding real V100 workload now takes 5.675 s versus 15.556 s at the
 preceding checkpoint; all 196 output arrays remain exactly equal. Focused
-scientific initialization and Aqua/JET checks pass. The complete CPU suite
-count above still describes the preceding device-workspace checkpoint.
+scientific initialization and Aqua/JET checks pass; these changes are included
+in the complete CPU suite above.
 
 The maintained preprocessing, regridding, inversion, and snapshot-converter
 entry points now [reuse the compiled package](2026-09-05_main_package_loading.md).
 Their existing CLI/regridding/inversion suites and a signed converter smoke pass.
 
+[Direct state packing](2026-09-05_main_direct_packing.md) removes the next
+467 MB of temporary 32-tracer storage. The same real V100 workload now takes
+5.030 s with 1.808 GB cumulative host allocation, versus 5.675 s and 2.275 GB
+at the pressure-typing checkpoint. All 196 output arrays remain exactly equal;
+75 GPU file-handoff physics checks also pass.
+
 ## Remaining integration work
 
-- Extend the measured CS device-allocation approach to other startup costs
-  only after profiling; host initial-condition packing still allocates heavily.
+- Profile the remaining initial-VMR construction and steady-state transport
+  costs before further changes. Distinguish isolated GPU work from waits for
+  earlier launches at synchronization boundaries.
 - Retain current signed-tracer conservation and output-total contracts.
 - Reconcile scientific documentation and package-loading improvements.
 - Repeat CPU and GPU runtime validation after the remaining I/O ports. Compare

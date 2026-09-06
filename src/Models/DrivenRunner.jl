@@ -76,7 +76,7 @@ using ...SectionTimer
 using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
-using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, nlevels
+using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, nlevels
 using ..Operators: LinRoodPPMScheme, PPMScheme, SlopesScheme, UpwindScheme,
                   ImplicitVerticalDiffusion,
                   uses_diffusive_surface_flux_boundary,
@@ -94,7 +94,7 @@ using ..MetDrivers: AbstractMetDriver, TransportBinaryDriver,
                      inspect_binary, steps_per_window,
                      steps_per_window_schedule, release_payload!
 using ..InitialConditionIO: build_initial_mixing_ratio,
-                             pack_initial_tracer_mass,
+                             pack_initial_tracer_mass, _cs_pack_interior_into_halo!,
                              build_surface_flux_sources
 using ..BinaryPathExpander: expand_binary_paths
 using ..InputStaging: InputStager, staged_path_for!, cleanup_staging!
@@ -644,15 +644,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
               "(`regrid_ll_transport_binary_to_cs.jl --mass-basis dry`), " *
               "or extend the CS window + this runner to thread qv.")
 
-    tracer_kwargs = Dict{Symbol, NTuple{6, typeof(air_mass[1])}}()
-    for (name, init_cfg) in tracer_init
-        vmr = build_initial_mixing_ratio(air_mass, grid, init_cfg;
-                                         surface_pressure = window1.surface_pressure)
-        tracer_kwargs[name] = pack_initial_tracer_mass(grid, air_mass, vmr;
-                                                       mass_basis = BasisT())
-    end
-
-    state  = CubedSphereState(BasisT, mesh, air_mass; tracer_kwargs...)
+    state = _initialize_cs_dry_state(grid, air_mass, tracer_init;
+                                     surface_pressure = window1.surface_pressure)
     fluxes = _allocate_cs_runner_fluxes(mesh, Nz, FT, BasisT)
     # Workspace constructors allocate with `similar(state.air_mass[1])`.
     # Move prognostic storage first so scratch is created on the target backend,

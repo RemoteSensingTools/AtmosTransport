@@ -17,6 +17,12 @@ the [architecture tour](src/concepts/architecture.md).
 Tracer state is deliberately independent of file-I/O policy. The driver
 provides typed `TransportWindow`s; the model only consumes prepared fields.
 
+Cubed-sphere startup allocates packed tracer storage once and converts one
+initial VMR field at a time into that storage. The shared initial-condition
+packer retains signed values and zeros the halos; a small name-to-index map
+preserves the existing packed tracer order. This runner path requires dry-basis
+binaries because CS windows do not carry the humidity needed for moist packing.
+
 The runner retains numerical state and workspaces across input files. Each
 new simulation refreshes forcing and diffusion geometry, invalidates derived
 convection caches, and continues the accumulated clock. GPU startup reads the

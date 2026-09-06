@@ -1,0 +1,9 @@
+Test Summary:                    | Pass  Total   Time
+JET: hot-path inference snapshot |    1      1  42.4s
+Precompiling packages...
+  13166.4 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 14 seconds. 193 already precompiled.
+[ Info: JET hot-path modules: 142 reports (baseline 144)
+[ Info: JET baseline can be tightened: 142 < 144. Lower JET_HOT_PATH_BASELINE in test_jet.jl when this is stable.
+Test Summary:                                   | Pass  Total   Time
+Cubed-sphere initialization into packed storage |  558    558  20.6s

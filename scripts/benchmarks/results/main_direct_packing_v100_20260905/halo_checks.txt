@@ -1,0 +1,4 @@
+Halo probe: C90 CubedSphereMesh{Float32, GEOSNativePanelConvention, gmao_equal_distance}; L66 Float32 panel-marker fields
+Test Summary:                     | Pass  Total   Time
+Isolated halo GPU/CPU equivalence |   24     24  23.5s
+Halo measurements complete

@@ -14,7 +14,7 @@ the same dry VMR. Signed native initialization and other initializers are unchan
 The current manual now explains these pressure-layer semantics.
 
 On tofu's V100, the actual two-hour C90 L66 32-tracer workload improves from
-15.675 s to 5.675 s median, while cumulative host allocation falls from 7.252 GB
+15.556 s to 5.675 s median, while cumulative host allocation falls from 7.252 GB
 to 2.275 GB. All 196 output arrays remain exactly equal. This is a startup-heavy,
 warm-cache workload; it does not imply a 63.5% speedup in transport kernels or
 long production runs. See the [scripts, measurements, and validation](../../scripts/benchmarks/results/main_pressure_init_v100_20260905/README.md).

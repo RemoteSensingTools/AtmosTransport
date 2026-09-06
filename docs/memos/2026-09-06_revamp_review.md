@@ -47,7 +47,7 @@ complete meteorological adjoint or full TM5/GCHP forcing parity.
   API still requires the full-column, unmerged legacy variant.
 - A [32-thread CUDA Float64 PPM launch](../../scripts/benchmarks/results/main_f64_ppm_tiles_v100_20260906/README.md)
   reduces the same six-/32-tracer days from fresh baselines of 21.590/63.061 s
-  to 17.455/47.482 s. Complete native Float64 states remain byte-identical;
+  to 17.455/47.482 s. Complete native Float64 tracer storage remains byte-identical;
   the change only reduces launch padding and adds no workspace.
 - The convection shared-memory buffer holds batches of six tracers, not a
   six-species model limit. The collaborative solver is tested through 65
@@ -83,6 +83,14 @@ indices, boundaries, and fixed-meteorology assumptions beside their equations.
 The public initial-condition builder owns fresh arrays; private runner reuse
 must never expose shared tracer storage. Test checks cover this ownership and
 signed-field contract in addition to conserved totals.
+
+The field-layout and storage-unit docstrings for `CellState` and
+`CubedSphereState` now attach to the public types. Previously those sections
+were attached to private validation helpers, so public Julia help omitted them.
+Before/after documentation-binding probes confirm the repair. Critical Codex
+self-review and two executable-syntax comparisons verify unchanged constructors,
+validation, and storage layout; 191 documentation checks and the strict manual
+build pass.
 
 Before adopting further changes, use actual profiling to choose the next cost,
 keep independent scientific probes, and validate the changed path. Do not

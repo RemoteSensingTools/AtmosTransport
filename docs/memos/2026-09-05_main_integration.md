@@ -214,7 +214,7 @@ export and unavailable top-level settings method without changing payload tests.
 The [V100 launch comparison](../../scripts/benchmarks/results/main_f64_ppm_tiles_v100_20260906/README.md)
 reduces the six-tracer day from 21.590 to 17.455 s and the 32-tracer day from
 63.061 to 47.482 s by using 32-thread rows for CUDA Float64 PPM. All saved
-arrays and native Float64 states remain byte-identical. Existing production
+arrays and native Float64 tracer storage remain byte-identical. Existing production
 GPU diagnostics pass 3,116 checks through 65 tracers, including partial rows,
 copy-back and ping-pong wrappers, signed storage, halos, and paired adjoints.
 No arithmetic, workspace ownership, or other backend policy changes.

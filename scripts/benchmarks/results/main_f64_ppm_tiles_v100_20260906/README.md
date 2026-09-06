@@ -44,7 +44,7 @@ counts, and all three layouts. Every saved array is exactly equal to the
 preceding collaborative-convection reference, including compensated tracer
 totals. The NetCDF snapshot fields are Float32 even for a Float64 model, so
 sample 1 also saves every final packed panel in native Float64 precision.
-All 12 file-size/hash checks pass: these full states are byte-identical,
+All 12 file-size/hash checks pass: the complete tracer storage is byte-identical,
 including all 66 layers, tracers, and halo cells.
 
 The isolated sweep experiment passes another 240 identity/finite checks on

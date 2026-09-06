@@ -61,8 +61,8 @@ read.
 - [`BinaryPathExpander.jl`](BinaryPathExpander.jl) —
   `expand_binary_paths(input_cfg)` resolves either an explicit
   `binary_paths = [...]` list or a `folder + start_date + end_date
-  (+ file_pattern)` shape to a sorted `Vector{String}`; continuity
-  check on the closed date range
+  (+ file_pattern)` shape. Explicit lists retain their order; folder selection
+  sorts by date and checks continuity on the closed date range.
 - [`DrivenRunner.jl`](DrivenRunner.jl) — library-level
   `run_driven_simulation(cfg)` entry point for all driven runs. Owns the
   runtime flow behind `scripts/run_transport.jl`: first-driver
@@ -109,6 +109,15 @@ To follow a TOML physics option from input to execution:
 | Check the forcing | [`RuntimePhysicsRecipe.jl`](RuntimePhysicsRecipe.jl) | Assemble operators and check required binary capabilities. |
 | Allocate state and workspaces | [`runner/model_setup.jl`](runner/model_setup.jl) | Initialize tracer storage and build workspaces on its backend. |
 | Advance the model | [`TransportModel.jl`](TransportModel.jl), [`DrivenSimulation.jl`](DrivenSimulation.jl) | Execute operator blocks and refresh forcing across meteorological windows. |
+
+The public runner calls `validate_config` before the startup handoff into its
+runtime implementation. Its checks live in
+[`runner/configuration.jl`](runner/configuration.jl): table shapes first,
+then path existence, precision/backend compatibility, and integer window
+bounds. Tracer initialization and surface-flux values must be subtables.
+The validator opens no binaries or model state; GPU auto-detection can still
+probe optional runtimes. The CLI checks architecture shape before its separate
+backend preload.
 
 Matrix-convection solver eligibility is checked when the state backend,
 precision, and vertical depth are known. Parsing `use_collab_lu=true` is a

@@ -1,5 +1,5 @@
 # ===========================================================================
-# TOML parsing — tracer specs (hoisted from run_transport_binary.jl:57-100)
+# TOML parsing — tracer specifications
 # ===========================================================================
 
 """
@@ -85,18 +85,52 @@ function _capture_config_error!(f, errors::Vector{String})
     return errors
 end
 
+function _check_config_table!(value, label, errors)
+    value isa AbstractDict && return true
+    push!(errors, "$(label) must be a TOML table; got $(typeof(value)).")
+    return false
+end
+
+# Check container shapes before calling get/pairs on their contents. In
+# particular, malformed tracer subtables must not survive until initialization.
+function _check_config_table_shapes!(cfg, errors)
+    for name in ("input", "architecture", "numerics", "run", "advection",
+                 "diffusion", "convection", "chemistry", "output", "tracers")
+        haskey(cfg, name) || continue
+        _check_config_table!(cfg[name], "[$name]", errors)
+    end
+
+    tracers = get(cfg, "tracers", nothing)
+    tracers isa AbstractDict || return nothing
+    for (name, tracer) in pairs(tracers)
+        label = "[tracers.$name]"
+        _check_config_table!(tracer, label, errors) || continue
+        for section in ("init", "surface_flux")
+            haskey(tracer, section) || continue
+            _check_config_table!(tracer[section], "[tracers.$name.$section]", errors)
+        end
+    end
+    return nothing
+end
+
+function _run_window_index(run_cfg, key, default)
+    value = get(run_cfg, key, default)
+    value isa Integer && !(value isa Bool) || throw(ArgumentError(
+        "[run] $key must be an integer; got $(repr(value))."))
+    return Int(value)
+end
+
 function _check_run_window_bounds!(cfg, errors::Vector{String})
     run_cfg = get(cfg, "run", Dict{String, Any}())
-    start_raw = get(run_cfg, "start_window", 1)
-    stop_raw = get(run_cfg, "stop_window", nothing)
     _capture_config_error!(errors) do
-        start_window = Int(start_raw)
+        start_window = _run_window_index(run_cfg, "start_window", 1)
         start_window >= 1 ||
-            throw(ArgumentError("[run] start_window must be >= 1; got $(start_raw)."))
-        if stop_raw !== nothing
-            stop_window = Int(stop_raw)
+            throw(ArgumentError("[run] start_window must be >= 1; got $(start_window)."))
+        # Programmatic configurations may use nothing for an open-ended run.
+        if get(run_cfg, "stop_window", nothing) !== nothing
+            stop_window = _run_window_index(run_cfg, "stop_window", nothing)
             stop_window >= start_window ||
-                throw(ArgumentError("[run] stop_window=$(stop_raw) must be >= start_window=$(start_window)."))
+                throw(ArgumentError("[run] stop_window=$(stop_window) must be >= start_window=$(start_window)."))
         end
     end
     return nothing
@@ -105,14 +139,22 @@ end
 """
     validate_config(cfg::AbstractDict) -> (ok::Bool, errors::Vector{String})
 
-Run inexpensive pre-flight checks for a driven runtime config: input shape,
-resolved binary paths, numeric type, backend/float compatibility, tracer table
-shape, and basic run-window bounds. It does not open binary readers or allocate
-model state; topology and payload capability checks still run when
-`run_driven_simulation` inspects the first binary.
+Check a driven runtime config and return errors without opening binary readers
+or allocating model state. Checks cover runtime table shapes (including tracer
+`init` and `surface_flux` subtables), resolved binary paths, numeric type,
+backend/float compatibility, and integer run-window bounds. Shape errors are
+reported before value checks. Window indices accept integers, not Booleans or
+floating-point values.
+
+This is not a complete physics or binary validation. Topology and payload
+capability checks run when `run_driven_simulation` inspects the first binary.
+GPU backend auto-detection can load and probe optional runtime packages.
 """
 function validate_config(cfg::AbstractDict)
     errors = String[]
+
+    _check_config_table_shapes!(cfg, errors)
+    isempty(errors) || return false, errors
 
     input_cfg = get(cfg, "input", nothing)
     if !(input_cfg isa AbstractDict)
@@ -139,12 +181,8 @@ function validate_config(cfg::AbstractDict)
     end
 
     tracers_cfg = get(cfg, "tracers", nothing)
-    if tracers_cfg !== nothing
-        if !(tracers_cfg isa AbstractDict)
-            push!(errors, "[tracers] must be a TOML table of tracer subtables.")
-        elseif isempty(tracers_cfg)
-            push!(errors, "[tracers] was provided but contains no tracer subtables.")
-        end
+    if tracers_cfg !== nothing && isempty(tracers_cfg)
+        push!(errors, "[tracers] was provided but contains no tracer subtables.")
     end
 
     _check_run_window_bounds!(cfg, errors)

@@ -143,6 +143,29 @@ Benchmark links use the recorded Git commit so they resolve from the published
 manual as well as the repository. No GPU run is needed for these prose and
 diagnostic changes.
 
+The next runtime-readability pass found reproducible preflight defects:
+`run = 7` threw a `MethodError`, while scalar tracer/initialization definitions
+and `start_window = true` returned success. Runtime tables and nested tracer
+tables now receive a shape check before their contents are read; window
+indices must be non-Boolean integers. The public runner validates before its
+startup handoff, and the CLI's backend preload also diagnoses a malformed
+architecture table. Valid transport calculations and the world-age trampoline
+are unchanged. Preflight still does not validate binary payloads, and GPU
+auto-detection can probe optional runtimes.
+
+The guide now includes a callable preflight example and accurately distinguishes
+explicit input order from sorted, continuity-checked folder expansion. Source
+docstrings no longer promise absolute paths or errors for unrelated filenames.
+The obsolete claim that Float64 requires an A100 or CPU is removed; the longer
+A100 comparison remains deferred as above.
+
+Critical Codex self-review checked error ordering, caller coverage, preservation
+of open-ended and Int32 window bounds, signed initialization, and the unchanged
+numerical path. All 381 focused checks pass: 124 public config/CLI/quickstart,
+25 path expansion, 31 architecture, 191 documentation, and 10 Aqua. The
+synthetic quickstart retains zero reported air/tracer-storage drift, and the
+strict manual build passes. These checks ran with GPUs hidden.
+
 The public `has_surface` and `has_vdiff_fields` queries now share one generic
 between binary readers and preprocessing settings. Previously the top-level
 exports could not dispatch on settings and produced competing-export warnings

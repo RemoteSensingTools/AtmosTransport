@@ -19,6 +19,13 @@ The runtime infers the **target topology** from the binary header's
 `[grid]` block in the run config is therefore unnecessary and
 ignored.
 
+`validate_config(cfg)` checks runtime table shapes, input path existence,
+precision/backend compatibility, and window bounds without opening binary
+readers or allocating model state. Nested tracer `init` and `surface_flux`
+values must be tables. Shape errors are returned before value checks; a
+successful result is not a full physics or binary validation. See
+[Run with real meteorology](@ref Run-with-real-meteorology) for an example.
+
 ### `[input]` — which transport binaries to load
 
 Two valid shapes (mutually exclusive):
@@ -43,6 +50,8 @@ Path expansion + continuity validation lives in
 `src/Models/BinaryPathExpander.jl`.
 Shape B asserts that the resolved binaries form a contiguous date
 sequence; gaps fail at expansion time, not at first window-load.
+Shape A preserves the explicit list's order after expanding paths. It does
+not sort entries or validate date continuity; provide them chronologically.
 
 #### `[input.staging]` — rolling NVMe staging (opt-in)
 
@@ -106,10 +115,11 @@ Optional GPU packages load on demand without injecting modules into `Main`.
 float_type = "Float32"        # default: "Float64"; one of "Float32" / "Float64"
 ```
 
-Float32 is the recommended default for L40S / consumer-GPU
-production runs; F64 needs an A100-class card or CPU. Mixing
-with the binary's `on_disk_float_type` is allowed (the runtime
-casts on load).
+Both precisions are supported on CPU and CUDA. Their speed and memory costs
+depend on the GPU and enabled operators; the V100 experiments in
+[Validation status](@ref) cover both. Metal requires Float32. Mixing with the
+binary's `on_disk_float_type` is allowed: the runtime casts on load, which
+does not recover precision already lost in the stored forcing.
 
 ### `[run]` — runtime knobs
 
@@ -123,6 +133,8 @@ air_mass_reset_mode = "preserve_tracer_mass"
 `stop_window` is the inclusive last window; setting it lets you
 run a partial day for smoke tests with a single input file. Multi-file runs
 require complete window ranges so no forcing is skipped between files.
+Both indices must be integers: Boolean and floating-point values are rejected.
+`start_window` must be at least 1, and `stop_window` must not precede it.
 Cubed-sphere runs currently require `start_window = 1`.
 `air_mass_reset_mode` is one of
 `"none"`, `"preserve_vmr"`, or `"preserve_tracer_mass"`. Advection belongs

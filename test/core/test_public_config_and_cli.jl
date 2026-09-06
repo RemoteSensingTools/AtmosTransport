@@ -19,6 +19,80 @@ function _script_module(name::Symbol, relative_path::AbstractString)
     return mod
 end
 
+@testset "runtime preflight reports malformed tables before reading binaries" begin
+    mktemp() do path, io
+        # An existing empty file passes path checks, but is not a transport
+        # binary. Preflight must inspect configuration without opening it.
+        base = Dict{String,Any}("input" => Dict("binary_paths" => [path]))
+        cases = (
+            ("run = 7", "[run]"),
+            ("numerics = false", "[numerics]"),
+            ("architecture = \"cpu\"", "[architecture]"),
+            ("advection = \"ppm\"", "[advection]"),
+            ("[tracers]\nco2 = 0.0004", "[tracers.co2]"),
+            ("[tracers.co2]\ninit = \"uniform\"", "[tracers.co2.init]"),
+            ("[tracers.co2]\nsurface_flux = false", "[tracers.co2.surface_flux]"),
+        )
+        for (text, label) in cases
+            cfg = merge(base, TOML.parse(text))
+            before = deepcopy(cfg)
+            ok, errors = validate_config(cfg)
+            @test !ok
+            @test any(error -> occursin(label, error) && occursin("TOML table", error), errors)
+            @test cfg == before
+        end
+
+        cfg = merge(base, TOML.parse("run = 7\n[tracers]\nco2 = 0.0004"))
+        ok, errors = validate_config(cfg)
+        @test !ok
+        @test length(errors) == 2
+        @test any(error -> occursin("[run]", error), errors)
+        @test any(error -> occursin("[tracers.co2]", error), errors)
+
+        # The public CPU runner must report the configuration error rather
+        # than attempting to read the invalid binary header.
+        error = try
+            run_driven_simulation(cfg)
+            nothing
+        catch err
+            err
+        end
+        @test error isa ArgumentError
+        @test occursin("Invalid AtmosTransport run config", sprint(showerror, error))
+        @test occursin("[tracers.co2]", sprint(showerror, error))
+        @test filesize(path) == 0
+        @test_throws "[architecture] must be a TOML table" run_driven_simulation(
+            merge(base, Dict("architecture" => "cpu")))
+    end
+end
+
+@testset "runtime window indices follow the integer TOML contract" begin
+    mktemp() do path, io
+        base = Dict{String,Any}("input" => Dict("binary_paths" => [path]))
+        for key in ("start_window", "stop_window"), value in (true, false, 1.0, 1.5, "1")
+            cfg = merge(base, Dict("run" => Dict(key => value)))
+            ok, errors = validate_config(cfg)
+            @test !ok
+            @test any(error -> occursin(key, error) && occursin("must be an integer", error), errors)
+        end
+        for run in (Dict("start_window" => 0),
+                    Dict("start_window" => 3, "stop_window" => 2))
+            ok, errors = validate_config(merge(base, Dict("run" => run)))
+            @test !ok
+            @test any(error -> occursin("must be >=", error), errors)
+        end
+        for run in (Dict{String,Any}(), Dict("start_window" => 1, "stop_window" => 2),
+                    Dict("start_window" => Int32(2), "stop_window" => nothing))
+            @test validate_config(merge(base, Dict("run" => run))) == (true, String[])
+        end
+        @test validate_config(merge(base, TOML.parse("""
+            [tracers.anomaly.init]
+            kind = "uniform"
+            background = -0.000001
+            """))) == (true, String[])
+    end
+end
+
 @testset "documented synthetic quickstart runs end to end" begin
     generator_module = _script_module(
         :SyntheticQuickstartTest,
@@ -169,26 +243,30 @@ end
     ])
 end
 
-@testset "runtime preload rejects non-boolean GPU flags" begin
+@testset "runtime preload reports malformed architecture settings" begin
     mktempdir() do dir
-        cfg = joinpath(dir, "invalid-gpu-flag.toml")
-        write(cfg, "[architecture]\nuse_gpu = 1\nbackend = \"cpu\"\n")
-
-        script = joinpath(REPO_ROOT, "scripts", "run_transport.jl")
-        cmd = addenv(
-            `$(Base.julia_cmd()) --project=$(joinpath(REPO_ROOT, "test")) $script $cfg`,
-            "ATMOSTR_NO_AUTO_THREADS" => "1",
+        for (name, contents, expected) in (
+            ("invalid-gpu-flag", "[architecture]\nuse_gpu = 1\nbackend = \"cpu\"\n",
+             "[architecture].use_gpu must be true or false; got 1"),
+            ("invalid-architecture-table", "architecture = \"cpu\"\n",
+             "[architecture] must be a TOML table"),
         )
-        stdout_buffer = IOBuffer()
-        stderr_buffer = IOBuffer()
-        process = run(pipeline(ignorestatus(cmd);
-                               stdout=stdout_buffer, stderr=stderr_buffer))
+            cfg = joinpath(dir, name * ".toml")
+            write(cfg, contents)
 
-        @test !success(process)
-        @test occursin(
-            "[architecture].use_gpu must be true or false; got 1",
-            String(take!(stderr_buffer)),
-        )
-        @test isempty(take!(stdout_buffer))
+            script = joinpath(REPO_ROOT, "scripts", "run_transport.jl")
+            cmd = addenv(
+                `$(Base.julia_cmd()) --project=$(joinpath(REPO_ROOT, "test")) $script $cfg`,
+                "ATMOSTR_NO_AUTO_THREADS" => "1",
+            )
+            stdout_buffer = IOBuffer()
+            stderr_buffer = IOBuffer()
+            process = run(pipeline(ignorestatus(cmd);
+                                   stdout=stdout_buffer, stderr=stderr_buffer))
+
+            @test !success(process)
+            @test occursin(expected, String(take!(stderr_buffer)))
+            @test isempty(take!(stdout_buffer))
+        end
     end
 end

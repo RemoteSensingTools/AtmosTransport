@@ -17,8 +17,8 @@ runtime flows with dispatch driven by the first binary's header
   `air_mass_basis(driver)`.
 - **TOML `[input]`** — either an explicit `binary_paths = [...]`
   list (Shape A) or a `folder + start_date + end_date
-  (+ file_pattern)` block (Shape B). Both are resolved to a sorted
-  `Vector{String}` by `expand_binary_paths`.
+  (+ file_pattern)` block (Shape B). `expand_binary_paths` preserves explicit
+  list order and sorts folder selections by date, checking gaps and duplicates.
 - **TOML physics** (`[advection]` / `[diffusion]` / `[convection]`)
   — validated against binary capabilities by
   `validate_runtime_physics_recipe` / `build_runtime_physics_recipe`
@@ -180,6 +180,9 @@ directly. The handoff to physics happens inside the structured loop at
 `TransportModel.step!` / `transport_step!` / `convection_chemistry_step!`.
 """
 function run_driven_simulation(cfg::AbstractDict)
+    ok, errors = validate_config(cfg)
+    ok || throw(ArgumentError(
+        "Invalid AtmosTransport run config:\n  - " * join(errors, "\n  - ")))
     arch = _cfg_architecture(cfg)
     ensure_runtime!(arch)
     # Loading an optional GPU package adds its array and Adapt methods in a new
@@ -191,9 +194,6 @@ function run_driven_simulation(cfg::AbstractDict)
 end
 
 function _run_driven_simulation(cfg::AbstractDict, arch::AbstractArchitecture)
-    ok, errors = validate_config(cfg)
-    ok || throw(ArgumentError(
-        "Invalid AtmosTransport run config:\n  - " * join(errors, "\n  - ")))
     input_cfg = get(cfg, "input", Dict{String, Any}())
     binary_paths = expand_binary_paths(input_cfg)
     isempty(binary_paths) &&

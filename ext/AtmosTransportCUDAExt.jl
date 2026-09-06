@@ -27,6 +27,12 @@ AtmosTransport.Operators.Advection._cs_packed_sweep_workgroupsize(
     ::CUDABackend, ::AtmosTransport.Operators.Advection.PPMScheme,
     ::Type{Float32}) = (32, 2)
 
+# Float64 packed sweeps benefit from the same contiguous 32-cell rows,
+# with one warp per workgroup on the measured V100 workload.
+AtmosTransport.Operators.Advection._cs_packed_sweep_workgroupsize(
+    ::CUDABackend, ::AtmosTransport.Operators.Advection.PPMScheme,
+    ::Type{Float64}) = 32
+
 # Share one factorization per diffusion column, then distribute independent
 # tracer solves across warps. The tracer tile pairs two tracers while keeping
 # all 32 i cells of each warp contiguous. No extra workspace is required.

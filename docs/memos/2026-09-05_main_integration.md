@@ -209,13 +209,23 @@ Public surface/vertical-diffusion capability queries now also accept source
 settings through the same generics as binary readers. This fixes a competing
 export and unavailable top-level settings method without changing payload tests.
 
+## Float64 packed advection launches
+
+The [V100 launch comparison](../../scripts/benchmarks/results/main_f64_ppm_tiles_v100_20260906/README.md)
+reduces the six-tracer day from 21.590 to 17.455 s and the 32-tracer day from
+63.061 to 47.482 s by using 32-thread rows for CUDA Float64 PPM. All saved
+arrays and native Float64 states remain byte-identical. Existing production
+GPU diagnostics pass 3,116 checks through 65 tracers, including partial rows,
+copy-back and ping-pong wrappers, signed storage, halos, and paired adjoints.
+No arithmetic, workspace ownership, or other backend policy changes.
+
 ## Remaining work
 
 - Extend the seven-day input/memory measurements to longer runs and other
   representative archives before changing host-window ownership or staging.
   Cold-storage throughput remains unmeasured.
-- Extend Float32/Float64 drift and memory checks beyond one week, and measure
-  the remaining Float64 advection cost. Keep conservation and positivity as
+- Extend Float32/Float64 drift and memory checks beyond one week.
+  Keep conservation and positivity as
   separate criteria. Improve temporal accuracy
   at seams against independent reference fields before claiming second order.
 - Retain the six-tracer matrix batch until an alternative improves measured

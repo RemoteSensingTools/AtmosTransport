@@ -38,9 +38,10 @@ the model-facing `apply!` entrypoints that the transport block calls.
 
 Packed CS sweep launch geometry is selected by
 `_cs_packed_sweep_workgroupsize`. The CUDA extension uses a 32×2 tile for
-Float32 PPM; other paths keep their existing 256-thread default. The tile
-reduces inactive threads on panel rows while retaining the same kernels,
-tracer loop, air-mass update, and copy-back/ping-pong behavior. GPU launch
+Float32 PPM and a 32-thread row for Float64 PPM; other paths keep their
+existing 256-thread default. These layouts reduce inactive threads on panel
+rows while retaining the same kernels, tracer loop, air-mass update, and
+copy-back/ping-pong behavior. GPU launch
 regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
 
 ## File Map

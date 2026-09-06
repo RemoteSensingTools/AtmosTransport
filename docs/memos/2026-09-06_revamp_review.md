@@ -45,6 +45,10 @@ complete meteorological adjoint or full TM5/GCHP forcing parity.
   within 1.73e-16 relative L2; the week remains within 1.99e-16 total drift.
   Unsupported Float64 requests retain the legacy fallback and the CS adjoint
   API still requires the full-column, unmerged legacy variant.
+- A [32-thread CUDA Float64 PPM launch](../../scripts/benchmarks/results/main_f64_ppm_tiles_v100_20260906/README.md)
+  reduces the same six-/32-tracer days from fresh baselines of 21.590/63.061 s
+  to 17.455/47.482 s. Complete native Float64 states remain byte-identical;
+  the change only reduces launch padding and adds no workspace.
 - The convection shared-memory buffer holds batches of six tracers, not a
   six-species model limit. The collaborative solver is tested through 65
   positive and signed tracers. Changing vertical truncation or aggregation

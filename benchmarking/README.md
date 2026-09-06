@@ -6,6 +6,16 @@ Oceananigans benchmark dashboard: Julia produces raw benchmark records plus a
 `github-action-benchmark` compatible JSON file; CI or a dedicated runner
 publishes the history.
 
+Prepare the environment from the repository root, including on Julia 1.10
+where `[sources]` is ignored:
+
+```bash
+julia --project=benchmarking -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
+```
+
+AtmosTransport is sourced from this checkout without a duplicated release
+version bound, so the benchmark environment stays usable after version bumps.
+
 Example:
 
 ```bash
